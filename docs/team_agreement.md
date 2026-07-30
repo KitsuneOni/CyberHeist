@@ -105,7 +105,7 @@ Every member of this team has the right:
 
 | Name | Role | Signature | Date |
 | --- | --- | --- | --- |
-| Adam Boyce | Product Owner, Developer | | |
+| Adam Boyce | Product Owner, Developer |Adam Boyce| 30.07.26|
 | Neel Kolhe | Scrum Master, Developer | | |
 | Hunter Yates | Developer | | |
 | Gerard Tibbles | Developer | | |
