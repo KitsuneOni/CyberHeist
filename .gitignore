@@ -1,0 +1,31 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Godot 4
+.godot/
+/android/
+*.translation
+
+# Godot 3 legacy import cache
+.import/
+
+# Godot export config (may contain signing credentials/paths)
+export.cfg
+export_presets.cfg
+
+# Godot .NET / Mono
+.mono/
+data_*/
+mono_crash.*.json
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
