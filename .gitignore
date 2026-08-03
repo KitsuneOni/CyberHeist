@@ -25,6 +25,11 @@ mono_crash.*.json
 .vscode/
 *.swp
 
+# Local agent context
+/CLAUDE.md
+/CLAUDE.local.md
+/.claude/
+
 # OS
 .DS_Store
 Thumbs.db
