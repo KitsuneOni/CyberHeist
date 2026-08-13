@@ -30,6 +30,9 @@ mono_crash.*.json
 /CLAUDE.local.md
 /.claude/
 
+# Personal upskilling exercises
+/upskilling/
+
 # OS
 .DS_Store
 Thumbs.db
