@@ -1,0 +1,15 @@
+# Pins the Rust version for everyone working on CyberHeist.
+#
+# rustup reads this automatically when you run cargo anywhere in the repo and
+# installs this version if you don't have it, so nobody has to be told which
+# Rust to install and CI uses the same compiler we do.
+#
+# Only works if you installed Rust with rustup, an apt install ignores it.
+# See docs/rust-godot-setup.md.
+#
+# To upgrade: change the channel, run cargo build and cargo test, and only
+# commit if both pass.
+
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

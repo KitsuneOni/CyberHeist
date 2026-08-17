@@ -1,0 +1,52 @@
+# Builds and tests the Rust crate on every push to main and every pull request.
+# This covers two things from our Definition of Done: no compiler errors, and
+# passing unit tests.
+#
+# We don't install Godot here. gdext builds against prebuilt API bindings so
+# cargo build and cargo test don't need the engine. That does mean CI only
+# checks the Rust side, it can't tell you if the extension fails to load in the
+# editor. See docs/workflow.md.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancels a running job if you push again to the same branch, so we don't waste
+# minutes on results nobody's going to look at.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: cyber_heist
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # GitHub runners come with rustup. This reads rust-toolchain.toml and
+      # installs the version pinned there, so CI matches our machines.
+      - name: Install pinned Rust toolchain
+        run: rustup show
+
+      # Caches ~/.cargo and target/ between runs, otherwise every run
+      # recompiles the Godot bindings which is the slow part.
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cyber_heist
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Test
+        run: cargo test --verbose

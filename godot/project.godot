@@ -1,0 +1,19 @@
+; Engine configuration file.
+; Edit this through the Godot editor (Project > Project Settings) rather than by
+; hand where possible — the editor rewrites this file.
+
+config_version=5
+
+[application]
+
+config/name="CyberHeist"
+config/description="Cyberpunk deckbuilder. Game logic lives in the Rust crate at ../cyber_heist."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"

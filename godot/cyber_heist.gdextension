@@ -1,0 +1,25 @@
+; Tells Godot where to find the compiled Rust library.
+; cargo build in ../cyber_heist creates the files listed below.
+; If Godot says the extension didn't load, you probably haven't run cargo build.
+
+[configuration]
+
+entry_symbol = "gdext_rust_init"
+; godot 0.5.5 builds its bindings against the Godot 4.6 API, so 4.6 is the
+; oldest version this actually works on. Anyone on something older gets a clear
+; version error here instead of a confusing crash later.
+compatibility_minimum = 4.6
+reloadable = true
+
+[libraries]
+
+linux.debug.x86_64 =     "res://../cyber_heist/target/debug/libcyber_heist.so"
+linux.release.x86_64 =   "res://../cyber_heist/target/release/libcyber_heist.so"
+
+windows.debug.x86_64 =   "res://../cyber_heist/target/debug/cyber_heist.dll"
+windows.release.x86_64 = "res://../cyber_heist/target/release/cyber_heist.dll"
+
+macos.debug =            "res://../cyber_heist/target/debug/libcyber_heist.dylib"
+macos.release =          "res://../cyber_heist/target/release/libcyber_heist.dylib"
+macos.debug.arm64 =      "res://../cyber_heist/target/debug/libcyber_heist.dylib"
+macos.release.arm64 =    "res://../cyber_heist/target/release/libcyber_heist.dylib"
