@@ -1,6 +1,6 @@
-# Builds and tests the Rust crate on every push to main and every pull request.
-# This covers two things from our Definition of Done: no compiler errors, and
-# passing unit tests.
+# Formats, lints, builds and tests the Rust crate on every push to main and
+# every pull request. This covers code quality plus two things from our
+# Definition of Done: no compiler errors and passing unit tests.
 #
 # We don't install Godot here. gdext builds against prebuilt API bindings so
 # cargo build and cargo test don't need the engine. That does mean CI only
@@ -44,6 +44,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: cyber_heist
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Build
         run: cargo build --verbose

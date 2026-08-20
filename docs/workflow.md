@@ -66,6 +66,7 @@ git pull
 git checkout feature/52-starter-deck
 git merge main
 # fix any conflicts, then
+cd cyber_heist
 cargo build && cargo test
 git push
 ```
@@ -126,13 +127,15 @@ cd cyber_heist && cargo build
 The config is in `.github/workflows/ci.yml`. On every push to main and every pull request, GitHub starts a clean Ubuntu machine and runs:
 
 ```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
 cargo build
 cargo test
 ```
 
 The PR then shows a green tick or a red cross. The point of it running on a clean machine is that code can build on your laptop because of something only you have installed, and CI catches that straight away instead of the night before a demo.
 
-That covers two things from our Definition of Done: no compiler errors, and passing unit tests.
+That covers code formatting and linting as well as two things from our Definition of Done: no compiler errors, and passing unit tests.
 
 What it can't check is anything to do with Godot. It doesn't install the engine, so it never opens the editor or runs the game. A PR can be completely green and still fail to load as an extension or look wrong on screen. Anything visual has to be checked by a person, which is why the review list above asks you to actually run it.
 

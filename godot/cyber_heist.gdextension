@@ -18,6 +18,8 @@ linux.release.x86_64 =   "res://../cyber_heist/target/release/libcyber_heist.so"
 
 windows.debug.x86_64 =   "res://../cyber_heist/target/debug/cyber_heist.dll"
 windows.release.x86_64 = "res://../cyber_heist/target/release/cyber_heist.dll"
+windows.debug.arm64 =    "res://../cyber_heist/target/debug/cyber_heist.dll"
+windows.release.arm64 =  "res://../cyber_heist/target/release/cyber_heist.dll"
 
 macos.debug =            "res://../cyber_heist/target/debug/libcyber_heist.dylib"
 macos.release =          "res://../cyber_heist/target/release/libcyber_heist.dylib"

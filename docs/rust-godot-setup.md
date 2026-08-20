@@ -33,7 +33,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 Take the default options, then restart your terminal (or run `source ~/.cargo/env`) so `cargo` is on your PATH.
 
-Windows: download rustup-init.exe from https://rustup.rs. When it asks, install the MSVC toolchain and the Visual Studio C++ Build Tools it offers. Without those the extension won't link.
+Windows: download rustup-init.exe from https://rustup.rs. When it asks, install the MSVC toolchain and the Visual Studio C++ Build Tools it offers. On Windows ARM64, also select the MSVC ARM64/ARM64EC build-tools component in the Visual Studio Installer. Without the build tools for your architecture, the extension won't link.
 
 Check it worked:
 
@@ -152,7 +152,7 @@ The extension doesn't load at all - check that `cyber_heist/target/debug/libcybe
 
 A version mismatch error on load - your Godot is older than 4.6, update to 4.7.1.
 
-Linker errors on Windows during `cargo build` - the MSVC C++ build tools are missing. Run rustup-init.exe again, or install "Desktop development with C++" from the Visual Studio Installer.
+Linker errors on Windows during `cargo build` - the MSVC C++ build tools are missing. Run rustup-init.exe again, or install "Desktop development with C++" from the Visual Studio Installer. On Windows ARM64, make sure the MSVC ARM64/ARM64EC build-tools component is selected too.
 
 Godot crashes or misbehaves after you rebuild while it's open - close Godot before running `cargo build`. On Windows especially, the editor locks the DLL while it's open.
 
