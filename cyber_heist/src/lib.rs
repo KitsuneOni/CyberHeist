@@ -6,9 +6,6 @@
 
 use godot::prelude::*;
 
-mod contract_map;
-mod contract_map_controller;
-
 struct CyberHeistExtension;
 
 #[gdextension]
