@@ -8,7 +8,7 @@ config_version=5
 
 config/name="CyberHeist"
 config/description="Cyberpunk deckbuilder. Game logic lives in the Rust crate at ../cyber_heist."
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/contract_map.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 
 [display]
