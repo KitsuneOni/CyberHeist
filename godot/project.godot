@@ -1,6 +1,10 @@
 ; Engine configuration file.
-; Edit this through the Godot editor (Project > Project Settings) rather than by
-; hand where possible — the editor rewrites this file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -8,7 +12,7 @@ config_version=5
 
 config/name="CyberHeist"
 config/description="Cyberpunk deckbuilder. Game logic lives in the Rust crate at ../cyber_heist."
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/combat.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 
 [display]
