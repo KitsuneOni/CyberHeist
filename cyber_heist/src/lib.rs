@@ -3,16 +3,15 @@
 //! Game logic lives in this crate; the Godot project under `../godot` handles
 //! scenes, UI and presentation. Add new gameplay modules here and register them
 //! as Godot classes with `#[derive(GodotClass)]`.
-//! 
+//!
 //! Classes defined here:
 //! - 'BridgeCheck' temporary demo proving the bridge between Godot and Rust works. Delete once real gameplay and classes are wired up
 //! - 'PlayerState' - autoload singleton tracking player money and upgrades,
-//! and applying the "caught" penalty (fine + lose this contract's upgrades).
+//!   and applying the "caught" penalty (fine + lose this contract's upgrades).
 
-use godot::prelude::*;
+use godot::builtin::{VarDictionary, dict};
 use godot::classes::Node;
-use godot::builtin::{dict, VarDictionary};
-
+use godot::prelude::*;
 
 struct CyberHeistExtension;
 
@@ -68,7 +67,11 @@ impl INode for PlayerState {
     // called once when the autoload node enters the scene tree
     // starting values: no money, no upgrades yet.
     fn init(base: Base<Node>) -> Self {
-        Self {base, money: 0, upgrades: Vec::new()}
+        Self {
+            base,
+            money: 0,
+            upgrades: Vec::new(),
+        }
     }
 }
 
@@ -87,13 +90,13 @@ impl PlayerState {
     fn apply_penalty(&mut self, fine: i64) -> VarDictionary {
         // take ownership of the current upgrades list and empty it out
         // drain(..) removes every element and hands them to lost
-      let lost: Array<GString> = self.upgrades.drain(..).collect();
-      self.money -= fine;
+        let lost: Array<GString> = self.upgrades.drain(..).collect();
+        self.money -= fine;
 
-      // build the untyped dictionary GDScript expects back
-      dict! {
-          "fine" => fine,
-          "lost_upgrades" => &lost,
-      }
+        // build the untyped dictionary GDScript expects back
+        dict! {
+            "fine" => fine,
+            "lost_upgrades" => &lost,
+        }
     }
 }
