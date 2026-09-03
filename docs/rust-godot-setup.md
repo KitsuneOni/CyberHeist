@@ -66,14 +66,12 @@ In the Godot Project Manager click Import and pick `godot/project.godot`.
 
 Open the `godot/` folder, not the root of the repo.
 
-Press F5 to run. You should see this in the Output panel:
+Press F5 to run. The permanent `main.tscn` bootstrap should open the contract
+hub/map placeholder. Use **Start test combat** to enter the existing draw-card
+screen, then **Complete Encounter** to return to the hub. This path also proves
+the Rust extension and persistent run-state adapter loaded successfully.
 
-```
-CyberHeist: Rust bridge is live (BridgeCheck::ready).
-CyberHeist: GDScript called Rust and got -> pong from Rust
-```
-
-If both lines show up your setup is working.
+For the lifecycle and scene-integration API, see [game-flow.md](game-flow.md).
 
 ## Day to day
 
@@ -165,15 +163,18 @@ CyberHeist/
 ├── cyber_heist/                    # Rust crate, game logic
 │   ├── Cargo.toml                  # dependencies, godot = "0.5.5"
 │   ├── Cargo.lock                  # committed so we all get the same versions
-│   └── src/lib.rs                  # extension entry point and BridgeCheck
+│   └── src/                        # cards, deck and contract run-state model
 ├── godot/                          # Godot project, open this folder
 │   ├── project.godot
 │   ├── cyber_heist.gdextension     # points Godot at the compiled library
+│   ├── autoload/                   # persistent flow coordinator + run state
 │   ├── scenes/
-│   │   ├── main.tscn               # temporary scene for testing the bridge
-│   │   └── main.gd
+│   │   ├── main.tscn               # permanent bootstrap and ScreenHost
+│   │   ├── contract_hub.tscn       # minimal map placeholder
+│   │   └── combat.tscn             # draw-card demo entered via flow API
 │   └── assets/                     # art and audio, empty for now
 ├── docs/
+│   ├── game-flow.md                # lifecycle and scene integration
 │   ├── rust-godot-setup.md         # this file
 │   └── workflow.md                 # branching, reviews, merging, CI
 ├── .github/workflows/ci.yml        # builds and tests every push and PR
@@ -181,6 +182,8 @@ CyberHeist/
 └── .gitignore
 ```
 
-`BridgeCheck` in `lib.rs`, and `main.tscn` and `main.gd`, only exist to prove the bridge works. Delete them once we have real gameplay classes and point `run/main_scene` in `project.godot` at the new main scene.
+`main.tscn` is the stable bootstrap and must remain `run/main_scene`; feature
+scenes are children of its `ScreenHost`. `BridgeCheck` remains available for
+isolated diagnostics but is no longer part of the running scene tree.
 
 `cyber_heist/target/` and `godot/.godot/` are gitignored. They're build output and Godot's local import cache, they regenerate on their own, don't commit them.

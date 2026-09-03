@@ -22,6 +22,12 @@ func _on_end_turn_button_pressed() -> void:
 	_draw_hand()
 
 
+func _on_complete_encounter_pressed() -> void:
+	var result: Dictionary = FlowCoordinator.complete_active_encounter()
+	if not result.get("ok", false):
+		push_error("Could not complete encounter: %s" % result.get("error", "unknown error"))
+
+
 func _draw_hand() -> void:
 	var hand: PackedStringArray = draw_phase.draw_hand()
 	hand_label.text = "Hand: %s" % ", ".join(hand)

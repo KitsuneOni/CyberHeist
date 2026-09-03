@@ -1,0 +1,48 @@
+[gd_scene load_steps=2 format=3 uid="uid://bchub5cene001"]
+
+[ext_resource type="Script" uid="uid://dchub5cr1pt01" path="res://scenes/contract_hub.gd" id="1_hub"]
+
+[node name="ContractHub" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_hub")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -160.0
+offset_top = -70.0
+offset_right = 160.0
+offset_bottom = 70.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="Title" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "Contract Hub — Map Placeholder"
+horizontal_alignment = 1
+
+[node name="PhaseLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+text = "Phase: hub"
+horizontal_alignment = 1
+
+[node name="StartTestCombat" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Start test combat"
+
+[node name="StatusLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+horizontal_alignment = 1
+
+[connection signal="pressed" from="VBoxContainer/StartTestCombat" to="." method="_on_start_test_combat_pressed"]

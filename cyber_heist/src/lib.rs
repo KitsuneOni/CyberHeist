@@ -7,6 +7,8 @@
 mod card;
 mod deck;
 mod pack;
+mod run_state;
+mod run_state_node;
 
 use godot::prelude::*;
 
@@ -19,9 +21,8 @@ unsafe impl ExtensionLibrary for CyberHeistExtension {}
 
 /// Temporary node that proves the Rust <-> Godot bridge is wired up correctly.
 ///
-/// Attach it to a scene (or use `godot/scenes/main.tscn`) and run the project:
-/// the `_ready` message should appear in Godot's Output panel. Once real
-/// gameplay classes exist this can be deleted along with `main.tscn`.
+/// This no longer appears in the bootstrap scene, but remains available for
+/// targeted bridge diagnostics until a later cleanup removes it.
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct BridgeCheck {
