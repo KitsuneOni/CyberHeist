@@ -59,7 +59,7 @@ impl RunStateNode {
 
         vdict! {
             "phase" => self.state.phase().as_str(),
-            "active_encounter" => active_encounter,
+            "active_encounter" => &active_encounter,
         }
     }
 }
