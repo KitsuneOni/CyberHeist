@@ -37,12 +37,29 @@ success. `FlowCoordinator.run_snapshot()` returns:
 ```
 
 Supported lifecycle encounter types are `combat`, `event`, `shop`, and
-`elite`. A type also needs a coordinator-owned scene registration before it
-can be entered; only `combat` is registered today.
+`elite`. Combat has its gameplay scene; the other types currently use a shared
+placeholder scene until their separate stories are implemented.
+
+## Contract route selection
+
+The persistent `RunStateNode` also owns the authored contract graph. The hub
+asks `FlowCoordinator.selectable_encounters()` for every directly reachable
+node and shows the returned node ID and encounter type. A selection must go
+through `FlowCoordinator.select_encounter(node_id)` so the destination is
+loaded before the Rust model commits to the route.
+
+Selecting a node permanently locks every sibling branch from the previous
+node. Completing the loaded encounter returns to the hub, where only onward
+nodes from the chosen route are offered. Graph rules and lock-out behaviour are
+implemented in `cyber_heist/src/contract_map.rs`; encounter contents remain a
+separate concern.
 
 ## Scene-facing API
 
 ```gdscript
+FlowCoordinator.selectable_encounters()
+FlowCoordinator.current_contract_node()
+FlowCoordinator.select_encounter(node_id: int)
 FlowCoordinator.start_encounter(encounter_id: String, encounter_type: String)
 FlowCoordinator.complete_active_encounter()
 FlowCoordinator.report_caught()
@@ -54,11 +71,10 @@ Every transition method returns a result dictionary. A destination is checked
 and instantiated before lifecycle state changes, then the current screen is
 replaced only after the Rust transition succeeds.
 
-A future encounter-selection screen starts a selected encounter without
-navigating directly:
+A contract-map screen starts a selected encounter without navigating directly:
 
 ```gdscript
-var result := FlowCoordinator.start_encounter(encounter.id, encounter.type)
+var result := FlowCoordinator.select_encounter(encounter.id)
 ```
 
 A losing encounter reports its outcome in the same way:

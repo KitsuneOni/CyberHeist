@@ -5,6 +5,7 @@
 //! as Godot classes with `#[derive(GodotClass)]`.
 
 mod card;
+mod contract_map;
 mod deck;
 mod pack;
 mod run_state;

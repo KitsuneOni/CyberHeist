@@ -2,9 +2,13 @@ extends Node
 
 const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
+const PLACEHOLDER_ENCOUNTER_SCENE_PATH := "res://scenes/placeholder_encounter.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
+	"event": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
+	"shop": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
+	"elite": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
 }
 
 @onready var _run_state: Node = $RunState
@@ -40,6 +44,36 @@ func start_encounter(encounter_id: String, encounter_type: String) -> Dictionary
 		return prepared
 
 	var transition: Dictionary = _run_state.start_encounter(encounter_id, encounter_type)
+	if not transition.get("ok", false):
+		_dispose_screen(prepared["screen"])
+		return transition
+
+	_replace_screen(prepared["screen"])
+	return transition
+
+
+func selectable_encounters() -> Array:
+	return _run_state.selectable_encounters()
+
+
+func current_contract_node() -> Dictionary:
+	return _run_state.current_contract_node()
+
+
+func select_encounter(node_id: int) -> Dictionary:
+	var option: Dictionary = _run_state.encounter_option(node_id)
+	if not option.get("ok", false):
+		return option
+
+	var encounter_type: String = option.get("type", "")
+	if not ENCOUNTER_SCENES.has(encounter_type):
+		return _failure("No gameplay scene is registered for encounter type '%s'." % encounter_type)
+
+	var prepared := _prepare_screen(ENCOUNTER_SCENES[encounter_type])
+	if not prepared.get("ok", false):
+		return prepared
+
+	var transition: Dictionary = _run_state.select_encounter(node_id)
 	if not transition.get("ok", false):
 		_dispose_screen(prepared["screen"])
 		return transition

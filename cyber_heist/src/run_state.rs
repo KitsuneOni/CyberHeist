@@ -5,6 +5,22 @@
 
 use std::fmt;
 
+use crate::contract_map::{
+    ContractMap, ContractMapError, EncounterNode, EncounterSelection, EncounterType, NodeId,
+};
+
+impl EncounterType {
+    fn parse(value: &str) -> Result<Self, RunStateError> {
+        match value {
+            "combat" => Ok(Self::Combat),
+            "event" => Ok(Self::Event),
+            "shop" => Ok(Self::Shop),
+            "elite" => Ok(Self::Elite),
+            unknown => Err(RunStateError::UnknownEncounterType(unknown.into())),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractPhase {
     Hub,
@@ -18,35 +34,6 @@ impl ContractPhase {
             Self::Hub => "hub",
             Self::EncounterActive => "encounter_active",
             Self::Caught => "caught",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EncounterType {
-    Combat,
-    Event,
-    Shop,
-    Elite,
-}
-
-impl EncounterType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Combat => "combat",
-            Self::Event => "event",
-            Self::Shop => "shop",
-            Self::Elite => "elite",
-        }
-    }
-
-    fn parse(value: &str) -> Result<Self, RunStateError> {
-        match value {
-            "combat" => Ok(Self::Combat),
-            "event" => Ok(Self::Event),
-            "shop" => Ok(Self::Shop),
-            "elite" => Ok(Self::Elite),
-            unknown => Err(RunStateError::UnknownEncounterType(unknown.into())),
         }
     }
 }
@@ -71,6 +58,7 @@ impl ActiveEncounter {
 pub struct RunState {
     phase: ContractPhase,
     active_encounter: Option<ActiveEncounter>,
+    contract_map: ContractMap,
 }
 
 impl Default for RunState {
@@ -78,6 +66,7 @@ impl Default for RunState {
         Self {
             phase: ContractPhase::Hub,
             active_encounter: None,
+            contract_map: ContractMap::demo(),
         }
     }
 }
@@ -93,6 +82,42 @@ impl RunState {
 
     pub fn active_encounter(&self) -> Option<&ActiveEncounter> {
         self.active_encounter.as_ref()
+    }
+
+    pub fn current_contract_node(&self) -> &EncounterNode {
+        self.contract_map.current_encounter()
+    }
+
+    pub fn selectable_encounters(&self) -> Vec<&EncounterNode> {
+        if self.phase != ContractPhase::Hub {
+            return Vec::new();
+        }
+        self.contract_map.selectable_encounters()
+    }
+
+    pub fn encounter_option(&self, node_id: NodeId) -> Result<EncounterSelection, RunStateError> {
+        self.require_phase("select encounter", ContractPhase::Hub)?;
+        self.contract_map
+            .encounter_option(node_id)
+            .map_err(RunStateError::ContractMap)
+    }
+
+    pub fn select_encounter(
+        &mut self,
+        node_id: NodeId,
+    ) -> Result<EncounterSelection, RunStateError> {
+        self.require_phase("select encounter", ContractPhase::Hub)?;
+        let selection = self
+            .contract_map
+            .select_encounter(node_id)
+            .map_err(RunStateError::ContractMap)?;
+
+        self.phase = ContractPhase::EncounterActive;
+        self.active_encounter = Some(ActiveEncounter {
+            id: selection.node_id.to_string(),
+            encounter_type: selection.encounter_type,
+        });
+        Ok(selection)
     }
 
     pub fn start_encounter(
@@ -118,6 +143,11 @@ impl RunState {
 
     pub fn complete_encounter(&mut self) -> Result<(), RunStateError> {
         self.require_phase("complete encounter", ContractPhase::EncounterActive)?;
+        if self.contract_map.encounter_in_progress() {
+            self.contract_map
+                .complete_current_encounter()
+                .map_err(RunStateError::ContractMap)?;
+        }
         self.phase = ContractPhase::Hub;
         self.active_encounter = None;
         Ok(())
@@ -131,6 +161,11 @@ impl RunState {
 
     pub fn finish_caught(&mut self) -> Result<(), RunStateError> {
         self.require_phase("finish caught", ContractPhase::Caught)?;
+        if self.contract_map.encounter_in_progress() {
+            self.contract_map
+                .complete_current_encounter()
+                .map_err(RunStateError::ContractMap)?;
+        }
         self.phase = ContractPhase::Hub;
         self.active_encounter = None;
         Ok(())
@@ -160,6 +195,7 @@ pub enum RunStateError {
     },
     EmptyEncounterId,
     UnknownEncounterType(String),
+    ContractMap(ContractMapError),
 }
 
 impl fmt::Display for RunStateError {
@@ -176,6 +212,7 @@ impl fmt::Display for RunStateError {
             Self::UnknownEncounterType(encounter_type) => {
                 write!(formatter, "unknown encounter type: {encounter_type}")
             }
+            Self::ContractMap(error) => fmt::Display::fmt(error, formatter),
         }
     }
 }
@@ -208,6 +245,55 @@ mod tests {
         let encounter = state.active_encounter().unwrap();
         assert_eq!(encounter.id(), "combat-demo-1");
         assert_eq!(encounter.encounter_type(), EncounterType::Combat);
+    }
+
+    #[test]
+    fn completed_encounter_exposes_every_reachable_choice_and_type() {
+        let mut state = RunState::new();
+        state.contract_map = ContractMap::new(
+            [
+                EncounterNode::new(0, EncounterType::Entry, vec![1]),
+                EncounterNode::new(1, EncounterType::Combat, vec![2, 3]),
+                EncounterNode::new(2, EncounterType::Event, vec![]),
+                EncounterNode::new(3, EncounterType::Shop, vec![]),
+            ],
+            0,
+        )
+        .unwrap();
+        state.select_encounter(1).unwrap();
+        state.complete_encounter().unwrap();
+
+        let choices: Vec<_> = state
+            .selectable_encounters()
+            .into_iter()
+            .map(|node| (node.id(), node.encounter_type()))
+            .collect();
+
+        assert_eq!(
+            choices,
+            vec![(2, EncounterType::Event), (3, EncounterType::Shop)]
+        );
+    }
+
+    #[test]
+    fn choosing_a_route_loads_it_and_permanently_locks_its_siblings() {
+        let mut state = RunState::new();
+
+        let selected = state.select_encounter(1).unwrap();
+
+        assert_eq!(selected.node_id, 1);
+        assert_eq!(state.phase(), ContractPhase::EncounterActive);
+        assert_eq!(state.active_encounter().unwrap().id(), "1");
+
+        state.complete_encounter().unwrap();
+        let before = state.clone();
+        assert!(matches!(
+            state.select_encounter(2),
+            Err(RunStateError::ContractMap(
+                ContractMapError::EncounterNotReachable { .. }
+            ))
+        ));
+        assert_eq!(state, before);
     }
 
     #[test]

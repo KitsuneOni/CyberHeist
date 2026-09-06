@@ -3,6 +3,7 @@
 use godot::builtin::{VarDictionary, Variant};
 use godot::prelude::*;
 
+use crate::contract_map::{EncounterNode, EncounterSelection};
 use crate::run_state::{RunState, RunStateError};
 
 #[derive(GodotClass)]
@@ -24,6 +25,44 @@ impl INode for RunStateNode {
 
 #[godot_api]
 impl RunStateNode {
+    #[func]
+    fn selectable_encounters(&self) -> Array<VarDictionary> {
+        let mut encounters = Array::new();
+        for node in self.state.selectable_encounters() {
+            encounters.push(&encounter_dictionary(node));
+        }
+        encounters
+    }
+
+    #[func]
+    fn current_contract_node(&self) -> VarDictionary {
+        encounter_dictionary(self.state.current_contract_node())
+    }
+
+    #[func]
+    fn encounter_option(&self, node_id: i64) -> VarDictionary {
+        let node_id = match u32::try_from(node_id) {
+            Ok(node_id) => node_id,
+            Err(_) => return transition_error("encounter identifier is invalid"),
+        };
+        match self.state.encounter_option(node_id) {
+            Ok(selection) => selection_dictionary(selection),
+            Err(error) => transition_error(&error.to_string()),
+        }
+    }
+
+    #[func]
+    fn select_encounter(&mut self, node_id: i64) -> VarDictionary {
+        let node_id = match u32::try_from(node_id) {
+            Ok(node_id) => node_id,
+            Err(_) => return transition_error("encounter identifier is invalid"),
+        };
+        match self.state.select_encounter(node_id) {
+            Ok(selection) => selection_dictionary(selection),
+            Err(error) => transition_error(&error.to_string()),
+        }
+    }
+
     #[func]
     fn start_encounter(&mut self, encounter_id: GString, encounter_type: GString) -> VarDictionary {
         transition_result(
@@ -67,12 +106,28 @@ impl RunStateNode {
 fn transition_result(result: Result<(), RunStateError>) -> VarDictionary {
     match result {
         Ok(()) => vdict! { "ok" => true },
-        Err(error) => {
-            let message = error.to_string();
-            vdict! {
-                "ok" => false,
-                "error" => message.as_str(),
-            }
-        }
+        Err(error) => transition_error(&error.to_string()),
+    }
+}
+
+fn encounter_dictionary(node: &EncounterNode) -> VarDictionary {
+    vdict! {
+        "id" => i64::from(node.id()),
+        "type" => node.encounter_type().as_str(),
+    }
+}
+
+fn selection_dictionary(selection: EncounterSelection) -> VarDictionary {
+    vdict! {
+        "ok" => true,
+        "id" => i64::from(selection.node_id),
+        "type" => selection.encounter_type.as_str(),
+    }
+}
+
+fn transition_error(message: &str) -> VarDictionary {
+    vdict! {
+        "ok" => false,
+        "error" => message,
     }
 }
