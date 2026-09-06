@@ -60,7 +60,6 @@ separate concern.
 FlowCoordinator.selectable_encounters()
 FlowCoordinator.current_contract_node()
 FlowCoordinator.select_encounter(node_id: int)
-FlowCoordinator.start_encounter(encounter_id: String, encounter_type: String)
 FlowCoordinator.complete_active_encounter()
 FlowCoordinator.report_caught()
 FlowCoordinator.finish_caught()
@@ -92,6 +91,9 @@ Continue button must call:
 FlowCoordinator.finish_caught()
 ```
 
-The caught screen may apply its separate `PlayerStateGlobal` penalty once, but
-it must not own navigation. Keep both autoloads and manually reconcile Rust
-module registration when that feature lands.
+Finishing caught does not complete the selected map node. It returns to the hub
+with only that committed encounter available to retry; the branch declined at
+selection remains locked. The caught screen may apply its separate
+`PlayerStateGlobal` penalty once, but it must not own navigation. Keep both
+autoloads and manually reconcile Rust module registration when that feature
+lands.

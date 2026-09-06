@@ -9,18 +9,6 @@ use crate::contract_map::{
     ContractMap, ContractMapError, EncounterNode, EncounterSelection, EncounterType, NodeId,
 };
 
-impl EncounterType {
-    fn parse(value: &str) -> Result<Self, RunStateError> {
-        match value {
-            "combat" => Ok(Self::Combat),
-            "event" => Ok(Self::Event),
-            "shop" => Ok(Self::Shop),
-            "elite" => Ok(Self::Elite),
-            unknown => Err(RunStateError::UnknownEncounterType(unknown.into())),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractPhase {
     Hub,
@@ -120,34 +108,11 @@ impl RunState {
         Ok(selection)
     }
 
-    pub fn start_encounter(
-        &mut self,
-        encounter_id: &str,
-        encounter_type: &str,
-    ) -> Result<(), RunStateError> {
-        self.require_phase("start encounter", ContractPhase::Hub)?;
-
-        let encounter_id = encounter_id.trim();
-        if encounter_id.is_empty() {
-            return Err(RunStateError::EmptyEncounterId);
-        }
-
-        let encounter_type = EncounterType::parse(encounter_type)?;
-        self.phase = ContractPhase::EncounterActive;
-        self.active_encounter = Some(ActiveEncounter {
-            id: encounter_id.into(),
-            encounter_type,
-        });
-        Ok(())
-    }
-
     pub fn complete_encounter(&mut self) -> Result<(), RunStateError> {
         self.require_phase("complete encounter", ContractPhase::EncounterActive)?;
-        if self.contract_map.encounter_in_progress() {
-            self.contract_map
-                .complete_current_encounter()
-                .map_err(RunStateError::ContractMap)?;
-        }
+        self.contract_map
+            .complete_current_encounter()
+            .map_err(RunStateError::ContractMap)?;
         self.phase = ContractPhase::Hub;
         self.active_encounter = None;
         Ok(())
@@ -161,11 +126,9 @@ impl RunState {
 
     pub fn finish_caught(&mut self) -> Result<(), RunStateError> {
         self.require_phase("finish caught", ContractPhase::Caught)?;
-        if self.contract_map.encounter_in_progress() {
-            self.contract_map
-                .complete_current_encounter()
-                .map_err(RunStateError::ContractMap)?;
-        }
+        self.contract_map
+            .fail_current_encounter()
+            .map_err(RunStateError::ContractMap)?;
         self.phase = ContractPhase::Hub;
         self.active_encounter = None;
         Ok(())
@@ -193,8 +156,6 @@ pub enum RunStateError {
         action: &'static str,
         phase: ContractPhase,
     },
-    EmptyEncounterId,
-    UnknownEncounterType(String),
     ContractMap(ContractMapError),
 }
 
@@ -208,10 +169,6 @@ impl fmt::Display for RunStateError {
                     phase.as_str()
                 )
             }
-            Self::EmptyEncounterId => formatter.write_str("encounter id must not be empty"),
-            Self::UnknownEncounterType(encounter_type) => {
-                write!(formatter, "unknown encounter type: {encounter_type}")
-            }
             Self::ContractMap(error) => fmt::Display::fmt(error, formatter),
         }
     }
@@ -223,7 +180,7 @@ mod tests {
 
     fn active_combat() -> RunState {
         let mut state = RunState::new();
-        state.start_encounter("combat-demo-1", "combat").unwrap();
+        state.select_encounter(1).unwrap();
         state
     }
 
@@ -236,14 +193,14 @@ mod tests {
     }
 
     #[test]
-    fn starting_combat_records_identity_and_type() {
+    fn selecting_combat_records_identity_and_type() {
         let mut state = RunState::new();
 
-        state.start_encounter("combat-demo-1", "combat").unwrap();
+        state.select_encounter(1).unwrap();
 
         assert_eq!(state.phase(), ContractPhase::EncounterActive);
         let encounter = state.active_encounter().unwrap();
-        assert_eq!(encounter.id(), "combat-demo-1");
+        assert_eq!(encounter.id(), "1");
         assert_eq!(encounter.encounter_type(), EncounterType::Combat);
     }
 
@@ -313,7 +270,7 @@ mod tests {
         state.report_caught().unwrap();
 
         assert_eq!(state.phase(), ContractPhase::Caught);
-        assert_eq!(state.active_encounter().unwrap().id(), "combat-demo-1");
+        assert_eq!(state.active_encounter().unwrap().id(), "1");
     }
 
     #[test]
@@ -325,14 +282,20 @@ mod tests {
 
         assert_eq!(state.phase(), ContractPhase::Hub);
         assert_eq!(state.active_encounter(), None);
+        let selectable: Vec<_> = state
+            .selectable_encounters()
+            .into_iter()
+            .map(|node| node.id())
+            .collect();
+        assert_eq!(selectable, vec![1]);
     }
 
     #[test]
-    fn starting_a_second_encounter_is_rejected_without_mutation() {
+    fn selecting_a_second_encounter_is_rejected_without_mutation() {
         let mut state = active_combat();
         let before = state.clone();
 
-        let result = state.start_encounter("event-2", "event");
+        let result = state.select_encounter(2);
 
         assert!(matches!(
             result,
@@ -372,24 +335,5 @@ mod tests {
             Err(RunStateError::InvalidTransition { .. })
         ));
         assert_eq!(state, before);
-    }
-
-    #[test]
-    fn invalid_encounter_identity_and_type_are_rejected_without_mutation() {
-        let mut empty_id_state = RunState::new();
-        let empty_id_before = empty_id_state.clone();
-        let mut unknown_type_state = RunState::new();
-        let unknown_type_before = unknown_type_state.clone();
-
-        assert_eq!(
-            empty_id_state.start_encounter("   ", "combat"),
-            Err(RunStateError::EmptyEncounterId)
-        );
-        assert_eq!(
-            unknown_type_state.start_encounter("encounter-1", "mystery"),
-            Err(RunStateError::UnknownEncounterType("mystery".into()))
-        );
-        assert_eq!(empty_id_state, empty_id_before);
-        assert_eq!(unknown_type_state, unknown_type_before);
     }
 }

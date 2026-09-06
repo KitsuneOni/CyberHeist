@@ -35,23 +35,6 @@ func bind_screen_host(host: Node) -> void:
 	_replace_screen(prepared["screen"])
 
 
-func start_encounter(encounter_id: String, encounter_type: String) -> Dictionary:
-	if not ENCOUNTER_SCENES.has(encounter_type):
-		return _failure("No gameplay scene is registered for encounter type '%s'." % encounter_type)
-
-	var prepared := _prepare_screen(ENCOUNTER_SCENES[encounter_type])
-	if not prepared.get("ok", false):
-		return prepared
-
-	var transition: Dictionary = _run_state.start_encounter(encounter_id, encounter_type)
-	if not transition.get("ok", false):
-		_dispose_screen(prepared["screen"])
-		return transition
-
-	_replace_screen(prepared["screen"])
-	return transition
-
-
 func selectable_encounters() -> Array:
 	return _run_state.selectable_encounters()
 

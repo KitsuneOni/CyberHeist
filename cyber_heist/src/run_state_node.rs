@@ -64,14 +64,6 @@ impl RunStateNode {
     }
 
     #[func]
-    fn start_encounter(&mut self, encounter_id: GString, encounter_type: GString) -> VarDictionary {
-        transition_result(
-            self.state
-                .start_encounter(&encounter_id.to_string(), &encounter_type.to_string()),
-        )
-    }
-
-    #[func]
     fn complete_encounter(&mut self) -> VarDictionary {
         transition_result(self.state.complete_encounter())
     }
