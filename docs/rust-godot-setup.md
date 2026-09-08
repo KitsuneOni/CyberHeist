@@ -66,9 +66,11 @@ In the Godot Project Manager click Import and pick `godot/project.godot`.
 
 Open the `godot/` folder, not the root of the repo.
 
-Press F5 to run. The permanent `main.tscn` bootstrap should open the contract
-route map with Combat and Event choices. Select a route, complete the loaded
-encounter, and confirm the map offers only encounters onward from that choice.
+Press F5 to run. The permanent `main.tscn` bootstrap should open the temporary
+route-choice harness with Combat and Event choices. This harness demonstrates
+behaviour only; it is not the contract-map UI, visual design, or final UX.
+Select a route, complete the loaded encounter, and confirm only encounters
+onward from that choice remain available.
 This path also proves the Rust extension and persistent run-state adapter loaded
 successfully.
 
@@ -171,8 +173,8 @@ CyberHeist/
 │   ├── autoload/                   # persistent flow coordinator + run state
 │   ├── scenes/
 │   │   ├── main.tscn               # permanent bootstrap and ScreenHost
-│   │   ├── contract_hub.tscn       # selectable contract route map
-│   │   ├── combat.tscn             # draw-card combat entered from the map
+│   │   ├── contract_hub.tscn       # temporary route-choice test harness
+│   │   ├── combat.tscn             # draw-card combat entered from a choice
 │   │   └── placeholder_encounter.tscn # event/shop/elite placeholder
 │   └── assets/                     # art and audio, empty for now
 ├── docs/

@@ -1,3 +1,5 @@
+# Temporary functional harness for proving the chosen encounter loads. Its
+# presentation and interaction are not proposed encounter UI/UX.
 extends Control
 
 @onready var encounter_title: Label = $Page/EncounterPanel/Margin/Content/EncounterTitle

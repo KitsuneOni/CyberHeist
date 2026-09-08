@@ -42,6 +42,12 @@ placeholder scene until their separate stories are implemented.
 
 ## Contract route selection
 
+This slice implements only the capability to choose an onward path, load its
+encounter, and lock paths not taken. It is **not** a contract-map UI design,
+visual design, or UX proposal. `ContractMap` is the domain name for the node
+graph, while the current hub and placeholder scenes are functional test
+harnesses that future UI/UX work may replace completely.
+
 The persistent `RunStateNode` also owns the authored contract graph. The hub
 asks `FlowCoordinator.selectable_encounters()` for every directly reachable
 node and shows the returned node ID and encounter type. A selection must go

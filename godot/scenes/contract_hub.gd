@@ -1,3 +1,5 @@
+# Temporary functional harness for exercising route selection. This is not a
+# proposed contract-map UI, visual design, or final player experience.
 extends Control
 
 @onready var current_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/CurrentLabel

@@ -1,7 +1,9 @@
 //! Pure Rust model for choosing a route through a contract.
 //!
 //! The graph and route-locking rules live here so they can be tested without
-//! Godot. Presentation and scene changes are handled by the Godot adapter.
+//! Godot. "Map" is only the domain name for this node graph: this module does
+//! not define a visual map, UI layout, or final UX. Presentation and scene
+//! changes are handled separately by the Godot adapter.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
