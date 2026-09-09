@@ -16,4 +16,6 @@ func _ready() -> void:
 	$VBoxContainer/ContinueButton.pressed.connect(_on_continue_pressed)
 
 func _on_continue_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/main.tscn")
+	var result: Dictionary = FlowCoordinator.finish_caught()
+	if not result.get("ok", false):
+		push_error("Could not finish caught flow: %s" % result.get("error", "unknown error"))
