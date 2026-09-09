@@ -13,7 +13,7 @@ navigation goes through `FlowCoordinator`.
 
 `FlowCoordinator` owns the persistent `RunStateNode`. Replacing a screen does
 not recreate that node, so contract state survives every screen transition.
-Player money and upgrades remain a separate concern and should use the future
+Player money and upgrades remain a separate concern and use the
 `PlayerStateGlobal` autoload rather than being added to run state.
 
 ## Lifecycle
@@ -88,10 +88,8 @@ A losing encounter reports its outcome in the same way:
 var result := FlowCoordinator.report_caught()
 ```
 
-`caught_screen.tscn` is intentionally not present yet. Until it is integrated,
-`report_caught()` returns a failure and leaves both the active encounter and
-current screen unchanged. Once the caught-screen work is reconciled, its
-Continue button must call:
+`caught_screen.tscn` is integrated with the coordinator. Its Continue button
+finishes the caught lifecycle through:
 
 ```gdscript
 FlowCoordinator.finish_caught()
@@ -99,7 +97,8 @@ FlowCoordinator.finish_caught()
 
 Finishing caught does not complete the selected map node. It returns to the hub
 with only that committed encounter available to retry; the branch declined at
-selection remains locked. The caught screen may apply its separate
-`PlayerStateGlobal` penalty once, but it must not own navigation. Keep both
-autoloads and manually reconcile Rust module registration when that feature
-lands.
+selection remains locked.
+
+The caught screen applies its separate `PlayerStateGlobal` penalty once, while
+the coordinator continues to own navigation. Both autoloads remain registered,
+and the Rust crate registers the caught-penalty and game-flow classes together.
