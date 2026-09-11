@@ -10,6 +10,7 @@
 //!   and applying the "caught" penalty (fine + lose this contract's upgrades).
 
 mod card;
+mod contract_map;
 mod deck;
 mod pack;
 mod run_state;

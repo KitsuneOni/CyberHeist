@@ -66,10 +66,13 @@ In the Godot Project Manager click Import and pick `godot/project.godot`.
 
 Open the `godot/` folder, not the root of the repo.
 
-Press F5 to run. The permanent `main.tscn` bootstrap should open the contract
-hub/map placeholder. Use **Start test combat** to enter the existing draw-card
-screen, then **Complete Encounter** to return to the hub. This path also proves
-the Rust extension and persistent run-state adapter loaded successfully.
+Press F5 to run. The permanent `main.tscn` bootstrap should open the temporary
+route-choice harness with Combat and Event choices. This harness demonstrates
+behaviour only; it is not the contract-map UI, visual design, or final UX.
+Select a route, complete the loaded encounter, and confirm only encounters
+onward from that choice remain available.
+This path also proves the Rust extension and persistent run-state adapter loaded
+successfully.
 
 For the lifecycle and scene-integration API, see [game-flow.md](game-flow.md).
 
@@ -170,8 +173,9 @@ CyberHeist/
 │   ├── autoload/                   # persistent flow coordinator + run state
 │   ├── scenes/
 │   │   ├── main.tscn               # permanent bootstrap and ScreenHost
-│   │   ├── contract_hub.tscn       # minimal map placeholder
-│   │   └── combat.tscn             # draw-card demo entered via flow API
+│   │   ├── contract_hub.tscn       # temporary route-choice test harness
+│   │   ├── combat.tscn             # draw-card combat entered from a choice
+│   │   └── placeholder_encounter.tscn # event/shop/elite placeholder
 │   └── assets/                     # art and audio, empty for now
 ├── docs/
 │   ├── game-flow.md                # lifecycle and scene integration
