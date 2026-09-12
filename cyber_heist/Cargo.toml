@@ -9,3 +9,5 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 godot = "0.5"
 rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"

@@ -4,12 +4,13 @@
 //! scenes, UI and presentation. Add new gameplay modules here and register them
 //! as Godot classes with `#[derive(GodotClass)]`.
 
-mod card;
 mod deck;
-mod pack;
+mod card_data;
+mod card_database;
 
 use godot::prelude::*;
-
+use card_data::CardData;
+use card_database::CardDatabase;
 use deck::Deck;
 
 struct CyberHeistExtension;
@@ -60,22 +61,36 @@ struct DrawPhase {
     #[export]
     hand_size: i32,
 
+    #[export]
+    play_count: i32,
+
     deck: Deck,
-    hand: Vec<card::Card>,
+    hand: Vec<CardData>,
     base: Base<Node>,
 }
 
 #[godot_api]
 impl INode for DrawPhase {
     fn init(base: Base<Node>) -> Self {
-        let mut rng = rand::rng();
         Self {
             hand_size: 5,
-            deck: Deck::new(pack::starter_pack(), &mut rng),
+            play_count: 0,
+            deck: Deck::new(Vec::new(), &mut  rand::rng()),
             hand: Vec::new(),
             base,
         }
     }
+
+    fn ready(&mut self){
+        let card_db = self.base().get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
+        let card_db = card_db.bind();
+
+        let starter_cards: Vec<CardData> = card_db.all().cloned().collect();
+
+        let mut rng = rand::rng();
+        self.deck = Deck::new(starter_cards, &mut rng);
+    }
+
 }
 
 #[godot_api]
@@ -100,6 +115,32 @@ impl DrawPhase {
             .collect()
     }
 
+
+    #[func]
+    fn play_card(&mut self, index: i32) -> GString {
+        let index = index as usize;
+
+        if index >= self.hand.len(){
+            godot_warn!(
+                "Play_card: index {index} out of bounds (hand has {} cards)", self.hand.len()
+            );
+            return GString::new();
+        }
+
+        let card = self.hand.remove(index);
+        let name = card.name.clone();
+
+        self.deck.discard(vec![card]);
+        self.play_count += 1;
+
+        godot_print!("Played {name} (Total plays: {})", self.play_count);
+        GString::from(name.as_str())
+    }
+
+    #[func]
+    fn hand_names(&self) -> PackedStringArray{
+        self.hand.iter().map(|c| GString::from(c.name.as_str())).collect()
+    }
     /// Sends the current hand to the discard pile, e.g. at end of turn.
     #[func]
     fn discard_hand(&mut self) {
