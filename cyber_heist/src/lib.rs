@@ -9,18 +9,18 @@
 //! - 'PlayerState' - autoload singleton tracking player money and upgrades,
 //!   and applying the "caught" penalty (fine + lose this contract's upgrades).
 
-mod deck;
 mod card_data;
 mod card_database;
 mod contract_map;
+mod deck;
 mod run_state;
 mod run_state_node;
 
-use godot::builtin::{VarDictionary, dict};
-use godot::prelude::*;
 use card_data::CardData;
 use card_database::CardDatabase;
 use deck::Deck;
+use godot::builtin::{VarDictionary, dict};
+use godot::prelude::*;
 
 struct CyberHeistExtension;
 
@@ -134,14 +134,16 @@ impl INode for DrawPhase {
         Self {
             hand_size: 5,
             play_count: 0,
-            deck: Deck::new(Vec::new(), &mut  rand::rng()),
+            deck: Deck::new(Vec::new(), &mut rand::rng()),
             hand: Vec::new(),
             base,
         }
     }
 
-    fn ready(&mut self){
-        let card_db = self.base().get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
+    fn ready(&mut self) {
+        let card_db = self
+            .base()
+            .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
         let card_db = card_db.bind();
 
         let starter_cards: Vec<CardData> = card_db.all().cloned().collect();
@@ -149,7 +151,6 @@ impl INode for DrawPhase {
         let mut rng = rand::rng();
         self.deck = Deck::new(starter_cards, &mut rng);
     }
-
 }
 
 #[godot_api]
@@ -174,14 +175,14 @@ impl DrawPhase {
             .collect()
     }
 
-
     #[func]
     fn play_card(&mut self, index: i32) -> GString {
         let index = index as usize;
 
-        if index >= self.hand.len(){
+        if index >= self.hand.len() {
             godot_warn!(
-                "Play_card: index {index} out of bounds (hand has {} cards)", self.hand.len()
+                "Play_card: index {index} out of bounds (hand has {} cards)",
+                self.hand.len()
             );
             return GString::new();
         }
@@ -197,8 +198,11 @@ impl DrawPhase {
     }
 
     #[func]
-    fn hand_names(&self) -> PackedStringArray{
-        self.hand.iter().map(|c| GString::from(c.name.as_str())).collect()
+    fn hand_names(&self) -> PackedStringArray {
+        self.hand
+            .iter()
+            .map(|c| GString::from(c.name.as_str()))
+            .collect()
     }
     /// Sends the current hand to the discard pile, e.g. at end of turn.
     #[func]

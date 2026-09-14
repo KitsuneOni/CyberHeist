@@ -89,7 +89,7 @@ mod tests {
     fn dummy_cards(ids: &[&str]) -> Vec<Card> {
         ids.iter().map(|id| dummy_card(id)).collect()
     }
-    
+
     #[test]
     fn draw_hand_deals_requested_number_of_cards() {
         let mut rng = StdRng::seed_from_u64(1);
@@ -195,6 +195,6 @@ mod tests {
         assert_eq!(deck.draw_pile_len(), 0);
         assert_eq!(deck.discard_pile_len(), 0);
     }
-        
+
 }
     */

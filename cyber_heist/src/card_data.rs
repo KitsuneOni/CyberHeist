@@ -13,16 +13,16 @@ pub struct CardData {
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
-pub enum CardType{
+pub enum CardType {
     Attack,
     Defence,
     Skill,
     Recon,
-    SocialEngineering
+    SocialEngineering,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
-pub enum Rarity{
+pub enum Rarity {
     Common,
     Uncommon,
     Rare,
@@ -30,7 +30,7 @@ pub enum Rarity{
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
-pub enum Keyword{
+pub enum Keyword {
     Damage(u32),
     Block(u32),
     Penetrating(u32),

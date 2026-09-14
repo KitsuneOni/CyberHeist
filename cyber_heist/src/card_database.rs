@@ -1,12 +1,11 @@
+use crate::card_data::CardData;
 use godot::classes::FileAccess;
 use godot::prelude::*;
 use std::collections::HashMap;
-use crate::card_data::CardData;
-
 
 pub fn parse_cards(text: &str) -> HashMap<String, CardData> {
-    let cards: Vec<CardData> = ron::from_str(text)
-        .expect("failed to parse cards.ron - check syntax");
+    let cards: Vec<CardData> =
+        ron::from_str(text).expect("failed to parse cards.ron - check syntax");
     cards.into_iter().map(|c| (c.id.clone(), c)).collect()
 }
 
@@ -17,7 +16,7 @@ pub fn load_card_database() -> HashMap<String, CardData> {
         .expect("Failed to open cards.ron");
 
     let text = file.get_as_text().to_string();
-    parse_cards(&text)  
+    parse_cards(&text)
 }
 
 #[derive(GodotClass)]
@@ -28,30 +27,28 @@ pub struct CardDatabase {
 }
 
 #[godot_api]
-impl INode for CardDatabase{
+impl INode for CardDatabase {
     fn init(base: Base<Node>) -> Self {
-        Self{
+        Self {
             base,
             cards: HashMap::new(),
         }
     }
 
-    fn ready(&mut self){
+    fn ready(&mut self) {
         self.cards = load_card_database();
         godot_print!("Loaded {} cards", self.cards.len());
     }
 }
 
 impl CardDatabase {
-    pub fn get(&self, id: &str) -> Option<&CardData>{
+    pub fn get(&self, id: &str) -> Option<&CardData> {
         self.cards.get(id)
     }
-    pub fn all(&self) -> impl Iterator<Item = &CardData>{
+    pub fn all(&self) -> impl Iterator<Item = &CardData> {
         self.cards.values()
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
