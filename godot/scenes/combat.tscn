@@ -29,6 +29,10 @@ layout_mode = 2
 text = "CyberHeist — Draw Phase"
 horizontal_alignment = 1
 
+[node name="EnergyLabel" type="Label" parent="VBoxContainer" unique_id=502938471]
+layout_mode = 2
+horizontal_alignment = 1
+
 [node name="HandLabel" type="Label" parent="VBoxContainer" unique_id=425733198]
 layout_mode = 2
 text = "Hand: (press Draw Hand)"
@@ -41,6 +45,10 @@ text = "Draw pile: -- | Discard pile: --"
 horizontal_alignment = 1
 
 [node name="PlayCountLabel" type="Label" parent="VBoxContainer" unique_id=174287500]
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="StatusLabel" type="Label" parent="VBoxContainer" unique_id=502938472]
 layout_mode = 2
 horizontal_alignment = 1
 
