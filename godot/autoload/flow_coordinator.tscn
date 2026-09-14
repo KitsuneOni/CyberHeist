@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://bf10wc00rd001"]
+
+[ext_resource type="Script" uid="uid://dxf10wc00rd01" path="res://autoload/flow_coordinator.gd" id="1_flow"]
+
+[node name="FlowCoordinator" type="Node"]
+script = ExtResource("1_flow")
+
+[node name="RunState" type="RunStateNode" parent="."]
