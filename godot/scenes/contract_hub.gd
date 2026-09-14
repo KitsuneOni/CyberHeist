@@ -3,6 +3,7 @@
 extends Control
 
 @onready var current_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/CurrentLabel
+@onready var credits_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/CreditsLabel
 @onready var instruction_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/InstructionLabel
 @onready var choices: HBoxContainer = $Page/VBox/MapPanel/MapMargin/MapContent/Choices
 @onready var status_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/StatusLabel
@@ -15,6 +16,10 @@ func _ready() -> void:
 func _show_available_encounters() -> void:
 	_clear_choices()
 	status_label.text = ""
+
+	# Refreshed on every return to the map, so a change made by an event node
+	# is visible as soon as the player lands back here.
+	credits_label.text = "Credits: %d" % PlayerStateGlobal.money()
 
 	var current: Dictionary = FlowCoordinator.current_contract_node()
 	var current_type: String = current.get("type", "unknown")

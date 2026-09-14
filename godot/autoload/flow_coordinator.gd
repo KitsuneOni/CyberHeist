@@ -3,10 +3,11 @@ extends Node
 const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const PLACEHOLDER_ENCOUNTER_SCENE_PATH := "res://scenes/placeholder_encounter.tscn"
+const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
-	"event": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
+	"event": EVENT_SCENE_PATH,
 	"shop": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
 	"elite": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
 }

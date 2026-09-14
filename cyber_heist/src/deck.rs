@@ -186,6 +186,48 @@ mod tests {
     }
 
     #[test]
+    fn ending_a_turn_discards_the_whole_hand_and_the_next_hand_comes_from_the_draw_pile() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let mut deck = Deck::new(
+            dummy_cards(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]),
+            &mut rng,
+        );
+
+        let first_hand = deck.draw_hand(3, &mut rng);
+        let first_ids: Vec<String> = first_hand.iter().map(|c| c.id.clone()).collect();
+
+        // End of turn: everything still held is discarded, not carried over.
+        deck.discard(first_hand);
+        assert_eq!(deck.discard_pile_len(), 3);
+
+        let second_hand = deck.draw_hand(3, &mut rng);
+
+        assert_eq!(
+            second_hand.len(),
+            3,
+            "a fresh hand is drawn for the new turn"
+        );
+        assert_eq!(
+            deck.draw_pile_len(),
+            4,
+            "10 cards, 6 drawn across two turns, 3 of which sit in the discard pile"
+        );
+        assert_eq!(
+            deck.discard_pile_len(),
+            3,
+            "the discarded hand stays in the discard pile while the draw pile still has cards"
+        );
+
+        for card in &second_hand {
+            assert!(
+                !first_ids.contains(&card.id),
+                "'{}' was discarded last turn and should not be redrawn until a reshuffle",
+                card.id
+            );
+        }
+    }
+
+    #[test]
     fn draw_hand_comes_back_short_when_both_piles_are_exhausted() {
         let mut rng = StdRng::seed_from_u64(7);
         let mut deck = Deck::new(dummy_cards(&["a"]), &mut rng);
