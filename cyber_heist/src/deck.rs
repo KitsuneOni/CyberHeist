@@ -66,27 +66,28 @@ impl Deck {
         hand
     }
 }
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::card::{CardType, Rarity, TargetType};
+    use crate::card_data::{CardType, Rarity};
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    fn dummy_card(id: &str) -> Card {
-        Card::new(
-            id,
-            id,
-            1,
-            Rarity::Common,
-            TargetType::Enemy,
-            CardType::Attack,
-            "test card",
-        )
+    fn dummy_card(id: &str) -> CardData {
+        CardData {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: "test card".to_string(),
+            cost: 1,
+            noise_generated: 0,
+            card_type: CardType::Attack,
+            rarity: Rarity::Common,
+            keywords: Vec::new(),
+        }
     }
 
-    fn dummy_cards(ids: &[&str]) -> Vec<Card> {
+    fn dummy_cards(ids: &[&str]) -> Vec<CardData> {
         ids.iter().map(|id| dummy_card(id)).collect()
     }
 
@@ -195,6 +196,4 @@ mod tests {
         assert_eq!(deck.draw_pile_len(), 0);
         assert_eq!(deck.discard_pile_len(), 0);
     }
-
 }
-    */

@@ -123,6 +123,12 @@ struct DrawPhase {
     #[export]
     play_count: i32,
 
+    #[export]
+    max_energy: i32,
+
+    #[export]
+    energy: i32,
+
     deck: Deck,
     hand: Vec<CardData>,
     base: Base<Node>,
@@ -134,6 +140,8 @@ impl INode for DrawPhase {
         Self {
             hand_size: 5,
             play_count: 0,
+            max_energy: 3,
+            energy: 3,
             deck: Deck::new(Vec::new(), &mut rand::rng()),
             hand: Vec::new(),
             base,
@@ -166,6 +174,7 @@ impl DrawPhase {
     fn draw_hand(&mut self) -> PackedStringArray {
         let previous_hand = std::mem::take(&mut self.hand);
         self.deck.discard(previous_hand);
+        self.energy = self.max_energy;
 
         let mut rng = rand::rng();
         self.hand = self.deck.draw_hand(self.hand_size as usize, &mut rng);
@@ -181,8 +190,18 @@ impl DrawPhase {
 
         if index >= self.hand.len() {
             godot_warn!(
-                "Play_card: index {index} out of bounds (hand has {} cards)",
+                "play_card: index {index} out of bounds (hand has {} cards)",
                 self.hand.len()
+            );
+            return GString::new();
+        }
+
+        let cost = self.hand[index].cost as i32;
+        if cost > self.energy {
+            godot_warn!(
+                "play_card: not enough energy to play '{}' (cost {cost}, have {})",
+                self.hand[index].name,
+                self.energy
             );
             return GString::new();
         }
@@ -190,6 +209,7 @@ impl DrawPhase {
         let card = self.hand.remove(index);
         let name = card.name.clone();
 
+        self.energy -= cost;
         self.deck.discard(vec![card]);
         self.play_count += 1;
 
@@ -204,6 +224,15 @@ impl DrawPhase {
             .map(|c| GString::from(c.name.as_str()))
             .collect()
     }
+
+    /// Energy costs of the current hand, in the same order as
+    /// `hand_names()`/`draw_hand()`, so GDScript can disable cards it can't
+    /// afford.
+    #[func]
+    fn hand_costs(&self) -> PackedInt32Array {
+        self.hand.iter().map(|c| c.cost as i32).collect()
+    }
+
     /// Sends the current hand to the discard pile, e.g. at end of turn.
     #[func]
     fn discard_hand(&mut self) {

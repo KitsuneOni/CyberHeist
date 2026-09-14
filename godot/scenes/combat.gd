@@ -1,8 +1,10 @@
 extends Control
 
 @onready var draw_phase: Node = $DrawPhase
+@onready var energy_label: Label = $VBoxContainer/EnergyLabel
 @onready var pile_label: Label = $VBoxContainer/PileLabel
 @onready var play_count_label: Label = $VBoxContainer/PlayCountLabel
+@onready var status_label: Label = $VBoxContainer/StatusLabel
 @onready var card_container: HBoxContainer = $VBoxContainer/CardContainer
 
 var selected_index := -1
@@ -30,9 +32,11 @@ func _on_complete_encounter_pressed() -> void:
 
 
 func _draw_hand() -> void:
+	status_label.text = ""
 	var hand: PackedStringArray = draw_phase.draw_hand()
 	_rebuild_card_buttons(hand)
 	_update_pile_label()
+	_update_energy_label()
 
 
 func _rebuild_card_buttons(names: PackedStringArray) -> void:
@@ -40,10 +44,13 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 		child.queue_free()
 	card_buttons.clear()
 
+	var costs: PackedInt32Array = draw_phase.hand_costs()
+
 	for i in names.size():
 		var button := Button.new()
-		button.text = names[i]
-		button.toggle_mode = true 
+		button.text = "%s [%d]" % [names[i], costs[i]]
+		button.toggle_mode = true
+		button.disabled = costs[i] > draw_phase.energy
 		button.pressed.connect(_on_card_clicked.bind(i))
 		card_container.add_child(button)
 		card_buttons.append(button)
@@ -69,9 +76,13 @@ func _on_play_button_pressed() -> void:
 	if played_name != "":
 		play_count_label.text = "Cards played: %d" % draw_phase.play_count
 		selected_index = -1
+		status_label.text = ""
 		_rebuild_card_buttons(draw_phase.hand_names())
+	else:
+		status_label.text = "Not enough energy to play that card."
 
 	_update_pile_label()
+	_update_energy_label()
 
 
 func _update_pile_label() -> void:
@@ -79,3 +90,7 @@ func _update_pile_label() -> void:
 		draw_phase.draw_pile_count(),
 		draw_phase.discard_pile_count(),
 	]
+
+
+func _update_energy_label() -> void:
+	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]
