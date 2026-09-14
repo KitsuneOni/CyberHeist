@@ -42,6 +42,7 @@ impl INode for CardDatabase {
 }
 
 impl CardDatabase {
+    #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Option<&CardData> {
         self.cards.get(id)
     }

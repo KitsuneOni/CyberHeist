@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct CardData {
     pub id: String,
     pub name: String,
