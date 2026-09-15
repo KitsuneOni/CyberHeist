@@ -13,6 +13,7 @@
 
 mod card_data;
 mod card_database;
+mod card_play;
 mod card_text;
 mod contract_map;
 mod deck;
@@ -28,6 +29,7 @@ use card_database::CardDatabase;
 use deck::Deck;
 use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
+use sentry_node::SentryNode;
 
 struct CyberHeistExtension;
 
@@ -209,37 +211,35 @@ impl DrawPhase {
             .collect()
     }
 
+    /// Resolves one paid play against this encounter's sentry. The model owns
+    /// validation, energy, discard and signed noise as one transaction.
     #[func]
-    fn play_card(&mut self, index: i32) -> GString {
-        let index = index as usize;
-
-        if index >= self.hand.len() {
-            godot_warn!(
-                "play_card: index {index} out of bounds (hand has {} cards)",
-                self.hand.len()
-            );
-            return GString::new();
+    fn play_card(&mut self, index: i32, mut sentry: Gd<SentryNode>) -> VarDictionary {
+        let result = card_play::play_card(
+            &mut self.hand,
+            &mut self.deck,
+            &mut self.energy,
+            &mut sentry.bind_mut().sentry,
+            index,
+        );
+        match result {
+            Ok(played) => {
+                self.play_count += 1;
+                vdict! {
+                    "ok" => true,
+                    "name" => played.name.as_str(),
+                    "noise_change" => played.noise_change,
+                }
+            }
+            Err(error) => {
+                let error = match error {
+                    card_play::PlayError::Detected => "detected",
+                    card_play::PlayError::InvalidIndex => "invalid_index",
+                    card_play::PlayError::NotEnoughEnergy => "not_enough_energy",
+                };
+                vdict! { "ok" => false, "error" => error }
+            }
         }
-
-        let cost = self.hand[index].cost as i32;
-        if cost > self.energy {
-            godot_warn!(
-                "play_card: not enough energy to play '{}' (cost {cost}, have {})",
-                self.hand[index].name,
-                self.energy
-            );
-            return GString::new();
-        }
-
-        let card = self.hand.remove(index);
-        let name = card.name.clone();
-
-        self.energy -= cost;
-        self.deck.discard(vec![card]);
-        self.play_count += 1;
-
-        godot_print!("Played {name} (Total plays: {})", self.play_count);
-        GString::from(name.as_str())
     }
 
     #[func]
@@ -306,9 +306,8 @@ impl DrawPhase {
     /// Emitted after the player's turn ends and before the next one begins,
     /// carrying the turn number that just finished.
     ///
-    /// This is the seam the security system's own turn hangs off (Trello card
-    /// 30). Nothing listens to it yet, so the phase currently passes straight
-    /// through and control returns to the player.
+    /// The combat scene connects this to the sentry, which resolves its action
+    /// synchronously before the next hand is dealt.
     #[signal]
     fn security_phase(finished_turn: i32);
 

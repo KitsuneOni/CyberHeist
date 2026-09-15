@@ -113,8 +113,41 @@ combat screen calls `FlowCoordinator.report_caught()`, which moves run state to
 contract's upgrades. The hand `end_turn()` dealt for the turn that will never
 happen is simply discarded along with the screen.
 
-Card `noise_generated` values are not on the meter yet. `add_noise` is the way
-in for them when card effects are implemented.
+## Card noise and recovery (story #4)
+
+VPN is a playable recovery action: it costs 2 energy, lowers noise by 10 with
+a floor of zero, and goes to discard. The player's turn continues and the
+queued sentry intent does not change. It must be played **before** the meter
+fills; recovery cannot revive a detected encounter. VPN's earlier intangible
+and end-turn promises are removed rather than implying those effects exist.
+
+`DrawPhase.play_card(index, sentry)` returns `{ok: true, name, noise_change}`
+or `{ok: false, error}`. The plain Rust `card_play` transaction rejects an
+invalid index, insufficient energy or an already-full meter before changing
+anything. On success it spends energy, removes and discards the card, and
+applies its signed `noise_generated` exactly once. `noise_change` is the actual
+clamped change, which can be zero. The bridge increments the play counter only
+on success; the combat screen refreshes the labels and immediately routes a
+full meter through `FlowCoordinator.report_caught()`.
+
+This is deliberate overlap with #51 (card-generated noise): positive, zero and
+negative card noise share the same path. Damage, block and other keywords are
+still not resolved by this slice. No keyword engine or sentry-script changes
+are included.
+
+The harness's free **Draw Hand** button is removed from combat, because it
+would let players repeatedly refresh energy and redraw VPN without a sentry
+turn. Initial dealing and **End Turn** still use the existing draw APIs.
+
+Run the real-scene regression with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/lower_detection_test.gd
+```
+
+The test draws the complete deck only as a fixture and selects by card name,
+so recovery, rejection and positive-noise coverage do not depend on shuffling.
+It runs alongside the existing no-card combat smoke test in the stress workflow.
 
 ## Scene-facing API
 

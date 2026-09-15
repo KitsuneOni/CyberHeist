@@ -114,10 +114,6 @@ layout_mode = 2
 theme_override_constants/separation = 16
 alignment = 1
 
-[node name="DrawButton" type="Button" parent="VBoxContainer/Buttons" unique_id=1620870438]
-layout_mode = 2
-text = "Draw Hand"
-
 [node name="EndTurnButton" type="Button" parent="VBoxContainer/Buttons" unique_id=18982048]
 layout_mode = 2
 text = "End Turn"
@@ -130,7 +126,6 @@ text = "Play Card"
 layout_mode = 2
 text = "Complete Encounter"
 
-[connection signal="pressed" from="VBoxContainer/Buttons/DrawButton" to="." method="_on_draw_button_pressed"]
 [connection signal="pressed" from="VBoxContainer/Buttons/EndTurnButton" to="." method="_on_end_turn_button_pressed"]
 [connection signal="pressed" from="VBoxContainer/Buttons/PlayButton" to="." method="_on_play_button_pressed"]
 [connection signal="pressed" from="VBoxContainer/Buttons/CompleteEncounterButton" to="." method="_on_complete_encounter_pressed"]

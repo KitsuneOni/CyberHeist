@@ -11,13 +11,13 @@ use crate::sentry::Sentry;
 
 #[derive(GodotClass)]
 #[class(base=Node)]
-struct SentryNode {
+pub(crate) struct SentryNode {
     /// Which construct is guarding this encounter. Set it in the Inspector to
     /// field a different one, leave it blank to keep the built-in WARDEN-7.
     #[export]
     sentry_name: GString,
 
-    sentry: Sentry,
+    pub(crate) sentry: Sentry,
     base: Base<Node>,
 }
 

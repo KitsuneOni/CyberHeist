@@ -28,11 +28,10 @@ func _ready() -> void:
 	_draw_hand()
 
 
-func _on_draw_button_pressed() -> void:
-	_draw_hand()
-
-
 func _on_end_turn_button_pressed() -> void:
+	if not _can_act():
+		return
+
 	# Rust owns the whole turn boundary: discard what's left, hand the sentry
 	# its phase, then deal the next turn's hand with refreshed energy. The
 	# sentry reports back through _on_sentry_turn_resolved before this call
@@ -75,6 +74,9 @@ func _report_detected() -> void:
 
 
 func _on_complete_encounter_pressed() -> void:
+	if not _can_act():
+		return
+
 	var result: Dictionary = FlowCoordinator.complete_active_encounter()
 	if not result.get("ok", false):
 		push_error("Could not complete encounter: %s" % result.get("error", "unknown error"))
@@ -154,20 +156,41 @@ func _update_selection_visuals() -> void:
 		card_buttons[i].button_pressed = (i == selected_index)
 
 
+# Screen destruction is deferred. Ignore queued input on a combat screen whose
+# encounter has already ended, including the frame in which a card fills noise.
+func _can_act() -> bool:
+	return (
+		not is_queued_for_deletion()
+		and FlowCoordinator.run_snapshot().get("phase", "") == "encounter_active"
+	)
+
+
 func _on_play_button_pressed() -> void:
-	if selected_index == -1:
+	if not _can_act() or selected_index == -1:
 		return
 
-	var played_name: String = draw_phase.play_card(selected_index)
-	if played_name != "":
+	var result: Dictionary = draw_phase.play_card(selected_index, sentry)
+	if result.get("ok", false):
 		play_count_label.text = "Cards played: %d" % draw_phase.play_count
 		selected_index = -1
-		status_label.text = ""
+		var noise_change: int = result.get("noise_change", 0)
+		status_label.text = "%s played. Noise change: %+d." % [
+			result.get("name", "Card"),
+			noise_change,
+		]
 		_rebuild_card_buttons(draw_phase.hand_names())
 	else:
-		status_label.text = "Not enough energy to play that card."
+		match result.get("error", ""):
+			"not_enough_energy":
+				status_label.text = "Not enough energy. Choose a cheaper card or end your turn."
+			"invalid_index":
+				status_label.text = "That card is no longer in your hand. Select another card."
 
 	_refresh_status_labels()
+	# Positive card noise uses the same caught flow as the sentry's turn. This
+	# happens before another card can be played, never at the next turn boundary.
+	if sentry.noise() >= sentry.max_noise():
+		_report_detected()
 
 
 func _refresh_status_labels() -> void:
