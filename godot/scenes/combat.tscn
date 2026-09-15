@@ -11,6 +11,35 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_combat")
 
+[node name="NoiseBarContainer" type="Control" parent="." unique_id=1436714080]
+custom_minimum_size = Vector2(300, 30)
+anchors_preset = 0
+offset_left = 9.0
+offset_top = 8.0
+offset_right = 335.0
+offset_bottom = 49.0
+offset_transform_position = Vector2(0, -300)
+offset_transform_scale = Vector2(0.5, 1)
+
+[node name="NoiseLabel" type="Label" parent="NoiseBarContainer" unique_id=1906396460]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="NoiseBar" type="ProgressBar" parent="NoiseBarContainer" unique_id=560289160]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+show_percentage = false
+
 [node name="DrawPhase" type="DrawPhase" parent="." unique_id=1753657608]
 hand_size = 3
 
@@ -66,8 +95,8 @@ theme_override_constants/margin_right = 16
 theme_override_constants/margin_bottom = 12
 
 [node name="DetailContent" type="VBoxContainer" parent="VBoxContainer/DetailPanel/DetailMargin" unique_id=502938477]
-layout_mode = 2
 custom_minimum_size = Vector2(560, 0)
+layout_mode = 2
 theme_override_constants/separation = 6
 
 [node name="DetailTitle" type="Label" parent="VBoxContainer/DetailPanel/DetailMargin/DetailContent" unique_id=502938478]

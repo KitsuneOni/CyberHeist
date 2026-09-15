@@ -11,6 +11,9 @@ extends Control
 @onready var detail_stats: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailStats
 @onready var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
 @onready var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
+@onready var noise_bar: ProgressBar = $NoiseBarContainer/NoiseBar
+@onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
+
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 
@@ -20,6 +23,7 @@ var card_buttons: Array[Button] = []
 
 func _ready() -> void:
 	_draw_hand()
+	_update_noise_label()
 
 
 func _on_draw_button_pressed() -> void:
@@ -136,6 +140,7 @@ func _refresh_status_labels() -> void:
 	_update_turn_label()
 	_update_pile_label()
 	_update_energy_label()
+	_update_noise_label()
 
 
 func _update_turn_label() -> void:
@@ -148,6 +153,13 @@ func _update_pile_label() -> void:
 		draw_phase.discard_pile_count(),
 	]
 
+func _update_noise_label() -> void:
+	var current: int = NoiseMeterGlobal.noise
+	var max_val: int = NoiseMeterGlobal.max_noise
+	noise_bar.max_value = max_val
+	noise_bar.value = current
+	noise_label.text = "Noise: %d / %d" % [current, max_val]
+	
 
 func _update_energy_label() -> void:
 	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]

@@ -16,6 +16,7 @@ mod contract_map;
 mod deck;
 mod events;
 mod events_node;
+mod noise_meter;
 mod run_state;
 mod run_state_node;
 
@@ -24,6 +25,7 @@ use card_database::CardDatabase;
 use deck::Deck;
 use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
+use noise_meter::NoiseMeter;
 
 struct CyberHeistExtension;
 
@@ -229,6 +231,12 @@ impl DrawPhase {
 
         let card = self.hand.remove(index);
         let name = card.name.clone();
+        let noise_delta = card.noise_generated as i32;
+
+        let mut noise_meter = self
+            .base()
+            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal");
+        noise_meter.bind_mut().add_noise(noise_delta);
 
         self.energy -= cost;
         self.deck.discard(vec![card]);
