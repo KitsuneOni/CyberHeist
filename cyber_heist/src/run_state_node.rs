@@ -20,7 +20,8 @@ struct RunStateNode {
 impl INode for RunStateNode {
     fn init(base: Base<Node>) -> Self {
         Self {
-            state: RunState::new(),
+            // Every launch rolls a fresh contract.
+            state: RunState::generated(&mut rand::rng()),
             base,
         }
     }
@@ -45,13 +46,26 @@ impl RunStateNode {
         for entry in self.state.node_progress() {
             let type_text = encounter_type_text(entry.encounter_type);
             let status_text = node_status_text(entry.status);
+
+            let mut connections: Array<i64> = Array::new();
+            for next_node in &entry.connections {
+                connections.push(i64::from(*next_node));
+            }
+
             entries.push(&vdict! {
                 "id" => i64::from(entry.node_id),
                 "type" => entry.encounter_type.as_str(),
                 "type_name" => type_text.name,
                 "type_marker" => type_text.marker,
+                "description" => type_text.description,
                 "status" => entry.status.as_str(),
                 "status_marker" => status_text.marker,
+                "x" => entry.x as f64,
+                "y" => entry.y as f64,
+                "is_entry" => entry.is_entry,
+                "is_current" => entry.is_current,
+                "is_target" => entry.is_target,
+                "connections" => &connections,
             });
         }
         entries

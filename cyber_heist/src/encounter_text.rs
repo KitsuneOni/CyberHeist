@@ -29,7 +29,9 @@ pub struct EncounterTypeText {
 pub fn encounter_type_text(encounter_type: EncounterType) -> EncounterTypeText {
     match encounter_type {
         EncounterType::Entry => EncounterTypeText {
-            marker: "[>]",
+            // Not [>]: that belongs to the "you can go here next" status, and
+            // one glyph cannot mean two things in the same key.
+            marker: "[^]",
             name: "Entry",
             description: "Where the contract begins. Nothing to fight here.",
         },
@@ -187,6 +189,32 @@ mod tests {
             markers.len(),
             "two node statuses share a marker: {markers:?}"
         );
+    }
+
+    /// The key lists encounter markers and status markers together, so a
+    /// glyph shared across the two groups defines itself twice. The
+    /// per-group tests above cannot catch that on their own.
+    #[test]
+    fn no_marker_means_two_different_things() {
+        let mut markers: Vec<(&str, String)> = Vec::new();
+
+        for encounter_type in all_encounter_types() {
+            let text = encounter_type_text(encounter_type);
+            markers.push((text.marker, format!("encounter type {}", text.name)));
+        }
+        for status in all_node_statuses() {
+            let text = node_status_text(status);
+            markers.push((text.marker, format!("status {status:?}")));
+        }
+
+        for (index, (marker, owner)) in markers.iter().enumerate() {
+            for (other_marker, other_owner) in markers.iter().skip(index + 1) {
+                assert_ne!(
+                    marker, other_marker,
+                    "'{marker}' is used for both {owner} and {other_owner}"
+                );
+            }
+        }
     }
 
     #[test]
