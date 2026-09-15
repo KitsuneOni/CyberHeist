@@ -557,7 +557,6 @@ impl ContractMap {
             .iter()
             .map(|node| node.id)
             .collect();
-
         let reachable = self.reachable_from_current();
         let depths = self.node_depths();
         let max_depth = depths.values().copied().max().unwrap_or(0);
@@ -1047,6 +1046,15 @@ mod tests {
         assert!(
             !progress_of(&contract, 0).is_current,
             "the entry is behind them now"
+        );
+        assert_eq!(
+            contract
+                .node_progress()
+                .iter()
+                .filter(|entry| entry.is_current)
+                .count(),
+            1,
+            "exactly one node is where the player is"
         );
     }
 

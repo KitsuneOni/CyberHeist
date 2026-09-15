@@ -192,8 +192,8 @@ mod tests {
     }
 
     /// The key lists encounter markers and status markers together, so a
-    /// glyph shared across the two groups defines itself twice. The
-    /// per-group tests above cannot catch that on their own.
+    /// glyph shared across the two groups defines itself twice. The per-group
+    /// tests above cannot catch that on their own.
     #[test]
     fn no_marker_means_two_different_things() {
         let mut markers: Vec<(&str, String)> = Vec::new();
