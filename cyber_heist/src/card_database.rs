@@ -66,6 +66,7 @@ mod tests {
             card_type: Skill,
             rarity: Common,
             keywords: [Intangible(1)],
+            weak_side: None,
         ),
     ]
     "#;

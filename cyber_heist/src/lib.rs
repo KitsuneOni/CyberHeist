@@ -18,6 +18,7 @@ mod contract_map;
 mod deck;
 mod events;
 mod events_node;
+mod noise_meter;
 mod run_state;
 mod run_state_node;
 mod sentry;
@@ -28,6 +29,7 @@ use card_database::CardDatabase;
 use deck::Deck;
 use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
+use noise_meter::NoiseMeter;
 
 struct CyberHeistExtension;
 
@@ -203,9 +205,11 @@ impl DrawPhase {
 
         let mut rng = rand::rng();
         self.hand = self.deck.draw_hand(self.hand_size as usize, &mut rng);
+
+        let noise = self.current_noise();
         self.hand
             .iter()
-            .map(|card| GString::from(card.name.as_str()))
+            .map(|card| GString::from(card.display_name(noise).as_str()))
             .collect()
     }
 
@@ -231,8 +235,15 @@ impl DrawPhase {
             return GString::new();
         }
 
+        let noise = self.current_noise();
         let card = self.hand.remove(index);
-        let name = card.name.clone();
+        let name = card.display_name(noise);
+        let noise_delta = card.noise_generated as i32;
+
+        let mut noise_meter = self
+            .base()
+            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal");
+        noise_meter.bind_mut().add_noise(noise_delta);
 
         self.energy -= cost;
         self.deck.discard(vec![card]);
@@ -244,9 +255,10 @@ impl DrawPhase {
 
     #[func]
     fn hand_names(&self) -> PackedStringArray {
+        let noise = self.current_noise();
         self.hand
             .iter()
-            .map(|c| GString::from(c.name.as_str()))
+            .map(|c| GString::from(c.display_name(noise).as_str()))
             .collect()
     }
 
@@ -265,7 +277,8 @@ impl DrawPhase {
             return vdict! { "ok" => false };
         };
 
-        let detail = card_text::describe(card);
+        let noise = self.current_noise();
+        let detail = card_text::describe(card, noise);
 
         let mut keywords: Array<VarDictionary> = Array::new();
         for keyword in &detail.keywords {
@@ -333,9 +346,11 @@ impl DrawPhase {
 
         let mut rng = rand::rng();
         self.hand = self.deck.draw_hand(self.hand_size as usize, &mut rng);
+
+        let noise = self.current_noise();
         self.hand
             .iter()
-            .map(|card| GString::from(card.name.as_str()))
+            .map(|card| GString::from(card.display_name(noise).as_str()))
             .collect()
     }
 
@@ -347,5 +362,14 @@ impl DrawPhase {
     #[func]
     fn discard_pile_count(&self) -> i32 {
         self.deck.discard_pile_len() as i32
+    }
+}
+
+impl DrawPhase {
+    fn current_noise(&self) -> i32 {
+        let noise_meter = self
+            .base()
+            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal");
+        noise_meter.bind().noise
     }
 }
