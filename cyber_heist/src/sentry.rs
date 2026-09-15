@@ -133,9 +133,14 @@ impl Sentry {
     /// The meter never drops below zero or climbs past its cap, so a very loud
     /// action cannot bank extra noise for later and a quietening effect cannot
     /// build up credit.
+    ///
+    /// The addition saturates because this is reachable from script with any
+    /// `i32`: an amount near the type's limit would otherwise overflow before
+    /// the clamp ever ran, panicking in debug and wrapping to a negative in
+    /// release, which would clear the meter instead of filling it.
     pub fn add_noise(&mut self, noise: i32) -> i32 {
         let before = self.noise;
-        self.noise = (self.noise + noise).clamp(0, self.max_noise);
+        self.noise = self.noise.saturating_add(noise).clamp(0, self.max_noise);
         self.noise - before
     }
 
@@ -268,6 +273,46 @@ mod tests {
     }
 
     #[test]
+    fn an_enormous_amount_fills_the_meter_rather_than_overflowing_it() {
+        let mut sentry = Sentry::new("WARDEN-7", 10, vec![SentryAction::new("Trace Sweep", 2)]);
+
+        sentry.add_noise(1);
+
+        // Adding this to a meter already at 1 overflows if the sum is taken
+        // before the clamp, which would wrap negative and empty the meter.
+        assert_eq!(sentry.add_noise(i32::MAX), 9);
+        assert_eq!(sentry.noise(), 10);
+        assert!(sentry.is_detected());
+    }
+
+    #[test]
+    fn an_enormous_quietening_empties_the_meter_rather_than_overflowing_it() {
+        let mut sentry = Sentry::new("WARDEN-7", 10, vec![SentryAction::new("Trace Sweep", 2)]);
+
+        sentry.add_noise(4);
+
+        assert_eq!(sentry.add_noise(i32::MIN), -4);
+        assert_eq!(sentry.noise(), 0);
+        assert!(!sentry.is_detected());
+    }
+
+    #[test]
+    fn an_authored_action_loud_enough_to_overflow_still_ends_the_run() {
+        let mut sentry = Sentry::new(
+            "WARDEN-7",
+            10,
+            vec![SentryAction::new("Full Sweep", i32::MAX)],
+        );
+
+        sentry.add_noise(1);
+        let turn = sentry.take_turn().unwrap();
+
+        assert_eq!(turn.noise_added, 9);
+        assert_eq!(turn.noise, 10);
+        assert!(turn.run_failed);
+    }
+
+    #[test]
     fn noise_already_on_the_meter_can_make_the_next_turn_the_fatal_one() {
         let mut sentry = Sentry::new("WARDEN-7", 5, vec![SentryAction::new("Trace Sweep", 2)]);
 
@@ -287,5 +332,131 @@ mod tests {
 
         assert_eq!(sentry.name(), "BLACKGATE");
         assert_eq!(turn.sentry_name, "BLACKGATE");
+    }
+}
+
+/// Stress coverage for the noise meter, kept out of the normal run because it
+/// is far slower than the unit tests above.
+///
+/// These are `#[ignore]`d so `cargo test` stays quick; the stress workflow runs
+/// them with `cargo test -- --ignored`. The generator is a fixed-seed LCG
+/// rather than a random one, so a failure here reproduces exactly instead of
+/// vanishing on the next run.
+#[cfg(test)]
+mod stress {
+    use super::*;
+
+    /// Values around the edges of `i32`, where an unsaturated add goes wrong.
+    const EDGE_AMOUNTS: [i32; 12] = [
+        i32::MIN,
+        i32::MIN + 1,
+        i32::MIN / 2,
+        -1_000_000,
+        -11,
+        -1,
+        0,
+        1,
+        11,
+        1_000_000,
+        i32::MAX - 1,
+        i32::MAX,
+    ];
+
+    /// Deterministic pseudo-random amounts. The constants are the usual
+    /// Numerical Recipes LCG, which is more than good enough for picking test
+    /// inputs and needs no dependency.
+    struct Lcg(u32);
+
+    impl Lcg {
+        fn next_amount(&mut self) -> i32 {
+            self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            self.0 as i32
+        }
+    }
+
+    /// Every invariant the meter is supposed to hold, checked after each move.
+    fn assert_meter_invariants(sentry: &Sentry, delta: i32, before: i32) {
+        assert!(
+            sentry.noise() >= 0 && sentry.noise() <= sentry.max_noise(),
+            "meter left its range: {} not in 0..={}",
+            sentry.noise(),
+            sentry.max_noise()
+        );
+        assert_eq!(
+            sentry.noise() - before,
+            delta,
+            "reported delta disagrees with the meter it moved"
+        );
+        assert_eq!(
+            sentry.is_detected(),
+            sentry.noise() >= sentry.max_noise(),
+            "detection disagrees with the meter"
+        );
+    }
+
+    #[test]
+    #[ignore = "stress: run with --ignored"]
+    fn every_pair_of_edge_amounts_keeps_the_meter_in_range() {
+        for cap in [0, 1, 10, 1_000, i32::MAX] {
+            for first in EDGE_AMOUNTS {
+                for second in EDGE_AMOUNTS {
+                    let mut sentry = Sentry::new("WARDEN-7", cap, Vec::new());
+
+                    let before = sentry.noise();
+                    let delta = sentry.add_noise(first);
+                    assert_meter_invariants(&sentry, delta, before);
+
+                    let before = sentry.noise();
+                    let delta = sentry.add_noise(second);
+                    assert_meter_invariants(&sentry, delta, before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "stress: run with --ignored"]
+    fn a_long_run_of_random_amounts_keeps_the_meter_in_range() {
+        let mut rng = Lcg(0x5EED_1234);
+
+        for cap in [0, 1, 10, 97, i32::MAX] {
+            let mut sentry = Sentry::new("WARDEN-7", cap, Vec::new());
+
+            for _ in 0..200_000 {
+                let before = sentry.noise();
+                let delta = sentry.add_noise(rng.next_amount());
+                assert_meter_invariants(&sentry, delta, before);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "stress: run with --ignored"]
+    fn authored_actions_of_any_loudness_survive_repeated_turns() {
+        let mut rng = Lcg(0xC0FF_EE01);
+
+        for cap in [0, 1, 10, 1_000] {
+            // The extremes are authored in deliberately rather than left to the
+            // generator, which can go a whole run without producing an amount
+            // large enough to overflow the meter it is added to.
+            let mut script = vec![
+                SentryAction::new("Full Sweep", i32::MAX),
+                SentryAction::new("Total Blackout", i32::MIN),
+            ];
+            script.extend(
+                (0..7).map(|i| SentryAction::new(&format!("Action {i}"), rng.next_amount())),
+            );
+            let mut sentry = Sentry::new("WARDEN-7", cap, script);
+
+            // Long enough to cycle the script many times over, so a meter that
+            // drifts or wraps has every chance to show it.
+            for _ in 0..50_000 {
+                let before = sentry.noise();
+                let turn = sentry.take_turn().expect("a scripted sentry always acts");
+                assert_meter_invariants(&sentry, turn.noise_added, before);
+                assert_eq!(turn.noise, sentry.noise());
+                assert_eq!(turn.run_failed, sentry.is_detected());
+            }
+        }
     }
 }
