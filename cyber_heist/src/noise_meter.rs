@@ -27,7 +27,7 @@ impl INode for NoiseMeter {
 impl NoiseMeter {
     #[func]
     pub fn add_noise(&mut self, amount: i32) {
-        self.noise = (self.noise + amount).clamp(0, self.max_noise);
+        self.noise = self.noise.saturating_add(amount).clamp(0, self.max_noise);
         godot_print!("Noise meter: {}/{}", self.noise, self.max_noise);
     }
 }
