@@ -11,8 +11,11 @@
 
 mod card_data;
 mod card_database;
+mod card_text;
 mod contract_map;
 mod deck;
+mod events;
+mod events_node;
 mod run_state;
 mod run_state_node;
 
@@ -91,6 +94,20 @@ impl PlayerState {
         self.upgrades.push(name);
     }
 
+    // Current credit balance. Read by screens that show the player's money,
+    // e.g. after an event node changes it.
+    #[func]
+    fn money(&self) -> i64 {
+        self.money
+    }
+
+    // Adds credits to the balance. `amount` may be negative for a cost, e.g.
+    // paying a broker during an event.
+    #[func]
+    fn add_credits(&mut self, amount: i64) {
+        self.money += amount;
+    }
+
     // Called when the player is caught. Deducts 'fine' from money and wipes out any upgrades earned this contract
     // Returns what was lost so the CaugthtScreen can display it:
     // {"fine": int, "lost_upgrades": Array[String] }.
@@ -124,6 +141,9 @@ struct DrawPhase {
     play_count: i32,
 
     #[export]
+    turn_number: i32,
+
+    #[export]
     max_energy: i32,
 
     #[export]
@@ -140,6 +160,7 @@ impl INode for DrawPhase {
         Self {
             hand_size: 5,
             play_count: 0,
+            turn_number: 1,
             max_energy: 3,
             energy: 3,
             deck: Deck::new(Vec::new(), &mut rand::rng()),
@@ -225,6 +246,44 @@ impl DrawPhase {
             .collect()
     }
 
+    /// Everything worth knowing about the card at `index` in hand, for the
+    /// detail panel: name, type, rarity, cost, noise, description and one
+    /// entry per effect with an explanation of what that effect does.
+    ///
+    /// Returns `{ok: false}` for an index that is not in hand, so a stale
+    /// selection cannot show another card's details.
+    #[func]
+    fn card_detail(&self, index: i32) -> VarDictionary {
+        let Ok(index) = usize::try_from(index) else {
+            return vdict! { "ok" => false };
+        };
+        let Some(card) = self.hand.get(index) else {
+            return vdict! { "ok" => false };
+        };
+
+        let detail = card_text::describe(card);
+
+        let mut keywords: Array<VarDictionary> = Array::new();
+        for keyword in &detail.keywords {
+            keywords.push(&vdict! {
+                "label" => keyword.label.as_str(),
+                "explanation" => keyword.explanation.as_str(),
+            });
+        }
+
+        vdict! {
+            "ok" => true,
+            "name" => detail.name.as_str(),
+            "type" => detail.card_type.as_str(),
+            "rarity" => detail.rarity.as_str(),
+            "cost" => detail.cost,
+            "cost_text" => detail.cost_text.as_str(),
+            "noise_text" => detail.noise_text.as_str(),
+            "description" => detail.description.as_str(),
+            "keywords" => &keywords,
+        }
+    }
+
     /// Energy costs of the current hand, in the same order as
     /// `hand_names()`/`draw_hand()`, so GDScript can disable cards it can't
     /// afford.
@@ -238,6 +297,42 @@ impl DrawPhase {
     fn discard_hand(&mut self) {
         let hand = std::mem::take(&mut self.hand);
         self.deck.discard(hand);
+    }
+
+    /// Emitted after the player's turn ends and before the next one begins,
+    /// carrying the turn number that just finished.
+    ///
+    /// This is the seam the security system's own turn hangs off (Trello card
+    /// 30). Nothing listens to it yet, so the phase currently passes straight
+    /// through and control returns to the player.
+    #[signal]
+    fn security_phase(finished_turn: i32);
+
+    /// Ends the player's turn: every card still in hand goes to the discard
+    /// pile, the security system gets its phase, then the next turn begins
+    /// with refreshed energy and a freshly drawn hand.
+    ///
+    /// Returns the new hand's card names, so GDScript can render it directly.
+    #[func]
+    fn end_turn(&mut self) -> PackedStringArray {
+        let finished_turn = self.turn_number;
+
+        // The player's turn ends: nothing is carried over into the next hand.
+        let remaining_hand = std::mem::take(&mut self.hand);
+        self.deck.discard(remaining_hand);
+
+        self.signals().security_phase().emit(finished_turn);
+
+        // Control comes back to the player for a fresh turn.
+        self.turn_number += 1;
+        self.energy = self.max_energy;
+
+        let mut rng = rand::rng();
+        self.hand = self.deck.draw_hand(self.hand_size as usize, &mut rng);
+        self.hand
+            .iter()
+            .map(|card| GString::from(card.name.as_str()))
+            .collect()
     }
 
     #[func]

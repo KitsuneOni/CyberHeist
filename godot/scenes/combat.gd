@@ -1,11 +1,18 @@
 extends Control
 
 @onready var draw_phase: Node = $DrawPhase
+@onready var turn_label: Label = $VBoxContainer/TurnLabel
 @onready var energy_label: Label = $VBoxContainer/EnergyLabel
 @onready var pile_label: Label = $VBoxContainer/PileLabel
 @onready var play_count_label: Label = $VBoxContainer/PlayCountLabel
 @onready var status_label: Label = $VBoxContainer/StatusLabel
 @onready var card_container: HBoxContainer = $VBoxContainer/CardContainer
+@onready var detail_title: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailTitle
+@onready var detail_stats: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailStats
+@onready var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
+@onready var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
+
+const NO_SELECTION_HINT := "Select a card to see its details"
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
@@ -20,9 +27,13 @@ func _on_draw_button_pressed() -> void:
 
 
 func _on_end_turn_button_pressed() -> void:
-	draw_phase.discard_hand()
+	# Rust owns the whole turn boundary: discard what's left, hand the security
+	# system its phase, then deal the next turn's hand with refreshed energy.
 	selected_index = -1
-	_draw_hand()
+	status_label.text = ""
+	var hand: PackedStringArray = draw_phase.end_turn()
+	_rebuild_card_buttons(hand)
+	_refresh_status_labels()
 
 
 func _on_complete_encounter_pressed() -> void:
@@ -35,11 +46,14 @@ func _draw_hand() -> void:
 	status_label.text = ""
 	var hand: PackedStringArray = draw_phase.draw_hand()
 	_rebuild_card_buttons(hand)
-	_update_pile_label()
-	_update_energy_label()
+	_refresh_status_labels()
 
 
 func _rebuild_card_buttons(names: PackedStringArray) -> void:
+	# A rebuilt hand invalidates any previous selection.
+	if selected_index >= names.size():
+		selected_index = -1
+
 	for child in card_container.get_children():
 		child.queue_free()
 	card_buttons.clear()
@@ -56,11 +70,45 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 		card_buttons.append(button)
 
 	_update_selection_visuals()
+	_update_card_detail()
 
 
 func _on_card_clicked(index: int) -> void:
 	selected_index = index
 	_update_selection_visuals()
+	_update_card_detail()
+
+
+# Fills the detail panel from the selected card, including an explanation of
+# every effect it carries so keywords do not have to be guessed at.
+func _update_card_detail() -> void:
+	if selected_index == -1:
+		detail_title.text = NO_SELECTION_HINT
+		detail_stats.text = ""
+		detail_description.text = ""
+		detail_keywords.text = ""
+		return
+
+	var detail: Dictionary = draw_phase.card_detail(selected_index)
+	if not detail.get("ok", false):
+		detail_title.text = NO_SELECTION_HINT
+		detail_stats.text = ""
+		detail_description.text = ""
+		detail_keywords.text = ""
+		return
+
+	detail_title.text = "%s — %s · %s" % [
+		detail.get("name", "?"),
+		detail.get("type", "?"),
+		detail.get("rarity", "?"),
+	]
+	detail_stats.text = "%s · %s" % [detail.get("cost_text", ""), detail.get("noise_text", "")]
+	detail_description.text = str(detail.get("description", ""))
+
+	var keyword_lines: Array[String] = []
+	for keyword: Dictionary in detail.get("keywords", []):
+		keyword_lines.append("%s — %s" % [keyword.get("label", "?"), keyword.get("explanation", "")])
+	detail_keywords.text = "\n".join(keyword_lines)
 
 
 func _update_selection_visuals() -> void:
@@ -81,8 +129,17 @@ func _on_play_button_pressed() -> void:
 	else:
 		status_label.text = "Not enough energy to play that card."
 
+	_refresh_status_labels()
+
+
+func _refresh_status_labels() -> void:
+	_update_turn_label()
 	_update_pile_label()
 	_update_energy_label()
+
+
+func _update_turn_label() -> void:
+	turn_label.text = "Turn %d" % draw_phase.turn_number
 
 
 func _update_pile_label() -> void:
