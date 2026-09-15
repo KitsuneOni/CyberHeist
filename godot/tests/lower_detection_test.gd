@@ -1,5 +1,5 @@
 # Real scene/extension coverage for story #4. No shuffled-hand assumptions:
-# fixtures draw the complete authored deck, then select cards by name.
+# fixtures draw the complete starter deck, then select cards by name.
 # Run: godot --headless --path godot -s res://tests/lower_detection_test.gd
 extends SceneTree
 
@@ -200,7 +200,7 @@ func _run() -> void:
 	_check(_combat.noise_label.text == "Noise: 6 / 10", "zero-noise play leaves the meter alone")
 
 	_arrange_hand(9)
-	if not _select("Ransomware"):
+	if not _select("Trojan"):
 		_finish()
 		return
 	var credits_before: int = root.get_node("PlayerStateGlobal").money()
@@ -208,7 +208,7 @@ func _run() -> void:
 	_check(_combat.noise_label.text == "Noise: 10 / 10", "loud card noise clamps to the cap")
 	_check(_flow.run_snapshot().phase == "caught", "positive card noise immediately enters caught")
 	_check(_screen().name == "CaughtScreen", "card detection uses the existing caught screen")
-	_check(_combat.draw_phase.energy == 0, "the fatal card still pays its cost")
+	_check(_combat.draw_phase.energy == 2, "the fatal card still pays its cost")
 	_check(_combat.draw_phase.discard_pile_count() == 1, "the fatal card is discarded once")
 
 	# The old screen lives until the deferred free. Neither its queued input nor
