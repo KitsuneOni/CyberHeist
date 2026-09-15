@@ -1,0 +1,98 @@
+# The heavier companion to ci.yml, run once the ordinary checks are green.
+#
+# ci.yml deliberately skips Godot, so it can tell you the rules are correct but
+# not that the game still works: it never loads the extension, never opens a
+# scene, and never follows a screen transition. This workflow covers both of
+# those gaps.
+#
+#   1. Stress tests  - the #[ignore]d tests in the Rust crate, which hammer the
+#                      noise meter with extreme and pseudo-random amounts that
+#                      the quick unit tests only sample.
+#   2. Smoke test    - a real combat encounter played to detection in a headless
+#                      engine, checking the scene wiring and the caught screen.
+#
+# It runs on pull requests and pushes to main, and can be started by hand from
+# the Actions tab.
+
+name: Stress test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep this in step with config/features in godot/project.godot. The engine
+  # refuses to open a project saved by a newer version, so a bump there needs a
+  # bump here.
+  GODOT_VERSION: 4.7.1
+
+jobs:
+  stress-test:
+    name: Stress and smoke tests
+    runs-on: ubuntu-latest
+    # The stress tests are bounded but not instant, and a hung headless engine
+    # would otherwise sit here until the job limit.
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: rustup show
+        working-directory: cyber_heist
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cyber_heist
+
+      # Debug, not release: the stress tests are only meaningful with overflow
+      # checks on, which is exactly what release builds turn off.
+      - name: Run Rust stress tests
+        run: cargo test --verbose -- --ignored
+        working-directory: cyber_heist
+
+      # The smoke test loads the compiled extension, and cyber_heist.gdextension
+      # points at target/debug, so this has to run before Godot does.
+      - name: Build the extension for Godot
+        run: cargo build --verbose
+        working-directory: cyber_heist
+
+      - name: Cache Godot binary
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-bin
+          key: godot-${{ env.GODOT_VERSION }}-linux
+
+      - name: Install Godot
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot-bin
+          archive="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${archive}"
+          curl --fail --location --silent --show-error --output godot.zip "$url"
+          unzip -q godot.zip -d ~/godot-bin
+          mv ~/godot-bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64 ~/godot-bin/godot
+          chmod +x ~/godot-bin/godot
+
+      - name: Report Godot version
+        run: ~/godot-bin/godot --headless --version
+
+      # Godot imports resources on first open. Doing it as its own step keeps
+      # import noise out of the test output, and the command is expected to
+      # fail once while it builds .godot/, hence the `|| true`.
+      - name: Import project resources
+        run: ~/godot-bin/godot --headless --path godot --import || true
+
+      # The script exits non-zero on the first failed expectation, so a broken
+      # scene connection or a missed transition fails the job here.
+      - name: Run headless combat smoke test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/combat_smoke_test.gd
