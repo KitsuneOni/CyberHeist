@@ -6,10 +6,10 @@ pub struct NoiseMeter {
     base: Base<Node>,
 
     #[export]
-    noise: i32,
+    pub noise: i32,
 
     #[export]
-    max_noise: i32,
+    pub max_noise: i32,
 }
 
 #[godot_api]
