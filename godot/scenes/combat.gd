@@ -4,7 +4,6 @@ extends Control
 @onready var credits_label: Label = $VBoxContainer/CreditsLabel
 @onready var sentry: Node = $Sentry
 @onready var turn_label: Label = $VBoxContainer/TurnLabel
-@onready var noise_label: Label = $VBoxContainer/NoiseLabel
 @onready var intent_label: Label = $VBoxContainer/IntentLabel
 @onready var energy_label: Label = $VBoxContainer/EnergyLabel
 @onready var pile_label: Label = $VBoxContainer/PileLabel
@@ -178,7 +177,6 @@ func _on_play_button_pressed() -> void:
 func _refresh_status_labels() -> void:
 	_update_credits_label()
 	_update_turn_label()
-	_update_noise_label()
 	_update_intent_label()
 	_update_pile_label()
 	_update_energy_label()
@@ -211,11 +209,6 @@ func _update_noise_label() -> void:
 
 func _update_energy_label() -> void:
 	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]
-
-
-func _update_noise_label() -> void:
-	noise_label.text = "Noise: %d / %d" % [sentry.noise(), sentry.max_noise()]
-
 
 # Shows what the sentry will do next, so ending the turn is a choice made with
 # the threat in view rather than a coin flip.

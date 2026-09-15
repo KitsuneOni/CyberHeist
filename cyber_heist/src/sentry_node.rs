@@ -7,6 +7,7 @@
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
+use crate::noise_meter::NoiseMeter;
 use crate::sentry::Sentry;
 
 #[derive(GodotClass)]
@@ -41,12 +42,15 @@ impl INode for SentryNode {
     }
 }
 
+impl SentryNode {
+    fn noise_meter(&self) -> Gd<NoiseMeter> {
+        self.base()
+            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal")
+    }
+}
+
 #[godot_api]
 impl SentryNode {
-    /// Emitted once the sentry has taken its turn, carrying the same details
-    /// `take_turn` returns. The combat scene listens for this to update the
-    /// meter and to send the player to the detection screen when the run has
-    /// failed.
     #[signal]
     fn turn_resolved(outcome: VarDictionary);
 
@@ -58,13 +62,13 @@ impl SentryNode {
     /// when the new turn begins.
     #[func]
     fn on_security_phase(&mut self, finished_turn: i32) {
-        let outcome = self.take_turn();
+        let outcome = self.perform_queued_action();
         godot_print!(
             "{} acted after turn {finished_turn}: {} (noise {} / {})",
             self.sentry.name(),
             outcome.at("action"),
-            self.sentry.noise(),
-            self.sentry.max_noise(),
+            outcome.at("noise"),
+            outcome.at("max_noise"),
         );
         self.signals().turn_resolved().emit(&outcome);
     }
@@ -78,12 +82,12 @@ impl SentryNode {
 
     #[func]
     fn noise(&self) -> i32 {
-        self.sentry.noise()
+        self.noise_meter().bind().noise
     }
 
     #[func]
     fn max_noise(&self) -> i32 {
-        self.sentry.max_noise()
+        self.noise_meter().bind().max_noise
     }
 
     /// Name of the action the sentry will take next, or an empty string if it
@@ -107,7 +111,7 @@ impl SentryNode {
     /// Returns how much actually went on the meter.
     #[func]
     fn add_noise(&mut self, noise: i32) -> i32 {
-        self.sentry.add_noise(noise)
+        self.noise_meter().bind_mut().add_noise(noise)
     }
 
     /// Takes the sentry's turn and reports what it did:
@@ -116,26 +120,42 @@ impl SentryNode {
     /// `ok` is false only when there was nothing queued, in which case the
     /// turn was skipped and the meter has not moved.
     #[func]
-    fn take_turn(&mut self) -> VarDictionary {
-        match self.sentry.take_turn() {
-            Some(turn) => vdict! {
-                "ok" => true,
-                "sentry" => turn.sentry_name.as_str(),
-                "action" => turn.action_name.as_str(),
-                "noise_added" => turn.noise_added,
-                "noise" => turn.noise,
-                "max_noise" => self.sentry.max_noise(),
-                "run_failed" => turn.run_failed,
-            },
-            None => vdict! {
-                "ok" => false,
-                "sentry" => self.sentry.name(),
-                "action" => "",
-                "noise_added" => 0,
-                "noise" => self.sentry.noise(),
-                "max_noise" => self.sentry.max_noise(),
-                "run_failed" => self.sentry.is_detected(),
-            },
+    fn perform_queued_action(&mut self) -> VarDictionary {
+        let meter = self.noise_meter();
+
+        match self.sentry.perform_queued_action() {
+            Some(action) => {
+                let mut meter = meter;
+                let noise_added = meter.bind_mut().add_noise(action.noise);
+                let noise = meter.bind().noise;
+                let max_noise = meter.bind().max_noise;
+                let run_failed = meter.bind().is_at_cap();
+
+                vdict! {
+                    "ok" => true,
+                    "sentry" => self.sentry.name(),
+                    "action" => action.name.as_str(),
+                    "noise_added" => noise_added,
+                    "noise" => noise,
+                    "max_noise" => max_noise,
+                    "run_failed" => run_failed,
+                }
+            }
+            None => {
+                let noise = meter.bind().noise;
+                let max_noise = meter.bind().max_noise;
+                let run_failed = meter.bind().is_at_cap();
+
+                vdict! {
+                    "ok" => false,
+                    "sentry" => self.sentry.name(),
+                    "action" => "",
+                    "noise_added" => 0,
+                    "noise" => noise,
+                    "max_noise" => max_noise,
+                    "run_failed" => run_failed,
+                }
+            }
         }
     }
 }
