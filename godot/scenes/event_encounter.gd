@@ -8,6 +8,7 @@ extends Control
 
 @onready var event_node: Node = $EventNode
 @onready var title_label: Label = $Page/VBox/TitleLabel
+@onready var credits_label: Label = $Page/VBox/CreditsLabel
 @onready var description_label: Label = $Page/VBox/DescriptionLabel
 @onready var choices: VBoxContainer = $Page/VBox/Choices
 @onready var outcome_label: Label = $Page/VBox/OutcomeLabel
@@ -15,6 +16,7 @@ extends Control
 
 
 func _ready() -> void:
+	_update_credits_label()
 	continue_button.visible = false
 	continue_button.pressed.connect(_on_continue_pressed)
 	_present_event()
@@ -63,7 +65,14 @@ func _on_choice_pressed(index: int) -> void:
 		% [int(result.get("credits", 0)), int(result.get("credits_total", 0))]
 	)
 	outcome_label.text = "\n".join(lines)
+	# The balance changed as part of resolving that choice, so show it
+	# now rather than waiting until the player is back on the map.
+	_update_credits_label()
 	_show_continue()
+
+
+func _update_credits_label() -> void:
+	credits_label.text = "Credits: %d" % PlayerStateGlobal.money()
 
 
 func _show_continue() -> void:

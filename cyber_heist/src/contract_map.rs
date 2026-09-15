@@ -66,6 +66,51 @@ pub struct EncounterSelection {
     pub encounter_type: EncounterType,
 }
 
+/// Where a node stands from the player's point of view, for drawing the map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeStatus {
+    /// Finished, and the route moved on from it.
+    Completed,
+    /// Where the player is standing right now.
+    Current,
+    /// Reachable from the current node and not locked out.
+    Available,
+    /// Ruled out by choosing a different branch.
+    Locked,
+    /// Further along the contract, not reachable yet.
+    Upcoming,
+}
+
+impl NodeStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Current => "current",
+            Self::Available => "available",
+            Self::Locked => "locked",
+            Self::Upcoming => "upcoming",
+        }
+    }
+}
+
+/// A node plus its status, so the map screen can draw the whole contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeProgress {
+    pub node_id: NodeId,
+    pub encounter_type: EncounterType,
+    pub status: NodeStatus,
+}
+
+/// How far through the contract the player is.
+///
+/// The entry node is excluded: it is where a run starts, not an encounter the
+/// player completes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContractProgress {
+    pub completed: usize,
+    pub total: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContractMapError {
     EmptyMap,
@@ -121,6 +166,7 @@ pub struct ContractMap {
     current_node: NodeId,
     locked_nodes: BTreeSet<NodeId>,
     active_node: Option<NodeId>,
+    completed_nodes: BTreeSet<NodeId>,
 }
 
 impl ContractMap {
@@ -169,6 +215,7 @@ impl ContractMap {
             current_node: start_node,
             locked_nodes: BTreeSet::new(),
             active_node: None,
+            completed_nodes: BTreeSet::new(),
         })
     }
 
@@ -265,8 +312,68 @@ impl ContractMap {
             .active_node
             .take()
             .ok_or(ContractMapError::NoEncounterInProgress)?;
+
+        // The node being left is behind the player now, which matters for the
+        // entry node: it is never an encounter that gets completed, but it
+        // should not keep reading as somewhere still ahead.
+        let departed_node = self.current_node;
         self.current_node = completed_node;
+        self.completed_nodes.insert(completed_node);
+        self.completed_nodes.insert(departed_node);
         Ok(())
+    }
+
+    /// Every node with its current status, in id order, for drawing the map.
+    pub fn node_progress(&self) -> Vec<NodeProgress> {
+        let selectable: BTreeSet<NodeId> = self
+            .selectable_encounters()
+            .iter()
+            .map(|node| node.id)
+            .collect();
+
+        self.nodes
+            .values()
+            .map(|node| {
+                let status = if self.completed_nodes.contains(&node.id) {
+                    NodeStatus::Completed
+                } else if node.id == self.current_node {
+                    NodeStatus::Current
+                } else if self.locked_nodes.contains(&node.id) {
+                    NodeStatus::Locked
+                } else if selectable.contains(&node.id) {
+                    NodeStatus::Available
+                } else {
+                    NodeStatus::Upcoming
+                };
+
+                NodeProgress {
+                    node_id: node.id,
+                    encounter_type: node.encounter_type,
+                    status,
+                }
+            })
+            .collect()
+    }
+
+    /// Completed encounters out of the total, excluding the entry node.
+    pub fn progress(&self) -> ContractProgress {
+        let total = self
+            .nodes
+            .values()
+            .filter(|node| node.encounter_type != EncounterType::Entry)
+            .count();
+
+        let completed = self
+            .completed_nodes
+            .iter()
+            .filter(|node_id| {
+                self.nodes
+                    .get(node_id)
+                    .is_some_and(|node| node.encounter_type != EncounterType::Entry)
+            })
+            .count();
+
+        ContractProgress { completed, total }
     }
 
     /// Ends a failed encounter without advancing past it. The chosen route
@@ -459,5 +566,132 @@ mod tests {
             .collect();
         assert_eq!(contract.current_encounter().id(), 0);
         assert_eq!(selectable, vec![1]);
+    }
+    fn status_of(contract: &ContractMap, node_id: NodeId) -> NodeStatus {
+        contract
+            .node_progress()
+            .into_iter()
+            .find(|entry| entry.node_id == node_id)
+            .expect("node exists on the contract")
+            .status
+    }
+
+    /// Acceptance scenario 3: a brand-new run has nothing completed.
+    #[test]
+    fn a_new_contract_has_no_completed_encounters_and_zero_progress() {
+        let contract = ContractMap::demo();
+
+        let progress = contract.progress();
+        assert_eq!(progress.completed, 0);
+        assert_eq!(
+            progress.total, 5,
+            "the demo contract has 5 encounters plus the entry node"
+        );
+
+        assert!(
+            !contract
+                .node_progress()
+                .iter()
+                .any(|entry| entry.status == NodeStatus::Completed),
+            "nothing should be marked completed before anything is played"
+        );
+        assert_eq!(status_of(&contract, 0), NodeStatus::Current);
+    }
+
+    /// Acceptance scenario 1: completed encounters are marked, and the rest
+    /// are visibly in a different state.
+    #[test]
+    fn completing_an_encounter_marks_it_and_leaves_others_distinct() {
+        let mut contract = ContractMap::demo();
+
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+
+        assert_eq!(status_of(&contract, 1), NodeStatus::Completed);
+        assert_eq!(
+            status_of(&contract, 2),
+            NodeStatus::Locked,
+            "the branch not taken is locked out"
+        );
+        assert_eq!(
+            status_of(&contract, 3),
+            NodeStatus::Available,
+            "the next encounter on the chosen route can be selected"
+        );
+        assert_eq!(
+            status_of(&contract, 5),
+            NodeStatus::Upcoming,
+            "later encounters are not reachable yet"
+        );
+    }
+
+    /// Acceptance scenario 2: overall progress is countable, e.g. "2 of 5".
+    #[test]
+    fn progress_counts_completed_encounters_and_excludes_the_entry_node() {
+        let mut contract = ContractMap::demo();
+
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+        assert_eq!(contract.progress().completed, 1);
+
+        contract.select_encounter(3).expect("node 3 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+
+        let progress = contract.progress();
+        assert_eq!(progress.completed, 2);
+        assert_eq!(progress.total, 5);
+    }
+
+    /// A failed encounter is not progress, so it must not be counted.
+    #[test]
+    fn a_failed_encounter_does_not_count_as_completed() {
+        let mut contract = ContractMap::demo();
+
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .fail_current_encounter()
+            .expect("an encounter is active");
+
+        assert_eq!(contract.progress().completed, 0);
+        assert_ne!(status_of(&contract, 1), NodeStatus::Completed);
+    }
+
+    #[test]
+    fn the_entry_node_reads_as_behind_you_once_the_run_moves_on() {
+        let mut contract = ContractMap::demo();
+        assert_eq!(status_of(&contract, 0), NodeStatus::Current);
+
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+
+        assert_eq!(
+            status_of(&contract, 0),
+            NodeStatus::Completed,
+            "the entry node is behind the player, not still ahead"
+        );
+        assert_eq!(
+            contract.progress().completed,
+            1,
+            "the entry node still must not count towards encounters completed"
+        );
+    }
+
+    #[test]
+    fn every_node_appears_exactly_once_in_the_progress_view() {
+        let contract = ContractMap::demo();
+
+        let entries = contract.node_progress();
+        let mut ids: Vec<NodeId> = entries.iter().map(|entry| entry.node_id).collect();
+        ids.sort_unstable();
+
+        assert_eq!(ids, vec![0, 1, 2, 3, 4, 5]);
     }
 }

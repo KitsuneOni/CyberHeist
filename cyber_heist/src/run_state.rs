@@ -6,7 +6,8 @@
 use std::fmt;
 
 use crate::contract_map::{
-    ContractMap, ContractMapError, EncounterNode, EncounterSelection, EncounterType, NodeId,
+    ContractMap, ContractMapError, ContractProgress, EncounterNode, EncounterSelection,
+    EncounterType, NodeId, NodeProgress,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +75,16 @@ impl RunState {
 
     pub fn current_contract_node(&self) -> &EncounterNode {
         self.contract_map.current_encounter()
+    }
+
+    /// Every node with its status, for drawing the contract map.
+    pub fn node_progress(&self) -> Vec<NodeProgress> {
+        self.contract_map.node_progress()
+    }
+
+    /// Completed encounters out of the total on this contract.
+    pub fn progress(&self) -> ContractProgress {
+        self.contract_map.progress()
     }
 
     pub fn selectable_encounters(&self) -> Vec<&EncounterNode> {
