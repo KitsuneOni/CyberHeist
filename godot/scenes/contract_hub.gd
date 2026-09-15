@@ -77,11 +77,15 @@ func _rebuild_map() -> void:
 
 	for node: Dictionary in FlowCoordinator.map_progress():
 		var row := Label.new()
-		row.text = "%s  %s %s  (%s)" % [
+		# A cleared node is both completed and where the player stands, so the
+		# "you are here" marker is appended rather than replacing the status.
+		var here := "  [@] you are here" if bool(node.get("is_current", false)) else ""
+		row.text = "%s  %s %s  (%s)%s" % [
 			str(node.get("status_marker", "")),
 			str(node.get("type_marker", "")),
 			str(node.get("type_name", "")),
 			str(node.get("status", "")),
+			here,
 		]
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		row.add_theme_font_size_override("font_size", 14)

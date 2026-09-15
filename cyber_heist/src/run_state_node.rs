@@ -52,6 +52,7 @@ impl RunStateNode {
                 "type_marker" => type_text.marker,
                 "status" => entry.status.as_str(),
                 "status_marker" => status_text.marker,
+                "is_current" => entry.is_current,
             });
         }
         entries
