@@ -1,0 +1,11 @@
+// The deck every run begins with.
+//
+// Each entry is a card id from cards.ron and how many copies of it start in
+// the draw pile. Ids that do not exist in cards.ron are reported as an error
+// rather than silently skipped, so a typo here cannot quietly shrink the deck.
+[
+    (id: "strike", count: 4),
+    (id: "shield", count: 4),
+    (id: "trojan", count: 1),
+    (id: "vpn", count: 1),
+]

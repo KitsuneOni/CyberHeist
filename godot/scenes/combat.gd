@@ -1,6 +1,7 @@
 extends Control
 
 @onready var draw_phase: Node = $DrawPhase
+@onready var credits_label: Label = $VBoxContainer/CreditsLabel
 @onready var turn_label: Label = $VBoxContainer/TurnLabel
 @onready var energy_label: Label = $VBoxContainer/EnergyLabel
 @onready var pile_label: Label = $VBoxContainer/PileLabel
@@ -133,9 +134,16 @@ func _on_play_button_pressed() -> void:
 
 
 func _refresh_status_labels() -> void:
+	_update_credits_label()
 	_update_turn_label()
 	_update_pile_label()
 	_update_energy_label()
+
+
+# Refreshed alongside everything else, so spending or earning shows up the
+# moment it happens rather than only back on the map.
+func _update_credits_label() -> void:
+	credits_label.text = "Credits: %d" % PlayerStateGlobal.money()
 
 
 func _update_turn_label() -> void:
