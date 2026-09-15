@@ -8,6 +8,8 @@
 //! - 'BridgeCheck' temporary demo proving the bridge between Godot and Rust works. Delete once real gameplay and classes are wired up
 //! - 'PlayerState' - autoload singleton tracking player money and upgrades,
 //!   and applying the "caught" penalty (fine + lose this contract's upgrades).
+//! - 'SentryNode' - the named security construct guarding an encounter: the
+//!   action it has queued and the noise meter that ends the run once it fills.
 
 mod card_data;
 mod card_database;
@@ -19,6 +21,8 @@ mod events;
 mod events_node;
 mod run_state;
 mod run_state_node;
+mod sentry;
+mod sentry_node;
 mod starter_deck;
 
 use card_data::CardData;
