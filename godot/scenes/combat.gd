@@ -1,7 +1,11 @@
 extends Control
 
 @onready var draw_phase: Node = $DrawPhase
+@onready var credits_label: Label = $VBoxContainer/CreditsLabel
+@onready var sentry: Node = $Sentry
 @onready var turn_label: Label = $VBoxContainer/TurnLabel
+@onready var noise_label: Label = $VBoxContainer/NoiseLabel
+@onready var intent_label: Label = $VBoxContainer/IntentLabel
 @onready var energy_label: Label = $VBoxContainer/EnergyLabel
 @onready var pile_label: Label = $VBoxContainer/PileLabel
 @onready var play_count_label: Label = $VBoxContainer/PlayCountLabel
@@ -19,6 +23,9 @@ const NO_SELECTION_HINT := "Select a card to see its details"
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
+# What the sentry did on its turn. Filled in while end_turn() is still
+# running and read once it returns.
+var sentry_turn: Dictionary = {}
 
 
 func _ready() -> void:
@@ -31,13 +38,45 @@ func _on_draw_button_pressed() -> void:
 
 
 func _on_end_turn_button_pressed() -> void:
-	# Rust owns the whole turn boundary: discard what's left, hand the security
-	# system its phase, then deal the next turn's hand with refreshed energy.
+	# Rust owns the whole turn boundary: discard what's left, hand the sentry
+	# its phase, then deal the next turn's hand with refreshed energy. The
+	# sentry reports back through _on_sentry_turn_resolved before this call
+	# returns, so the labels below are already up to date.
 	selected_index = -1
 	status_label.text = ""
 	var hand: PackedStringArray = draw_phase.end_turn()
 	_rebuild_card_buttons(hand)
 	_refresh_status_labels()
+
+	var turn := sentry_turn
+	sentry_turn = {}
+
+	# A full noise meter means the player has been spotted, so the new hand
+	# never gets played and the detection screen takes over instead.
+	if turn.get("run_failed", false):
+		_report_detected()
+		return
+
+	if turn.get("ok", false):
+		status_label.text = "%s ran %s and added %d noise." % [
+			turn.get("sentry", "?"),
+			turn.get("action", ""),
+			turn.get("noise_added", 0),
+		]
+
+
+# Connected in the scene to the sentry, which announces its turn from inside
+# end_turn(). Nothing is drawn here because the hand for the next turn has not
+# been dealt yet at this point.
+func _on_sentry_turn_resolved(turn: Dictionary) -> void:
+	sentry_turn = turn
+
+
+func _report_detected() -> void:
+	status_label.text = "%s has you. The noise meter is full and the run is over." % sentry.construct_name()
+	var result: Dictionary = FlowCoordinator.report_caught()
+	if not result.get("ok", false):
+		push_error("Could not report detection: %s" % result.get("error", "unknown error"))
 
 
 func _on_complete_encounter_pressed() -> void:
@@ -137,10 +176,19 @@ func _on_play_button_pressed() -> void:
 
 
 func _refresh_status_labels() -> void:
+	_update_credits_label()
 	_update_turn_label()
+	_update_noise_label()
+	_update_intent_label()
 	_update_pile_label()
 	_update_energy_label()
 	_update_noise_label()
+
+
+# Refreshed alongside everything else, so spending or earning shows up the
+# moment it happens rather than only back on the map.
+func _update_credits_label() -> void:
+	credits_label.text = "Credits: %d" % PlayerStateGlobal.money()
 
 
 func _update_turn_label() -> void:
@@ -163,3 +211,21 @@ func _update_noise_label() -> void:
 
 func _update_energy_label() -> void:
 	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]
+
+
+func _update_noise_label() -> void:
+	noise_label.text = "Noise: %d / %d" % [sentry.noise(), sentry.max_noise()]
+
+
+# Shows what the sentry will do next, so ending the turn is a choice made with
+# the threat in view rather than a coin flip.
+func _update_intent_label() -> void:
+	var action: String = sentry.queued_action_name()
+	if action == "":
+		intent_label.text = "%s: nothing queued" % sentry.construct_name()
+	else:
+		intent_label.text = "%s will: %s (+%d noise)" % [
+			sentry.construct_name(),
+			action,
+			sentry.queued_action_noise(),
+		]

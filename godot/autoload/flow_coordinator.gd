@@ -44,6 +44,18 @@ func current_contract_node() -> Dictionary:
 	return _run_state.current_contract_node()
 
 
+func map_progress() -> Array:
+	return _run_state.map_progress()
+
+
+func contract_progress() -> Dictionary:
+	return _run_state.contract_progress()
+
+
+func map_key() -> Dictionary:
+	return _run_state.map_key()
+
+
 func select_encounter(node_id: int) -> Dictionary:
 	var option: Dictionary = _run_state.encounter_option(node_id)
 	if not option.get("ok", false):

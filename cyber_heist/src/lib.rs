@@ -8,17 +8,23 @@
 //! - 'BridgeCheck' temporary demo proving the bridge between Godot and Rust works. Delete once real gameplay and classes are wired up
 //! - 'PlayerState' - autoload singleton tracking player money and upgrades,
 //!   and applying the "caught" penalty (fine + lose this contract's upgrades).
+//! - 'SentryNode' - the named security construct guarding an encounter: the
+//!   action it has queued and the noise meter that ends the run once it fills.
 
 mod card_data;
 mod card_database;
 mod card_text;
 mod contract_map;
 mod deck;
+mod encounter_text;
 mod events;
 mod events_node;
 mod noise_meter;
 mod run_state;
 mod run_state_node;
+mod sentry;
+mod sentry_node;
+mod starter_deck;
 
 use card_data::CardData;
 use card_database::CardDatabase;
@@ -177,7 +183,20 @@ impl INode for DrawPhase {
             .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
         let card_db = card_db.bind();
 
-        let starter_cards: Vec<CardData> = card_db.all().cloned().collect();
+        // Every run starts from the same predefined list rather than one copy
+        // of every card in the database.
+        let entries = starter_deck::load_starter_deck_entries();
+        let starter_cards: Vec<CardData> =
+            match starter_deck::build_starter_deck(&entries, |id| card_db.get(id)) {
+                Ok(cards) => cards,
+                Err(missing) => {
+                    godot_error!(
+                        "starter_deck.ron refers to cards that do not exist in cards.ron: {}",
+                        missing.join(", ")
+                    );
+                    Vec::new()
+                }
+            };
 
         let mut rng = rand::rng();
         self.deck = Deck::new(starter_cards, &mut rng);
