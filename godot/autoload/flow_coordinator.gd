@@ -116,6 +116,10 @@ func finish_caught() -> Dictionary:
 		_dispose_screen(prepared["screen"])
 		return transition
 
+	# Clear detection only after a successful caught exit. Normal encounter
+	# completion and rejected transitions must preserve the shared meter.
+	var noise_meter: Node = get_node("/root/NoiseMeterGlobal")
+	noise_meter.add_noise(-noise_meter.noise)
 	_replace_screen(prepared["screen"])
 	return transition
 

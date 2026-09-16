@@ -188,15 +188,14 @@ import aborted on exit with the local Godot 4.7.1/reduced-binding setup, while
 startup registration and runtime tests succeeded. It does not suppress import
 or test failures and does not prove that first-discovery path works.
 
-### Shared lifetime: unresolved retry policy
+### Shared lifetime and caught recovery
 
-PR12's autoload lifetime is preserved. Completing or replacing an encounter,
-entering caught, and returning to the hub do not reset noise. A recreated combat
-screen reads the same value, rather than silently starting a second meter.
-Concretely, retry after caught starts at 100/100 and paid recovery is rejected.
-The shared-meter test records that behaviour; it is not a proposed reset policy.
-A run/retry reset decision remains product work, not an implicit part of this
-integration.
+Completing or replacing a normal encounter preserves shared noise. Entering
+caught also retains the full meter while the detection screen is displayed.
+After `finish_caught()` successfully transitions back to the hub, the coordinator
+clears the shared meter to zero before showing the hub. A rejected transition
+never clears noise. The next attempt can play cards and recover normally, while
+ordinary encounter progression still carries noise forward.
 
 ## Scene-facing API
 

@@ -170,8 +170,23 @@ func _run() -> void:
 	await process_frame
 	_check(not is_instance_valid(old_combat), "old screen is freed without losing the meter")
 
-	# Preserve incoming lifetime, including its unresolved retry policy: caught
-	# and hub do NOT reset noise, so a retry begins full and cannot recover.
+	var completed: Dictionary = _flow.complete_active_encounter()
+	_check(completed.ok and _meter.noise == 65, "normal completion preserves shared noise on the hub")
+	entered = preload("res://tests/combat_fixture.gd").enter(_flow)
+	_check(entered.get("ok", false), "the next normal encounter loads")
+	if not entered.get("ok", false):
+		_finish()
+		return
+	_combat = _screen()
+	_check_shared_noise(65)
+	var invalid_finish: Dictionary = _flow.finish_caught()
+	_check(
+		not invalid_finish.ok and _meter.noise == 65,
+		"a rejected caught exit cannot clear noise during an active encounter"
+	)
+
+	# Detection stays visible until Continue successfully finishes the caught
+	# flow. The next attempt then starts fresh rather than remaining stuck.
 	_combat.draw_phase.hand_size = 4
 	_combat._draw_hand()
 	_meter.add_noise(34)
@@ -181,19 +196,22 @@ func _run() -> void:
 		return
 	_check(_flow.run_snapshot().phase == "caught" and _meter.noise == 100, "loud card catches at the global cap")
 	var finished: Dictionary = _flow.finish_caught()
-	_check(finished.ok and _meter.noise == 100, "incoming shared lifetime retains full noise on the hub")
+	_check(finished.ok and _meter.noise == 0, "finishing caught resets shared noise to zero on the hub")
 	entered = preload("res://tests/combat_fixture.gd").enter(_flow)
 	_check(entered.get("ok", false), "the failed encounter remains retryable")
 	if entered.get("ok", false):
 		_combat = _screen()
-		_check_shared_noise(100)
+		_check_shared_noise(0)
 		_combat.draw_phase.hand_size = 4
 		_combat._draw_hand()
-		var vpn_index: int = _combat.draw_phase.hand_names().find("VPN")
-		_check(vpn_index >= 0, "retry fixture contains VPN")
-		rejected = _combat.draw_phase.play_card(vpn_index)
-		_check(
-			not rejected.ok and rejected.error == "detected",
-			"full-meter retry cannot recover: reset policy remains unresolved"
-		)
+		_meter.add_noise(5)
+		_combat._refresh_status_labels()
+		if not _play("VPN"):
+			_finish()
+			return
+		_check_shared_noise(0)
+		_check(_combat.draw_phase.energy == 1, "retry permits paid recovery again")
+		_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+		_check_shared_noise(1)
+		_check(_flow.run_snapshot().phase == "encounter_active", "retry remains playable after the sentry turn")
 	_finish()
