@@ -198,22 +198,34 @@ mod tests {
     }
 
     #[test]
-    fn the_queue_moves_on_each_turn_and_starts_over_at_the_end() {
-        let mut sentry = Sentry::new(
-            "WARDEN-7",
-            20,
-            vec![
-                SentryAction::new("Packet Sniff", 1),
-                SentryAction::new("Trace Sweep", 2),
-            ],
-        );
+    fn each_announced_action_runs_once_and_the_queue_wraps_without_stale_intent() {
+        let script = vec![
+            SentryAction::new("Packet Sniff", 1),
+            SentryAction::new("Trace Sweep", 2),
+            SentryAction::new("Lockdown Probe", 3),
+        ];
+        let mut sentry = Sentry::new("WARDEN-7", 20, script.clone());
 
-        assert_eq!(sentry.queued_action().unwrap().name, "Packet Sniff");
-        sentry.take_turn().unwrap();
-        assert_eq!(sentry.queued_action().unwrap().name, "Trace Sweep");
-        sentry.take_turn().unwrap();
-        assert_eq!(sentry.queued_action().unwrap().name, "Packet Sniff");
-        assert_eq!(sentry.noise(), 3);
+        for index in 0..7 {
+            let expected = &script[index % script.len()];
+            let before = sentry.clone();
+            // Reading intent repeatedly must not choose or advance an action.
+            assert_eq!(sentry.queued_action(), Some(expected));
+            assert_eq!(sentry.queued_action(), Some(expected));
+            assert_eq!(sentry, before);
+
+            let turn = sentry.take_turn().unwrap();
+
+            assert_eq!(turn.action_name, expected.name);
+            assert_eq!(turn.noise_added, expected.noise);
+            assert_eq!(turn.noise, before.noise() + expected.noise);
+            assert_eq!(sentry.noise(), turn.noise);
+            assert!(!turn.run_failed);
+            assert_eq!(
+                sentry.queued_action(),
+                Some(&script[(index + 1) % script.len()])
+            );
+        }
     }
 
     #[test]
@@ -230,9 +242,13 @@ mod tests {
     #[test]
     fn noise_stops_at_the_cap_instead_of_overshooting_it() {
         let mut sentry = Sentry::new("WARDEN-7", 4, vec![SentryAction::new("Lockdown Probe", 9)]);
+        let announced = sentry.queued_action().unwrap().clone();
+        assert_eq!(announced.noise, 9);
 
         let turn = sentry.take_turn().unwrap();
 
+        assert_eq!(turn.action_name, announced.name);
+        assert_eq!(sentry.queued_action(), Some(&announced));
         assert_eq!(turn.noise_added, 4);
         assert_eq!(turn.noise, 4);
         assert_eq!(sentry.noise(), sentry.max_noise());

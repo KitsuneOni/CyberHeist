@@ -71,6 +71,8 @@ func _state() -> Dictionary:
 		"turn": draw.turn_number,
 		"noise": _combat.sentry.noise(),
 		"intent": _combat.sentry.queued_action_name(),
+		"intent_noise": _combat.sentry.queued_action_noise(),
+		"intent_text": _combat.intent_label.text,
 	}
 
 
@@ -103,9 +105,19 @@ func _run() -> void:
 		"combat offers no free redraw/energy refresh button"
 	)
 	_arrange_hand(9)
+	_check(
+		_combat.intent_label.is_visible_in_tree()
+		and _combat.intent_label.text == "WARDEN-7 will: Packet Sniff (+1 noise)",
+		"the announced action and value are visible before choosing a recovery card"
+	)
 	if not _select("VPN"):
 		_finish()
 		return
+	_check(
+		not _combat.card_buttons[_combat.selected_index].disabled
+		and not _combat.get_node("VBoxContainer/Buttons/PlayButton").disabled,
+		"the player can select and play VPN after reading intent"
+	)
 	_check(_combat.noise_label.text == "Noise: 9 / 10", "near-cap noise is displayed")
 	_check(
 		_combat.detail_stats.text == "Costs 2 energy · Reduces noise by 10",
@@ -124,7 +136,12 @@ func _run() -> void:
 	_check(_combat.draw_phase.discard_pile_count() == 1, "VPN is discarded exactly once")
 	_check(not _combat.draw_phase.hand_names().has("VPN"), "VPN leaves the hand")
 	_check(_combat.draw_phase.turn_number == before.turn, "recovery does not end the turn")
-	_check(_combat.sentry.queued_action_name() == before.intent, "recovery preserves queued intent")
+	_check(
+		_combat.sentry.queued_action_name() == before.intent
+		and _combat.sentry.queued_action_noise() == before.intent_noise
+		and _combat.intent_label.text == before.intent_text,
+		"recovery preserves the announced action, value and visible intent"
+	)
 	_check(_flow.run_snapshot().phase == "encounter_active", "recovery avoids caught")
 	_check(_screen() == _combat, "the combat screen remains active")
 	_check(
@@ -142,8 +159,14 @@ func _run() -> void:
 		_combat.noise_label.text == "Noise: 1 / 10",
 		"the next sentry turn acts on the recovered meter"
 	)
-	_check(_combat.intent_label.text.contains("Trace Sweep"), "the next intent advances once")
-	_check(_combat.status_label.text.contains("Packet Sniff"), "the originally queued action ran")
+	_check(
+		_combat.intent_label.text == "WARDEN-7 will: Trace Sweep (+2 noise)",
+		"the next intent displays its new action and value after recovery and the sentry turn"
+	)
+	_check(
+		_combat.status_label.text == "WARDEN-7 ran Packet Sniff and added 1 noise.",
+		"the originally announced action and value ran after VPN"
+	)
 	_check(_combat.draw_phase.energy == 3, "ending the turn refreshes energy")
 	_check(_combat.draw_phase.hand_names().size() == 3, "ending the turn deals a normal hand")
 	_check(
