@@ -64,13 +64,28 @@ func _node_by_id(node_id: int) -> Dictionary:
 	return {}
 
 
+# The space the graph occupies once the container has laid it out.
+#
+# `size` only catches up with a newly requested `custom_minimum_size` after the
+# parent re-sorts its children, so reading it in the same frame as set_nodes()
+# measures the previous, narrower contract. Taking whichever is larger gives the
+# right answer both before and after layout settles: the container never makes a
+# child smaller than its minimum, and it may stretch it beyond that.
+func _layout_size() -> Vector2:
+	return Vector2(
+		maxf(size.x, custom_minimum_size.x),
+		maxf(size.y, custom_minimum_size.y),
+	)
+
+
 # Maps the 0..1 layout onto the space available, keeping a node's worth of
 # padding so nothing clips at the edges.
 func _position_of(node: Dictionary) -> Vector2:
 	var pad := NODE_RADIUS * 1.6
+	var space := _layout_size()
 	return Vector2(
-		pad + float(node.get("x", 0.0)) * maxf(size.x - pad * 2.0, 1.0),
-		pad + float(node.get("y", 0.5)) * maxf(size.y - pad * 2.0, 1.0)
+		pad + float(node.get("x", 0.0)) * maxf(space.x - pad * 2.0, 1.0),
+		pad + float(node.get("y", 0.5)) * maxf(space.y - pad * 2.0, 1.0)
 	)
 
 
