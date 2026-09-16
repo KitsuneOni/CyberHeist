@@ -36,8 +36,8 @@ impl SentryAction {
     }
 }
 
-/// A named security construct: its noise meter and the actions it works
-/// through.
+/// A named security construct and the actions it works through.
+/// Noise is owned by the shared meter, not by an encounter.
 ///
 /// Actions come from an authored list that the sentry cycles, so a turn plays
 /// out the same way every time and is easy to test. Picking actions in
@@ -50,7 +50,7 @@ pub struct Sentry {
 }
 
 impl Sentry {
-    /// Builds a sentry with an empty meter and `script` as its action queue.
+    /// Builds a sentry with `script` as its action queue.
     ///
     /// An empty script is allowed and means the sentry has nothing queued, so
     /// its turn does nothing at all.
@@ -62,9 +62,8 @@ impl Sentry {
         }
     }
 
-    /// The sentry guarding the current combat encounter. Three actions on a
-    /// ten point meter, so an encounter the player never quietens down runs
-    /// out at about turn five.
+    /// The sentry guarding the current combat encounter, with three cycling
+    /// actions. The shared meter determines when those actions cause detection.
     pub fn warden_7() -> Self {
         Self::new(
             "WARDEN-7",
@@ -92,12 +91,9 @@ impl Sentry {
         self.script.get(self.next_index)
     }
 
-    /// Takes the sentry's turn: run the queued action, apply its noise, then
-    /// queue the next one.
-    ///
-    /// Everything the action does has landed by the time this returns, so
-    /// whoever starts the next player turn is working from the updated meter.
-    /// Returns `None` when nothing was queued and the turn was skipped.
+    /// Returns the announced action and queues the next one. The caller applies
+    /// its authored noise to the shared meter and reports the actual clamped
+    /// delta separately. Returns `None` when nothing was queued.
     pub fn perform_queued_action(&mut self) -> Option<SentryAction> {
         let action = self.script.get(self.next_index)?.clone();
         self.next_index = (self.next_index + 1) % self.script.len();
@@ -140,6 +136,56 @@ mod tests {
     }
 
     #[test]
+    fn each_announced_action_runs_once_and_the_queue_wraps_without_stale_intent() {
+        use crate::noise_meter::NoiseLevel;
+
+        let script = vec![
+            SentryAction::new("Packet Sniff", 1),
+            SentryAction::new("Trace Sweep", 2),
+            SentryAction::new("Lockdown Probe", 3),
+        ];
+        let mut sentry = Sentry::new("WARDEN-7", script.clone());
+        let mut meter = NoiseLevel::new(100);
+
+        for index in 0..7 {
+            let expected = &script[index % script.len()];
+            let before = sentry.clone();
+            assert_eq!(sentry.queued_action(), Some(expected));
+            assert_eq!(sentry.queued_action(), Some(expected));
+            assert_eq!(sentry, before, "reading intent cannot advance the queue");
+
+            let action = sentry.perform_queued_action().unwrap();
+            let noise_before = meter.noise();
+            assert_eq!(&action, expected);
+            assert_eq!(meter.add(action.noise), expected.noise);
+            assert_eq!(meter.noise(), noise_before + expected.noise);
+            assert!(!meter.is_at_cap());
+            assert_eq!(
+                sentry.queued_action(),
+                Some(&script[(index + 1) % script.len()])
+            );
+        }
+    }
+
+    #[test]
+    fn authored_intent_and_actual_clamped_change_are_distinct_at_cap() {
+        use crate::noise_meter::NoiseLevel;
+
+        let mut sentry = Sentry::new("WARDEN-7", vec![SentryAction::new("Lockdown Probe", 3)]);
+        let mut meter = NoiseLevel::new(100);
+        meter.add(99);
+        let announced = sentry.queued_action().unwrap().clone();
+        let action = sentry.perform_queued_action().unwrap();
+
+        assert_eq!(action, announced);
+        assert_eq!(action.noise, 3);
+        assert_eq!(meter.add(action.noise), 1);
+        assert_eq!(meter.noise(), 100);
+        assert!(meter.is_at_cap());
+        assert_eq!(sentry.queued_action(), Some(&announced));
+    }
+
+    #[test]
     fn a_sentry_with_nothing_queued_reports_no_action() {
         let mut sentry = Sentry::new("WARDEN-7", Vec::new());
         assert_eq!(sentry.queued_action(), None);
@@ -151,5 +197,39 @@ mod tests {
         let mut sentry = Sentry::warden_7();
         sentry.set_name("BLACKGATE");
         assert_eq!(sentry.name(), "BLACKGATE");
+    }
+}
+
+#[cfg(test)]
+mod stress {
+    use super::*;
+    use crate::noise_meter::NoiseLevel;
+
+    #[test]
+    #[ignore = "stress: run with --ignored"]
+    fn authored_actions_of_any_loudness_survive_repeated_turns() {
+        let mut seed = 0xC0FF_EE01_u32;
+        for cap in [0, 1, 100, 1_000] {
+            let mut script = vec![
+                SentryAction::new("Full Sweep", i32::MAX),
+                SentryAction::new("Total Blackout", i32::MIN),
+            ];
+            for index in 0..7 {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                script.push(SentryAction::new(&format!("Action {index}"), seed as i32));
+            }
+            let mut sentry = Sentry::new("WARDEN-7", script);
+            let mut meter = NoiseLevel::new(cap);
+            for _ in 0..50_000 {
+                let announced = sentry.queued_action().cloned().unwrap();
+                let action = sentry.perform_queued_action().unwrap();
+                assert_eq!(action, announced);
+                let before = meter.noise();
+                let delta = meter.add(action.noise);
+                assert_eq!(meter.noise() - before, delta);
+                assert!((0..=cap).contains(&meter.noise()));
+                assert_eq!(meter.is_at_cap(), meter.noise() == cap);
+            }
+        }
     }
 }

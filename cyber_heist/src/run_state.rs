@@ -5,9 +5,11 @@
 
 use std::fmt;
 
+use rand::Rng;
+
 use crate::contract_map::{
-    ContractMap, ContractMapError, ContractProgress, EncounterNode, EncounterSelection,
-    EncounterType, NodeId, NodeProgress,
+    ContractMap, ContractMapError, ContractProgress, ContractShape, EncounterNode,
+    EncounterSelection, EncounterType, NodeId, NodeProgress,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,8 +63,22 @@ impl Default for RunState {
 }
 
 impl RunState {
+    /// A run on the authored contract. The game generates its contracts, so
+    /// this is what the tests use to work against a known graph.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A run on a freshly generated contract, so no two runs follow the same
+    /// route. `new` keeps the authored contract, which is what the tests run
+    /// against.
+    pub fn generated(rng: &mut impl Rng) -> Self {
+        Self {
+            phase: ContractPhase::Hub,
+            active_encounter: None,
+            contract_map: ContractMap::generate(ContractShape::default(), rng),
+        }
     }
 
     pub fn phase(&self) -> ContractPhase {

@@ -18,8 +18,15 @@ offset_left = 9.0
 offset_top = 8.0
 offset_right = 335.0
 offset_bottom = 49.0
-offset_transform_position = Vector2(0, -300)
-offset_transform_scale = Vector2(0.5, 1)
+
+[node name="NoiseBar" type="ProgressBar" parent="NoiseBarContainer" unique_id=560289160]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+show_percentage = false
 
 [node name="NoiseLabel" type="Label" parent="NoiseBarContainer" unique_id=1906396460]
 layout_mode = 1
@@ -30,15 +37,6 @@ grow_horizontal = 2
 grow_vertical = 2
 horizontal_alignment = 1
 vertical_alignment = 1
-
-[node name="NoiseBar" type="ProgressBar" parent="NoiseBarContainer" unique_id=560289160]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-show_percentage = false
 
 [node name="DrawPhase" type="DrawPhase" parent="." unique_id=1753657608]
 hand_size = 3
@@ -144,10 +142,6 @@ layout_mode = 2
 theme_override_constants/separation = 16
 alignment = 1
 
-[node name="DrawButton" type="Button" parent="VBoxContainer/Buttons" unique_id=1620870438]
-layout_mode = 2
-text = "Draw Hand"
-
 [node name="EndTurnButton" type="Button" parent="VBoxContainer/Buttons" unique_id=18982048]
 layout_mode = 2
 text = "End Turn"
@@ -162,7 +156,6 @@ text = "Complete Encounter"
 
 [connection signal="security_phase" from="DrawPhase" to="Sentry" method="on_security_phase"]
 [connection signal="turn_resolved" from="Sentry" to="." method="_on_sentry_turn_resolved"]
-[connection signal="pressed" from="VBoxContainer/Buttons/DrawButton" to="." method="_on_draw_button_pressed"]
 [connection signal="pressed" from="VBoxContainer/Buttons/EndTurnButton" to="." method="_on_end_turn_button_pressed"]
 [connection signal="pressed" from="VBoxContainer/Buttons/PlayButton" to="." method="_on_play_button_pressed"]
 [connection signal="pressed" from="VBoxContainer/Buttons/CompleteEncounterButton" to="." method="_on_complete_encounter_pressed"]

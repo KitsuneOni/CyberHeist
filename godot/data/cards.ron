@@ -42,12 +42,12 @@
     (
         id: "vpn",
         name: "VPN",
-        description: "End your turn - become intangible",
+        description: "Lower noise by 10 (minimum 0). Your turn continues.",
         cost: 2,
         noise_generated: -10,
         card_type: Skill,
         rarity: Common,
-        keywords: [Intangible(1)],
+        keywords: [],
     ),
     (
         id:"ransomware",
@@ -89,7 +89,7 @@
         rarity: Common,
         keywords: [Penetrating(12)],
     ),
-    (   
+    (
         id:"social_engineering",
         name:"Social Engineering",
         description:"Corrupting effects double for this turn",
@@ -331,5 +331,7 @@
 
     ),
     
+
+
 
 ]

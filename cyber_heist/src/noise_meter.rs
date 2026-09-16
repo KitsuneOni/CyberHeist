@@ -39,10 +39,12 @@ pub struct NoiseMeter {
     base: Base<Node>,
     level: NoiseLevel,
 
-    #[export]
-    pub noise: i32,
-    #[export]
-    pub max_noise: i32,
+    // Computed, read-only properties: Inspector/script writes cannot create a
+    // second value that disagrees with card transactions or cap detection.
+    #[var(get = get_noise, no_set)]
+    noise: PhantomVar<i32>,
+    #[var(get = get_max_noise, no_set)]
+    max_noise: PhantomVar<i32>,
 }
 
 #[godot_api]
@@ -50,8 +52,8 @@ impl INode for NoiseMeter {
     fn init(base: Base<Node>) -> Self {
         let level = NoiseLevel::new(100);
         Self {
-            noise: level.noise(),
-            max_noise: level.max_noise(),
+            noise: PhantomVar::default(),
+            max_noise: PhantomVar::default(),
             level,
             base,
         }
@@ -61,16 +63,30 @@ impl INode for NoiseMeter {
 #[godot_api]
 impl NoiseMeter {
     #[func]
+    pub fn get_noise(&self) -> i32 {
+        self.level.noise()
+    }
+
+    #[func]
+    pub fn get_max_noise(&self) -> i32 {
+        self.level.max_noise()
+    }
+
+    #[func]
     pub fn add_noise(&mut self, amount: i32) -> i32 {
-        let delta = self.level.add(amount);
-        self.noise = self.level.noise();
-        godot_print!("Noise meter: {}/{}", self.noise, self.max_noise);
-        delta
+        self.level.add(amount)
     }
 
     #[func]
     pub fn is_at_cap(&self) -> bool {
         self.level.is_at_cap()
+    }
+}
+
+impl NoiseMeter {
+    /// The transaction borrows the authoritative value, never a copied mirror.
+    pub(crate) fn level_mut(&mut self) -> &mut NoiseLevel {
+        &mut self.level
     }
 }
 

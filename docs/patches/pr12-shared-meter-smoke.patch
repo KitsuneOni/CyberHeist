@@ -1,0 +1,79 @@
+--- a/godot/tests/combat_smoke_test.gd
++++ b/godot/tests/combat_smoke_test.gd
+@@ -9,7 +9,7 @@
+ # Exits non-zero on the first failed expectation, so it works as a CI gate.
+ extends SceneTree
+ 
+-const EXPECTED_NOISE := [1, 3, 6, 7, 9, 10]
++const EXPECTED_NOISE_INCREASE := [1, 3, 6, 7, 9, 10]
+ const EXPECTED_FINE := 50
+ 
+ var _flow: Node
+@@ -89,26 +89,53 @@
+ 		return
+ 
+ 	var credits_before: int = _player_state.money()
++	var noise_meter: Node = root.get_node("NoiseMeterGlobal")
++	var max_noise: int = noise_meter.max_noise
++	_check(max_noise >= 10, "the shared meter supports the ten-point boundary fixture")
++	if max_noise < 10:
++		_finish()
++		return
+ 
+ 	# --- the opening state, before a turn is taken ---
+-	_check(combat.noise_label.text == "Noise: 0 / 10", "the meter starts empty (got '%s')" % combat.noise_label.text)
++	_check(
++		combat.noise_label.text == "Noise: 0 / %d" % max_noise,
++		"the meter starts empty (got '%s')" % combat.noise_label.text
++	)
+ 	_check(
+ 		combat.intent_label.text.contains("Packet Sniff"),
+ 		"the first intent is shown (got '%s')" % combat.intent_label.text
+ 	)
+ 
++	# Start ten points below the real cap. The sentry's unchanged 1, 2, 3
++	# action cycle then reaches the cap on turn six, with its final +3 clamped
++	# to +1. Seed through the shared meter API, never its exported mirror.
++	var starting_noise := max_noise - 10
++	noise_meter.add_noise(starting_noise)
++	combat._refresh_status_labels()
++	_check(
++		combat.noise_label.text == "Noise: %d / %d" % [starting_noise, max_noise],
++		"the near-cap fixture is reflected in the combat display"
++	)
++
+ 	# --- six turns, playing no cards ---
+ 	var detected_on_turn := -1
+-	for i in EXPECTED_NOISE.size():
++	for i in EXPECTED_NOISE_INCREASE.size():
+ 		var turn_number := i + 1
+ 		if not is_instance_valid(combat) or combat.is_queued_for_deletion():
+ 			_check(false, "the combat screen survives to turn %d" % turn_number)
+ 			break
+ 
+ 		combat._on_end_turn_button_pressed()
++		_check(
++			noise_meter.noise == starting_noise + EXPECTED_NOISE_INCREASE[i],
++			"turn %d updates the shared meter, including the final cap" % turn_number
++		)
+ 
+ 		if is_instance_valid(combat) and not combat.is_queued_for_deletion():
+-			var expected := "Noise: %d / 10" % EXPECTED_NOISE[i]
++			var expected := "Noise: %d / %d" % [
++				starting_noise + EXPECTED_NOISE_INCREASE[i],
++				max_noise,
++			]
+ 			_check(
+ 				combat.noise_label.text == expected,
+ 				"turn %d leaves the meter at %s (got '%s')" % [turn_number, expected, combat.noise_label.text]
+@@ -126,8 +153,8 @@
+ 	await process_frame
+ 
+ 	_check(
+-		detected_on_turn == EXPECTED_NOISE.size(),
+-		"detection happens on turn %d, not earlier (got %d)" % [EXPECTED_NOISE.size(), detected_on_turn]
++		detected_on_turn == EXPECTED_NOISE_INCREASE.size(),
++		"detection happens on turn %d, not earlier (got %d)" % [EXPECTED_NOISE_INCREASE.size(), detected_on_turn]
+ 	)
+ 
+ 	var caught := _screen()

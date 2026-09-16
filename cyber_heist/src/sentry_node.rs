@@ -1,7 +1,7 @@
 //! Thin Godot adapter for the sentry in `sentry.rs`.
 //!
-//! Holds one encounter's sentry and its noise meter. The scene connects
-//! `DrawPhase`'s `security_phase` signal to `on_security_phase`, so the sentry
+//! Holds one encounter's intent queue; noise belongs to NoiseMeterGlobal.
+//! The scene connects `DrawPhase`'s `security_phase` signal to `on_security_phase`, so the sentry
 //! takes its turn at the point the player ends theirs.
 
 use godot::builtin::VarDictionary;
@@ -12,13 +12,14 @@ use crate::sentry::Sentry;
 
 #[derive(GodotClass)]
 #[class(base=Node)]
-struct SentryNode {
+pub(crate) struct SentryNode {
     /// Which construct is guarding this encounter. Set it in the Inspector to
     /// field a different one, leave it blank to keep the built-in WARDEN-7.
     #[export]
     sentry_name: GString,
 
     sentry: Sentry,
+    noise_meter: Option<Gd<NoiseMeter>>,
     base: Base<Node>,
 }
 
@@ -28,11 +29,16 @@ impl INode for SentryNode {
         Self {
             sentry_name: GString::new(),
             sentry: Sentry::warden_7(),
+            noise_meter: None,
             base,
         }
     }
 
     fn ready(&mut self) {
+        self.noise_meter = Some(
+            self.base()
+                .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
+        );
         // The name is data, so a scene can put a different construct in the
         // way without any rule changes.
         let name = self.sentry_name.to_string();
@@ -44,8 +50,12 @@ impl INode for SentryNode {
 
 impl SentryNode {
     fn noise_meter(&self) -> Gd<NoiseMeter> {
-        self.base()
-            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal")
+        // A handle, not a second meter: reads remain valid between detachment
+        // by FlowCoordinator and the old screen's deferred free.
+        self.noise_meter
+            .as_ref()
+            .expect("SentryNode must be ready")
+            .clone()
     }
 }
 
@@ -82,12 +92,12 @@ impl SentryNode {
 
     #[func]
     fn noise(&self) -> i32 {
-        self.noise_meter().bind().noise
+        self.noise_meter().bind().get_noise()
     }
 
     #[func]
     fn max_noise(&self) -> i32 {
-        self.noise_meter().bind().max_noise
+        self.noise_meter().bind().get_max_noise()
     }
 
     /// Name of the action the sentry will take next, or an empty string if it
@@ -117,18 +127,26 @@ impl SentryNode {
     /// Takes the sentry's turn and reports what it did:
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed}`.
     ///
-    /// `ok` is false only when there was nothing queued, in which case the
-    /// turn was skipped and the meter has not moved.
+    /// `ok` is false when nothing is queued, the meter is already full or the
+    /// screen is detached. In those cases neither intent nor noise changes.
     #[func]
     fn perform_queued_action(&mut self) -> VarDictionary {
         let meter = self.noise_meter();
 
-        match self.sentry.perform_queued_action() {
+        let action = if self.base().is_inside_tree()
+            && !self.base().is_queued_for_deletion()
+            && !meter.bind().is_at_cap()
+        {
+            self.sentry.perform_queued_action()
+        } else {
+            None
+        };
+        match action {
             Some(action) => {
                 let mut meter = meter;
                 let noise_added = meter.bind_mut().add_noise(action.noise);
-                let noise = meter.bind().noise;
-                let max_noise = meter.bind().max_noise;
+                let noise = meter.bind().get_noise();
+                let max_noise = meter.bind().get_max_noise();
                 let run_failed = meter.bind().is_at_cap();
 
                 vdict! {
@@ -142,8 +160,8 @@ impl SentryNode {
                 }
             }
             None => {
-                let noise = meter.bind().noise;
-                let max_noise = meter.bind().max_noise;
+                let noise = meter.bind().get_noise();
+                let max_noise = meter.bind().get_max_noise();
                 let run_failed = meter.bind().is_at_cap();
 
                 vdict! {

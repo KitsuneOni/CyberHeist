@@ -9,10 +9,11 @@
 //! - 'PlayerState' - autoload singleton tracking player money and upgrades,
 //!   and applying the "caught" penalty (fine + lose this contract's upgrades).
 //! - 'SentryNode' - the named security construct guarding an encounter: the
-//!   action it has queued and the noise meter that ends the run once it fills.
+//!   action it has queued, applied to the shared NoiseMeterGlobal autoload.
 
 mod card_data;
 mod card_database;
+mod card_play;
 mod card_text;
 mod contract_map;
 mod deck;
@@ -159,6 +160,7 @@ struct DrawPhase {
 
     deck: Deck,
     hand: Vec<CardData>,
+    noise_meter: Option<Gd<NoiseMeter>>,
     base: Base<Node>,
 }
 
@@ -173,11 +175,16 @@ impl INode for DrawPhase {
             energy: 3,
             deck: Deck::new(Vec::new(), &mut rand::rng()),
             hand: Vec::new(),
+            noise_meter: None,
             base,
         }
     }
 
     fn ready(&mut self) {
+        self.noise_meter = Some(
+            self.base()
+                .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
+        );
         let card_db = self
             .base()
             .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
@@ -228,44 +235,42 @@ impl DrawPhase {
             .collect()
     }
 
+    /// Resolves one paid play against the shared noise meter. The model owns
+    /// validation, energy, discard and signed noise as one transaction.
     #[func]
-    fn play_card(&mut self, index: i32) -> GString {
-        let index = index as usize;
-
-        if index >= self.hand.len() {
-            godot_warn!(
-                "play_card: index {index} out of bounds (hand has {} cards)",
-                self.hand.len()
-            );
-            return GString::new();
+    fn play_card(&mut self, index: i32) -> VarDictionary {
+        let mut meter = self.noise_meter().clone();
+        if meter.bind().is_at_cap() {
+            return vdict! { "ok" => false, "error" => "detected" };
         }
-
-        let cost = self.hand[index].cost as i32;
-        if cost > self.energy {
-            godot_warn!(
-                "play_card: not enough energy to play '{}' (cost {cost}, have {})",
-                self.hand[index].name,
-                self.energy
-            );
-            return GString::new();
+        if !self.base().is_inside_tree() || self.base().is_queued_for_deletion() {
+            return vdict! { "ok" => false, "error" => "inactive_encounter" };
         }
-
-        let noise = self.current_noise();
-        let card = self.hand.remove(index);
-        let name = card.display_name(noise);
-        let noise_delta = card.noise_generated as i32;
-
-        let mut noise_meter = self
-            .base()
-            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal");
-        noise_meter.bind_mut().add_noise(noise_delta);
-
-        self.energy -= cost;
-        self.deck.discard(vec![card]);
-        self.play_count += 1;
-
-        godot_print!("Played {name} (Total plays: {})", self.play_count);
-        GString::from(name.as_str())
+        let result = card_play::play_card(
+            &mut self.hand,
+            &mut self.deck,
+            &mut self.energy,
+            meter.bind_mut().level_mut(),
+            index,
+        );
+        match result {
+            Ok(played) => {
+                self.play_count += 1;
+                vdict! {
+                    "ok" => true,
+                    "name" => played.name.as_str(),
+                    "noise_change" => played.noise_change,
+                }
+            }
+            Err(error) => {
+                let error = match error {
+                    card_play::PlayError::Detected => "detected",
+                    card_play::PlayError::InvalidIndex => "invalid_index",
+                    card_play::PlayError::NotEnoughEnergy => "not_enough_energy",
+                };
+                vdict! { "ok" => false, "error" => error }
+            }
+        }
     }
 
     #[func]
@@ -334,9 +339,8 @@ impl DrawPhase {
     /// Emitted after the player's turn ends and before the next one begins,
     /// carrying the turn number that just finished.
     ///
-    /// This is the seam the security system's own turn hangs off (Trello card
-    /// 30). Nothing listens to it yet, so the phase currently passes straight
-    /// through and control returns to the player.
+    /// The combat scene connects this to the sentry, which resolves its action
+    /// synchronously before the next hand is dealt.
     #[signal]
     fn security_phase(finished_turn: i32);
 
@@ -347,6 +351,14 @@ impl DrawPhase {
     /// Returns the new hand's card names, so GDScript can render it directly.
     #[func]
     fn end_turn(&mut self) -> PackedStringArray {
+        // A removed screen can receive queued calls until it is freed. No
+        // discard, intent advancement or energy refresh may land after caught.
+        if !self.base().is_inside_tree()
+            || self.base().is_queued_for_deletion()
+            || self.noise_meter().bind().is_at_cap()
+        {
+            return self.hand_names();
+        }
         let finished_turn = self.turn_number;
 
         // The player's turn ends: nothing is carried over into the next hand.
@@ -381,10 +393,11 @@ impl DrawPhase {
 }
 
 impl DrawPhase {
+    fn noise_meter(&self) -> &Gd<NoiseMeter> {
+        self.noise_meter.as_ref().expect("DrawPhase must be ready")
+    }
+
     fn current_noise(&self) -> i32 {
-        let noise_meter = self
-            .base()
-            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal");
-        noise_meter.bind().noise
+        self.noise_meter().bind().get_noise()
     }
 }
