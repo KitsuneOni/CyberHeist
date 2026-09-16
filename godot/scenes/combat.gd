@@ -4,7 +4,6 @@ extends Control
 @onready var credits_label: Label = $VBoxContainer/CreditsLabel
 @onready var sentry: Node = $Sentry
 @onready var turn_label: Label = $VBoxContainer/TurnLabel
-@onready var noise_label: Label = $VBoxContainer/NoiseLabel
 @onready var intent_label: Label = $VBoxContainer/IntentLabel
 @onready var energy_label: Label = $VBoxContainer/EnergyLabel
 @onready var pile_label: Label = $VBoxContainer/PileLabel
@@ -15,6 +14,9 @@ extends Control
 @onready var detail_stats: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailStats
 @onready var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
 @onready var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
+@onready var noise_bar: ProgressBar = $NoiseBarContainer/NoiseBar
+@onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
+
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 
@@ -170,7 +172,7 @@ func _on_play_button_pressed() -> void:
 	if not _can_act() or selected_index == -1:
 		return
 
-	var result: Dictionary = draw_phase.play_card(selected_index, sentry)
+	var result: Dictionary = draw_phase.play_card(selected_index)
 	if result.get("ok", false):
 		play_count_label.text = "Cards played: %d" % draw_phase.play_count
 		selected_index = -1
@@ -190,17 +192,17 @@ func _on_play_button_pressed() -> void:
 	_refresh_status_labels()
 	# Positive card noise uses the same caught flow as the sentry's turn. This
 	# happens before another card can be played, never at the next turn boundary.
-	if sentry.noise() >= sentry.max_noise():
+	if NoiseMeterGlobal.is_at_cap():
 		_report_detected()
 
 
 func _refresh_status_labels() -> void:
 	_update_credits_label()
 	_update_turn_label()
-	_update_noise_label()
 	_update_intent_label()
 	_update_pile_label()
 	_update_energy_label()
+	_update_noise_label()
 
 
 # Refreshed alongside everything else, so spending or earning shows up the
@@ -220,12 +222,16 @@ func _update_pile_label() -> void:
 	]
 
 
+func _update_noise_label() -> void:
+	var current: int = NoiseMeterGlobal.noise
+	var max_val: int = NoiseMeterGlobal.max_noise
+	noise_bar.max_value = max_val
+	noise_bar.value = current
+	noise_label.text = "Noise: %d / %d" % [current, max_val]
+
+
 func _update_energy_label() -> void:
 	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]
-
-
-func _update_noise_label() -> void:
-	noise_label.text = "Noise: %d / %d" % [sentry.noise(), sentry.max_noise()]
 
 
 # Shows what the sentry will do next, so ending the turn is a choice made with

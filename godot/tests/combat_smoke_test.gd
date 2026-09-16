@@ -9,7 +9,7 @@
 # Exits non-zero on the first failed expectation, so it works as a CI gate.
 extends SceneTree
 
-const EXPECTED_NOISE := [1, 3, 6, 7, 9, 10]
+const EXPECTED_NOISE := [91, 93, 96, 97, 99, 100]
 const ACTION_NAMES := ["Packet Sniff", "Trace Sweep", "Lockdown Probe"]
 const ACTION_NOISE := [1, 2, 3]
 const EXPECTED_FINE := 50
@@ -92,17 +92,11 @@ func _run() -> void:
 	_check(booted != null and booted.name == "ContractHub", "the run opens on the contract hub")
 
 	# --- enter combat ---
-	var combat_id := -1
-	for encounter in _flow.selectable_encounters():
-		if combat_id == -1 and str(encounter.get("type", "")) == "combat":
-			combat_id = int(encounter.get("id", -1))
-	_check(combat_id != -1, "a combat encounter is selectable from the hub")
-	if combat_id == -1:
+	var selected: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	_check(selected.get("ok", false), "combat fixture loads through the real flow lifecycle")
+	if not selected.get("ok", false):
 		_finish()
 		return
-
-	var selected: Dictionary = _flow.select_encounter(combat_id)
-	_check(selected.get("ok", false), "selecting the combat encounter succeeds")
 	await process_frame
 	await process_frame
 
@@ -116,9 +110,14 @@ func _run() -> void:
 	combat.sentry.turn_resolved.connect(_on_turn_resolved)
 
 	# --- the opening state, before a turn is taken ---
-	_check(combat.noise_label.text == "Noise: 0 / 10", "the meter starts empty (got '%s')" % combat.noise_label.text)
+	_check(combat.noise_label.text == "Noise: 0 / 100", "the meter starts empty (got '%s')" % combat.noise_label.text)
 	_check_intent(combat, 0)
 	_check(combat.draw_phase.hand_names().size() == 3, "intent is shown with a playable hand")
+
+	# Use a real near-cap shared value so six turns cover differing actions,
+	# queue wrap and the final authored +3 clamped to an actual +1.
+	root.get_node("NoiseMeterGlobal").add_noise(90)
+	combat._refresh_status_labels()
 
 	# --- six turns, playing no cards ---
 	var detected_on_turn := -1
@@ -140,7 +139,7 @@ func _run() -> void:
 		if _resolved_turns.size() != turn_number:
 			break
 		var outcome: Dictionary = _resolved_turns.back()
-		var expected_delta: int = mini(ACTION_NOISE[action_index], 10 - noise_before)
+		var expected_delta: int = mini(ACTION_NOISE[action_index], 100 - noise_before)
 		_check(
 			outcome.get("ok", false)
 			and outcome.get("action", "") == ACTION_NAMES[action_index]
@@ -150,7 +149,7 @@ func _run() -> void:
 		)
 		_check(combat.sentry.noise() == EXPECTED_NOISE[i], "no unannounced noise is applied")
 		_check(
-			outcome.get("run_failed", false) == (EXPECTED_NOISE[i] == 10),
+			outcome.get("run_failed", false) == (EXPECTED_NOISE[i] == 100),
 			"only the capped turn reports detection"
 		)
 
@@ -162,7 +161,7 @@ func _run() -> void:
 				and combat.draw_phase.hand_names().size() == 3,
 				"the next player turn has a fresh hand and energy with the new intent"
 			)
-			var expected := "Noise: %d / 10" % EXPECTED_NOISE[i]
+			var expected := "Noise: %d / 100" % EXPECTED_NOISE[i]
 			_check(
 				combat.noise_label.text == expected,
 				"turn %d leaves the meter at %s (got '%s')" % [turn_number, expected, combat.noise_label.text]
@@ -173,7 +172,7 @@ func _run() -> void:
 			# input must not execute the new intent after detection.
 			combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
 			_check(
-				_resolved_turns.size() == turn_number and combat.sentry.noise() == 10,
+				_resolved_turns.size() == turn_number and combat.sentry.noise() == 100,
 				"caught combat cannot execute another queued action"
 			)
 

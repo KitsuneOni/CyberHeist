@@ -91,6 +91,7 @@ mod tests {
             card_type: CardType::Attack,
             rarity: Rarity::Common,
             keywords: Vec::new(),
+            weak_side: None,
         }
     }
 

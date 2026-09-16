@@ -1,12 +1,13 @@
 //! Thin Godot adapter for the sentry in `sentry.rs`.
 //!
-//! Holds one encounter's sentry and its noise meter. The scene connects
-//! `DrawPhase`'s `security_phase` signal to `on_security_phase`, so the sentry
+//! Holds one encounter's intent queue; noise belongs to NoiseMeterGlobal.
+//! The scene connects `DrawPhase`'s `security_phase` signal to `on_security_phase`, so the sentry
 //! takes its turn at the point the player ends theirs.
 
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
+use crate::noise_meter::NoiseMeter;
 use crate::sentry::Sentry;
 
 #[derive(GodotClass)]
@@ -17,7 +18,8 @@ pub(crate) struct SentryNode {
     #[export]
     sentry_name: GString,
 
-    pub(crate) sentry: Sentry,
+    sentry: Sentry,
+    noise_meter: Option<Gd<NoiseMeter>>,
     base: Base<Node>,
 }
 
@@ -27,11 +29,16 @@ impl INode for SentryNode {
         Self {
             sentry_name: GString::new(),
             sentry: Sentry::warden_7(),
+            noise_meter: None,
             base,
         }
     }
 
     fn ready(&mut self) {
+        self.noise_meter = Some(
+            self.base()
+                .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
+        );
         // The name is data, so a scene can put a different construct in the
         // way without any rule changes.
         let name = self.sentry_name.to_string();
@@ -41,12 +48,19 @@ impl INode for SentryNode {
     }
 }
 
+impl SentryNode {
+    fn noise_meter(&self) -> Gd<NoiseMeter> {
+        // A handle, not a second meter: reads remain valid between detachment
+        // by FlowCoordinator and the old screen's deferred free.
+        self.noise_meter
+            .as_ref()
+            .expect("SentryNode must be ready")
+            .clone()
+    }
+}
+
 #[godot_api]
 impl SentryNode {
-    /// Emitted once the sentry has taken its turn, carrying the same details
-    /// `take_turn` returns. The combat scene listens for this to update the
-    /// meter and to send the player to the detection screen when the run has
-    /// failed.
     #[signal]
     fn turn_resolved(outcome: VarDictionary);
 
@@ -58,13 +72,13 @@ impl SentryNode {
     /// when the new turn begins.
     #[func]
     fn on_security_phase(&mut self, finished_turn: i32) {
-        let outcome = self.take_turn();
+        let outcome = self.perform_queued_action();
         godot_print!(
             "{} acted after turn {finished_turn}: {} (noise {} / {})",
             self.sentry.name(),
             outcome.at("action"),
-            self.sentry.noise(),
-            self.sentry.max_noise(),
+            outcome.at("noise"),
+            outcome.at("max_noise"),
         );
         self.signals().turn_resolved().emit(&outcome);
     }
@@ -78,12 +92,12 @@ impl SentryNode {
 
     #[func]
     fn noise(&self) -> i32 {
-        self.sentry.noise()
+        self.noise_meter().bind().get_noise()
     }
 
     #[func]
     fn max_noise(&self) -> i32 {
-        self.sentry.max_noise()
+        self.noise_meter().bind().get_max_noise()
     }
 
     /// Name of the action the sentry will take next, or an empty string if it
@@ -107,35 +121,59 @@ impl SentryNode {
     /// Returns how much actually went on the meter.
     #[func]
     fn add_noise(&mut self, noise: i32) -> i32 {
-        self.sentry.add_noise(noise)
+        self.noise_meter().bind_mut().add_noise(noise)
     }
 
     /// Takes the sentry's turn and reports what it did:
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed}`.
     ///
-    /// `ok` is false only when there was nothing queued, in which case the
-    /// turn was skipped and the meter has not moved.
+    /// `ok` is false when nothing is queued, the meter is already full or the
+    /// screen is detached. In those cases neither intent nor noise changes.
     #[func]
-    fn take_turn(&mut self) -> VarDictionary {
-        match self.sentry.take_turn() {
-            Some(turn) => vdict! {
-                "ok" => true,
-                "sentry" => turn.sentry_name.as_str(),
-                "action" => turn.action_name.as_str(),
-                "noise_added" => turn.noise_added,
-                "noise" => turn.noise,
-                "max_noise" => self.sentry.max_noise(),
-                "run_failed" => turn.run_failed,
-            },
-            None => vdict! {
-                "ok" => false,
-                "sentry" => self.sentry.name(),
-                "action" => "",
-                "noise_added" => 0,
-                "noise" => self.sentry.noise(),
-                "max_noise" => self.sentry.max_noise(),
-                "run_failed" => self.sentry.is_detected(),
-            },
+    fn perform_queued_action(&mut self) -> VarDictionary {
+        let meter = self.noise_meter();
+
+        let action = if self.base().is_inside_tree()
+            && !self.base().is_queued_for_deletion()
+            && !meter.bind().is_at_cap()
+        {
+            self.sentry.perform_queued_action()
+        } else {
+            None
+        };
+        match action {
+            Some(action) => {
+                let mut meter = meter;
+                let noise_added = meter.bind_mut().add_noise(action.noise);
+                let noise = meter.bind().get_noise();
+                let max_noise = meter.bind().get_max_noise();
+                let run_failed = meter.bind().is_at_cap();
+
+                vdict! {
+                    "ok" => true,
+                    "sentry" => self.sentry.name(),
+                    "action" => action.name.as_str(),
+                    "noise_added" => noise_added,
+                    "noise" => noise,
+                    "max_noise" => max_noise,
+                    "run_failed" => run_failed,
+                }
+            }
+            None => {
+                let noise = meter.bind().get_noise();
+                let max_noise = meter.bind().get_max_noise();
+                let run_failed = meter.bind().is_at_cap();
+
+                vdict! {
+                    "ok" => false,
+                    "sentry" => self.sentry.name(),
+                    "action" => "",
+                    "noise_added" => 0,
+                    "noise" => noise,
+                    "max_noise" => max_noise,
+                    "run_failed" => run_failed,
+                }
+            }
         }
     }
 }

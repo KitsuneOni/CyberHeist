@@ -69,9 +69,10 @@ the turn boundary: `end_turn()` discards what is left in hand, emits the
 delivers that signal straight away, so anything the sentry does has already
 happened by the time the new hand exists.
 
-`cyber_heist/src/sentry.rs` holds that side as plain Rust: a name, a noise
-meter with a cap, and a list of actions the sentry cycles through. The action
-at the front of the queue is shown to the player during their own turn, which
+`cyber_heist/src/sentry.rs` holds that side as plain Rust: a name and a list
+of actions the sentry cycles through. It owns no noise value. The autoload
+`/root/NoiseMeterGlobal` owns the single `NoiseLevel`, with the incoming
+100-point cap. The action at the front of the queue is shown to the player during their own turn, which
 is what makes ending a turn a decision rather than a formality. Reactive or
 varied actions are a later story. `sentry_node.rs` exposes it to the combat
 scene:
@@ -83,7 +84,7 @@ $Sentry.max_noise()
 $Sentry.queued_action_name()      # "" when nothing is queued
 $Sentry.queued_action_noise()
 $Sentry.add_noise(amount)         # noise from anywhere else, clamped
-$Sentry.take_turn()
+$Sentry.perform_queued_action()
 ```
 
 The name is data, not code. `SentryNode` exports a `sentry_name` property, so
@@ -96,15 +97,20 @@ own `turn_resolved` signal hands the result to the combat screen as:
 
 ```gdscript
 {
-    "ok": true, # false only if nothing was queued, so the turn was skipped
+    "ok": true, # false if no action, already detected, or detached
     "sentry": "WARDEN-7",
     "action": "Trace Sweep",
     "noise_added": 2,
     "noise": 5,
-    "max_noise": 10,
+    "max_noise": 100,
     "run_failed": false,
 }
 ```
+
+The displayed intent is the **authored** action name and noise value. Reading
+it does not advance the queue; performing it advances exactly once and wraps.
+`noise_added` reports the **actual** clamped change: an announced +3 at 99/100
+still runs that action but adds only 1. Those quantities are not interchangeable.
 
 Noise is clamped to the meter, so an action can never push it past the cap.
 Reaching the cap means the player has been detected and the run is over: the
@@ -121,19 +127,29 @@ queued sentry intent does not change. It must be played **before** the meter
 fills; recovery cannot revive a detected encounter. VPN's earlier intangible
 and end-turn promises are removed rather than implying those effects exist.
 
-`DrawPhase.play_card(index, sentry)` returns `{ok: true, name, noise_change}`
+`DrawPhase.play_card(index)` returns `{ok: true, name, noise_change}`
 or `{ok: false, error}`. The plain Rust `card_play` transaction rejects an
 invalid index, insufficient energy or an already-full meter before changing
 anything. On success it spends energy, removes and discards the card, and
-applies its signed `noise_generated` exactly once. `noise_change` is the actual
-clamped change, which can be zero. The bridge increments the play counter only
+applies its signed `noise_generated` exactly once to the borrowed `NoiseLevel`.
+The transaction has no Godot objects or sentry dependency. `noise_change` is the
+actual clamped change, which can be zero. The bridge increments the play counter only
 on success; the combat screen refreshes the labels and immediately routes a
 full meter through `FlowCoordinator.report_caught()`.
 
-This is deliberate overlap with #51 (card-generated noise): positive, zero and
-negative card noise share the same path. Damage, block and other keywords are
-still not resolved by this slice. No keyword engine or sentry-script changes
-are included.
+This integrates GitHub PR12's shared noise and social-card presentation (not
+Trello STORY12, which covers queued security intent). Positive, zero and negative
+card noise share the same paid transaction. Hand names and card details select
+the strong/weak side from that same global value; play feedback names the side
+selected before the card's own noise lands. Damage, block and other keywords
+are still not executed by this slice. No keyword engine is included.
+
+`NoiseMeter.noise` and `max_noise` are computed read-only Godot properties, not
+writable exported mirrors. Card transactions and sentry actions both mutate the
+private `NoiseLevel`, so display, threshold and detection reads cannot drift.
+Adapters retain a handle to the autoload, not a shadow meter, so old-screen reads
+remain safe after detachment. Detached play/turn calls cannot mutate gameplay;
+the combat UI also ignores queued input after screen replacement.
 
 The harness's free **Draw Hand** button is removed from combat, because it
 would let players repeatedly refresh energy and redraw VPN without a sentry
@@ -145,9 +161,42 @@ Run the real-scene regression with a built extension:
 godot --headless --path godot -s res://tests/lower_detection_test.gd
 ```
 
-The test draws the complete deck only as a fixture and selects by card name,
-so recovery, rejection and positive-noise coverage do not depend on shuffling.
-It runs alongside the existing no-card combat smoke test in the stress workflow.
+The test draws the complete starter deck only as a fixture and selects by card
+name, so recovery, rejection and positive-noise coverage do not depend on
+shuffling. Near-cap recovery uses 99 -> 89, not the retired ten-point scale.
+The smoke test seeds 90/100, then checks six announced actions through queue
+wrap and the final clamped +1. Both run in the stress workflow.
+
+The generated contract does not guarantee an opening combat option. The shared
+`tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle, selecting
+a reachable node and mounting combat content if that node has another type.
+These tests exercise combat, not the random encounter scene registry.
+
+For cross-component sharing and the authored social threshold (50), run:
+
+```sh
+GODOT_BIN=godot bash godot/tests/run_shared_noise_test.sh
+```
+
+The runner copies resources to a private temporary project and uses a four-card
+fixture deck. `nigerian_king` is authored but is **not** in the production starter
+deck. The test checks bar/labels, strong/weak names, descriptions and keywords
+after VPN, loud cards and security actions, as well as screen replacement.
+`CYBER_HEIST_LIBRARY` may select an explicitly labelled substitute build. The
+runner pre-registers the extension for engine startup; first-discovery editor
+import aborted on exit with the local Godot 4.7.1/reduced-binding setup, while
+startup registration and runtime tests succeeded. It does not suppress import
+or test failures and does not prove that first-discovery path works.
+
+### Shared lifetime: unresolved retry policy
+
+PR12's autoload lifetime is preserved. Completing or replacing an encounter,
+entering caught, and returning to the hub do not reset noise. A recreated combat
+screen reads the same value, rather than silently starting a second meter.
+Concretely, retry after caught starts at 100/100 and paid recovery is rejected.
+The shared-meter test records that behaviour; it is not a proposed reset policy.
+A run/retry reset decision remains product work, not an implicit part of this
+integration.
 
 ## Scene-facing API
 

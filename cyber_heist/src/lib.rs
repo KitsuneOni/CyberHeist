@@ -9,7 +9,7 @@
 //! - 'PlayerState' - autoload singleton tracking player money and upgrades,
 //!   and applying the "caught" penalty (fine + lose this contract's upgrades).
 //! - 'SentryNode' - the named security construct guarding an encounter: the
-//!   action it has queued and the noise meter that ends the run once it fills.
+//!   action it has queued, applied to the shared NoiseMeterGlobal autoload.
 
 mod card_data;
 mod card_database;
@@ -20,6 +20,7 @@ mod deck;
 mod encounter_text;
 mod events;
 mod events_node;
+mod noise_meter;
 mod run_state;
 mod run_state_node;
 mod sentry;
@@ -31,7 +32,7 @@ use card_database::CardDatabase;
 use deck::Deck;
 use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
-use sentry_node::SentryNode;
+use noise_meter::NoiseMeter;
 
 struct CyberHeistExtension;
 
@@ -159,6 +160,7 @@ struct DrawPhase {
 
     deck: Deck,
     hand: Vec<CardData>,
+    noise_meter: Option<Gd<NoiseMeter>>,
     base: Base<Node>,
 }
 
@@ -173,11 +175,16 @@ impl INode for DrawPhase {
             energy: 3,
             deck: Deck::new(Vec::new(), &mut rand::rng()),
             hand: Vec::new(),
+            noise_meter: None,
             base,
         }
     }
 
     fn ready(&mut self) {
+        self.noise_meter = Some(
+            self.base()
+                .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
+        );
         let card_db = self
             .base()
             .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
@@ -220,21 +227,30 @@ impl DrawPhase {
 
         let mut rng = rand::rng();
         self.hand = self.deck.draw_hand(self.hand_size as usize, &mut rng);
+
+        let noise = self.current_noise();
         self.hand
             .iter()
-            .map(|card| GString::from(card.name.as_str()))
+            .map(|card| GString::from(card.display_name(noise).as_str()))
             .collect()
     }
 
-    /// Resolves one paid play against this encounter's sentry. The model owns
+    /// Resolves one paid play against the shared noise meter. The model owns
     /// validation, energy, discard and signed noise as one transaction.
     #[func]
-    fn play_card(&mut self, index: i32, mut sentry: Gd<SentryNode>) -> VarDictionary {
+    fn play_card(&mut self, index: i32) -> VarDictionary {
+        let mut meter = self.noise_meter().clone();
+        if meter.bind().is_at_cap() {
+            return vdict! { "ok" => false, "error" => "detected" };
+        }
+        if !self.base().is_inside_tree() || self.base().is_queued_for_deletion() {
+            return vdict! { "ok" => false, "error" => "inactive_encounter" };
+        }
         let result = card_play::play_card(
             &mut self.hand,
             &mut self.deck,
             &mut self.energy,
-            &mut sentry.bind_mut().sentry,
+            meter.bind_mut().level_mut(),
             index,
         );
         match result {
@@ -259,9 +275,10 @@ impl DrawPhase {
 
     #[func]
     fn hand_names(&self) -> PackedStringArray {
+        let noise = self.current_noise();
         self.hand
             .iter()
-            .map(|c| GString::from(c.name.as_str()))
+            .map(|c| GString::from(c.display_name(noise).as_str()))
             .collect()
     }
 
@@ -280,7 +297,8 @@ impl DrawPhase {
             return vdict! { "ok" => false };
         };
 
-        let detail = card_text::describe(card);
+        let noise = self.current_noise();
+        let detail = card_text::describe(card, noise);
 
         let mut keywords: Array<VarDictionary> = Array::new();
         for keyword in &detail.keywords {
@@ -333,6 +351,14 @@ impl DrawPhase {
     /// Returns the new hand's card names, so GDScript can render it directly.
     #[func]
     fn end_turn(&mut self) -> PackedStringArray {
+        // A removed screen can receive queued calls until it is freed. No
+        // discard, intent advancement or energy refresh may land after caught.
+        if !self.base().is_inside_tree()
+            || self.base().is_queued_for_deletion()
+            || self.noise_meter().bind().is_at_cap()
+        {
+            return self.hand_names();
+        }
         let finished_turn = self.turn_number;
 
         // The player's turn ends: nothing is carried over into the next hand.
@@ -347,9 +373,11 @@ impl DrawPhase {
 
         let mut rng = rand::rng();
         self.hand = self.deck.draw_hand(self.hand_size as usize, &mut rng);
+
+        let noise = self.current_noise();
         self.hand
             .iter()
-            .map(|card| GString::from(card.name.as_str()))
+            .map(|card| GString::from(card.display_name(noise).as_str()))
             .collect()
     }
 
@@ -361,5 +389,15 @@ impl DrawPhase {
     #[func]
     fn discard_pile_count(&self) -> i32 {
         self.deck.discard_pile_len() as i32
+    }
+}
+
+impl DrawPhase {
+    fn noise_meter(&self) -> &Gd<NoiseMeter> {
+        self.noise_meter.as_ref().expect("DrawPhase must be ready")
+    }
+
+    fn current_noise(&self) -> i32 {
+        self.noise_meter().bind().get_noise()
     }
 }

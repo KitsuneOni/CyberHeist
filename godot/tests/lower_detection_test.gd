@@ -70,6 +70,8 @@ func _state() -> Dictionary:
 		"plays": draw.play_count,
 		"turn": draw.turn_number,
 		"noise": _combat.sentry.noise(),
+		"global_noise": root.get_node("NoiseMeterGlobal").noise,
+		"bar_noise": _combat.noise_bar.value,
 		"intent": _combat.sentry.queued_action_name(),
 		"intent_noise": _combat.sentry.queued_action_noise(),
 		"intent_text": _combat.intent_label.text,
@@ -83,17 +85,8 @@ func _run() -> void:
 	root.add_child(main)
 	await process_frame
 
-	var combat_id := -1
-	for encounter in _flow.selectable_encounters():
-		if encounter.get("type", "") == "combat":
-			combat_id = encounter.id
-			break
-	_check(combat_id >= 0, "a combat encounter is selectable")
-	if combat_id < 0:
-		_finish()
-		return
-	var selected: Dictionary = _flow.select_encounter(combat_id)
-	_check(selected.get("ok", false), "combat loads through FlowCoordinator")
+	var selected: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	_check(selected.get("ok", false), "combat fixture loads through the real flow lifecycle")
 	if not selected.get("ok", false):
 		_finish()
 		return
@@ -104,7 +97,7 @@ func _run() -> void:
 		not _combat.has_node("VBoxContainer/Buttons/DrawButton"),
 		"combat offers no free redraw/energy refresh button"
 	)
-	_arrange_hand(9)
+	_arrange_hand(99)
 	_check(
 		_combat.intent_label.is_visible_in_tree()
 		and _combat.intent_label.text == "WARDEN-7 will: Packet Sniff (+1 noise)",
@@ -118,7 +111,7 @@ func _run() -> void:
 		and not _combat.get_node("VBoxContainer/Buttons/PlayButton").disabled,
 		"the player can select and play VPN after reading intent"
 	)
-	_check(_combat.noise_label.text == "Noise: 9 / 10", "near-cap noise is displayed")
+	_check(_combat.noise_label.text == "Noise: 99 / 100", "near-cap noise is displayed")
 	_check(
 		_combat.detail_stats.text == "Costs 2 energy · Reduces noise by 10",
 		"VPN displays its energy cost and recovery amount"
@@ -130,7 +123,7 @@ func _run() -> void:
 	)
 	var before := _state()
 	_press_play()
-	_check(_combat.noise_label.text == "Noise: 0 / 10", "VPN immediately displays lower noise")
+	_check(_combat.noise_label.text == "Noise: 89 / 100", "VPN immediately displays lower noise")
 	_check(_combat.draw_phase.energy == 1, "VPN spends exactly 2 energy")
 	_check(_combat.draw_phase.play_count == before.plays + 1, "one successful play is counted")
 	_check(_combat.draw_phase.discard_pile_count() == 1, "VPN is discarded exactly once")
@@ -145,7 +138,7 @@ func _run() -> void:
 	_check(_flow.run_snapshot().phase == "encounter_active", "recovery avoids caught")
 	_check(_screen() == _combat, "the combat screen remains active")
 	_check(
-		_combat.status_label.text == "VPN played. Noise change: -9.",
+		_combat.status_label.text == "VPN played. Noise change: -10.",
 		"feedback shows actual clamped change"
 	)
 	var after := _state()
@@ -156,7 +149,7 @@ func _run() -> void:
 	_combat.draw_phase.hand_size = 3
 	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
 	_check(
-		_combat.noise_label.text == "Noise: 1 / 10",
+		_combat.noise_label.text == "Noise: 90 / 100",
 		"the next sentry turn acts on the recovered meter"
 	)
 	_check(
@@ -174,19 +167,32 @@ func _run() -> void:
 		"the enemy turn does not catch the recovered player"
 	)
 
+	_arrange_hand(5)
+	if not _select("VPN"):
+		_finish()
+		return
+	_press_play()
+	_check(
+		_combat.noise_label.text == "Noise: 0 / 100"
+		and _combat.noise_bar.value == 0
+		and root.get_node("NoiseMeterGlobal").noise == 0
+		and _combat.status_label.text == "VPN played. Noise change: -5.",
+		"above-zero recovery floors the shared display and reports the actual clamped delta"
+	)
+
 	_arrange_hand(0)
 	if not _select("VPN"):
 		_finish()
 		return
 	_press_play()
 	_check(
-		_combat.noise_label.text == "Noise: 0 / 10",
+		_combat.noise_label.text == "Noise: 0 / 100",
 		"recovery at zero never displays negative noise"
 	)
 	_check(_combat.draw_phase.energy == 1, "recovery at zero still costs energy")
 	_check(_combat.draw_phase.discard_pile_count() == 1, "recovery at zero still discards the card")
 
-	_arrange_hand(9)
+	_arrange_hand(99)
 	_combat.draw_phase.energy = 1
 	if not _select("VPN"):
 		_finish()
@@ -195,13 +201,13 @@ func _run() -> void:
 	_press_play()
 	_check(_state() == before, "an unaffordable UI play changes no gameplay state")
 	_check(
-		_combat.noise_label.text == "Noise: 9 / 10",
+		_combat.noise_label.text == "Noise: 99 / 100",
 		"rejected recovery leaves displayed noise alone"
 	)
 	_check(_combat.status_label.text.contains("Not enough energy"), "rejected play explains the cost")
 
 	for index in [-1, 1000]:
-		var invalid: Dictionary = _combat.draw_phase.play_card(index, _combat.sentry)
+		var invalid: Dictionary = _combat.draw_phase.play_card(index)
 		_check(
 			not invalid.ok and invalid.error == "invalid_index",
 			"invalid index %d is rejected" % index
@@ -214,21 +220,21 @@ func _run() -> void:
 		_finish()
 		return
 	_press_play()
-	_check(_combat.noise_label.text == "Noise: 6 / 10", "positive noise is applied once, not twice")
+	_check(_combat.noise_label.text == "Noise: 6 / 100", "positive noise is applied once, not twice")
 	_check(_combat.draw_phase.energy == 2, "positive-noise play pays its cost")
 	if not _select("Strike"):
 		_finish()
 		return
 	_press_play()
-	_check(_combat.noise_label.text == "Noise: 6 / 10", "zero-noise play leaves the meter alone")
+	_check(_combat.noise_label.text == "Noise: 6 / 100", "zero-noise play leaves the meter alone")
 
-	_arrange_hand(9)
+	_arrange_hand(99)
 	if not _select("Trojan"):
 		_finish()
 		return
 	var credits_before: int = root.get_node("PlayerStateGlobal").money()
 	_press_play()
-	_check(_combat.noise_label.text == "Noise: 10 / 10", "loud card noise clamps to the cap")
+	_check(_combat.noise_label.text == "Noise: 100 / 100", "loud card noise clamps to the cap")
 	_check(_flow.run_snapshot().phase == "caught", "positive card noise immediately enters caught")
 	_check(_screen().name == "CaughtScreen", "card detection uses the existing caught screen")
 	_check(_combat.draw_phase.energy == 2, "the fatal card still pays its cost")
@@ -239,7 +245,7 @@ func _run() -> void:
 	_combat.draw_phase.energy = 3
 	before = _state()
 	var vpn_index: int = _combat.draw_phase.hand_names().find("VPN")
-	var detected: Dictionary = _combat.draw_phase.play_card(vpn_index, _combat.sentry)
+	var detected: Dictionary = _combat.draw_phase.play_card(vpn_index)
 	_check(
 		not detected.ok and detected.error == "detected",
 		"the model rejects recovery after detection"
@@ -247,6 +253,8 @@ func _run() -> void:
 	_combat.selected_index = vpn_index
 	_press_play()
 	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	_combat.draw_phase.end_turn()
+	_combat.sentry.perform_queued_action()
 	_combat.get_node("VBoxContainer/Buttons/CompleteEncounterButton").pressed.emit()
 	_check(_state() == before, "queued old-screen input cannot change gameplay after caught")
 	_check(_flow.run_snapshot().phase == "caught", "recovery cannot revive a failed encounter")

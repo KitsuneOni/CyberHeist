@@ -125,17 +125,17 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
 }
 
 /// Builds the full player-facing breakdown of a card.
-pub fn describe(card: &CardData) -> CardDetail {
+pub fn describe(card: &CardData, current_noise: i32) -> CardDetail {
     CardDetail {
-        name: card.name.clone(),
+        name: card.display_name(current_noise),
         card_type: card_type_name(card.card_type).to_string(),
         rarity: rarity_name(card.rarity).to_string(),
         cost: i64::from(card.cost),
         cost_text: cost_text(card.cost),
         noise_text: noise_text(card.noise_generated),
-        description: card.description.clone(),
+        description: card.active_description(current_noise).to_string(),
         keywords: card
-            .keywords
+            .active_keywords(current_noise)
             .iter()
             .map(|keyword| KeywordDetail {
                 label: keyword_label(keyword),
@@ -176,6 +176,7 @@ mod tests {
             card_type: CardType::Skill,
             rarity: Rarity::Rare,
             keywords,
+            weak_side: None,
         }
     }
 
@@ -236,7 +237,7 @@ mod tests {
             vec![Keyword::Damage(8), Keyword::Corrupting(4)],
         );
 
-        let detail = describe(&card);
+        let detail = describe(&card, 0);
 
         assert_eq!(detail.name, "Test Card");
         assert_eq!(detail.card_type, "Skill");
@@ -255,7 +256,7 @@ mod tests {
     fn a_card_without_effects_still_describes_cleanly() {
         let card = test_card("Nothing happens.", Vec::new());
 
-        let detail = describe(&card);
+        let detail = describe(&card, 0);
 
         assert!(detail.keywords.is_empty());
         assert!(!detail.description.trim().is_empty());
@@ -271,7 +272,7 @@ mod tests {
         assert!(!cards.is_empty());
 
         for card in cards.values() {
-            let detail = describe(card);
+            let detail = describe(card, 0);
 
             assert!(!detail.name.trim().is_empty(), "{} has no name", card.id);
             assert!(
