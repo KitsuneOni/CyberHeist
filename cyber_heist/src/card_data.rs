@@ -47,7 +47,7 @@ pub enum Keyword {
     Damage(u32),
     Block(u32),
     Penetrating(u32),
-    Corrupting(u32),
+    Corrupting(i32),
     Intangible(u32),
     Knowledge(i32),
     Draw(u32),

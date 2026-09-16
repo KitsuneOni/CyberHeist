@@ -79,6 +79,9 @@ pub fn keyword_label(keyword: &Keyword) -> String {
         Keyword::Damage(amount) => format!("Damage {amount}"),
         Keyword::Block(amount) => format!("Block {amount}"),
         Keyword::Penetrating(amount) => format!("Penetrating {amount}"),
+        // A negative amount strips corruption rather than applying it, so it
+        // gets its own name instead of reading as "Corrupting -15".
+        Keyword::Corrupting(amount) if *amount < 0 => format!("Cleansing {}", amount.abs()),
         Keyword::Corrupting(amount) => format!("Corrupting {amount}"),
         Keyword::Intangible(amount) => format!("Intangible {amount}"),
         Keyword::Knowledge(amount) => format!("Knowledge {amount}"),
@@ -103,6 +106,9 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
         }
         Keyword::Penetrating(amount) => {
             format!("Deals {amount} damage straight through the target's block.")
+        }
+        Keyword::Corrupting(amount) if *amount < 0 => {
+            format!("Removes {} corruption from the target.", amount.abs())
         }
         Keyword::Corrupting(amount) => {
             format!("Applies {amount} corruption. Some cards hit corrupted targets harder.")
@@ -205,6 +211,15 @@ mod tests {
         assert_eq!(keyword_label(&Keyword::Damage(6)), "Damage 6");
         assert_eq!(keyword_label(&Keyword::Corrupting(4)), "Corrupting 4");
         assert_eq!(keyword_label(&Keyword::Exhaust), "Exhaust");
+    }
+
+    #[test]
+    fn negative_corruption_reads_as_cleansing_rather_than_a_minus_sign() {
+        assert_eq!(keyword_label(&Keyword::Corrupting(-15)), "Cleansing 15");
+        assert_eq!(
+            keyword_explanation(&Keyword::Corrupting(-15)),
+            "Removes 15 corruption from the target."
+        );
     }
 
     #[test]
