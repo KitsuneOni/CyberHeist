@@ -8,6 +8,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
+use rand::Rng;
+use rand::seq::SliceRandom;
+
 pub type NodeId = u32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,15 +97,27 @@ impl NodeStatus {
 }
 
 /// A node plus its status, so the map screen can draw the whole contract.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NodeProgress {
     pub node_id: NodeId,
     pub encounter_type: EncounterType,
     pub status: NodeStatus,
+    /// Horizontal position, 0.0 at the entry column and 1.0 at the target.
+    pub x: f32,
+    /// Vertical position within the column, 0.0 top to 1.0 bottom.
+    pub y: f32,
+    /// The node a run starts from.
+    pub is_entry: bool,
     /// Where the player is standing. Tracked apart from `status`, because a
-    /// node they have cleared is both completed and where they are, and the
-    /// map needs to be able to show both at once.
+    /// node the player has cleared is both completed and where they are, and
+    /// the map needs to show both at once.
     pub is_current: bool,
+    /// A node nothing leads on from, i.e. the contract objective. The two
+    /// fixed points of a run are drawn differently from the encounters the
+    /// player chooses between.
+    pub is_target: bool,
+    /// Nodes this one leads to, for drawing the lines between them.
+    pub connections: Vec<NodeId>,
 }
 
 /// How far through the contract the player is.
@@ -113,6 +128,27 @@ pub struct NodeProgress {
 pub struct ContractProgress {
     pub completed: usize,
     pub total: usize,
+}
+
+/// How a generated contract is shaped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContractShape {
+    /// Encounters the player passes through from entry to target, counting
+    /// both ends. A length of 10 is a ten node run.
+    pub length: usize,
+    /// Fewest and most parallel routes a middle column can offer.
+    pub min_width: usize,
+    pub max_width: usize,
+}
+
+impl Default for ContractShape {
+    fn default() -> Self {
+        Self {
+            length: 10,
+            min_width: 2,
+            max_width: 3,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,7 +204,7 @@ impl fmt::Display for ContractMapError {
 pub struct ContractMap {
     nodes: BTreeMap<NodeId, EncounterNode>,
     /// Where the run began. `current_node` moves as the player advances, so
-    /// the entry point is kept separately for measuring a route's length.
+    /// the entry point is kept separately for drawing the map.
     start_node: NodeId,
     current_node: NodeId,
     locked_nodes: BTreeSet<NodeId>,
@@ -227,8 +263,120 @@ impl ContractMap {
         })
     }
 
-    /// Authored data used until contract generation is implemented. The two
-    /// opening routes rejoin before the final elite encounter.
+    /// Builds a fresh contract, so no two runs follow the same route.
+    ///
+    /// Nodes are laid out in columns between a single entry and a single
+    /// target. Edges only ever run to the next column, which keeps the graph
+    /// acyclic by construction, and every node is given at least one way in
+    /// and one way out, so whichever branch the player commits to still
+    /// reaches the target.
+    pub fn generate(shape: ContractShape, rng: &mut impl Rng) -> Self {
+        let length = shape.length.max(2);
+        let min_width = shape.min_width.max(1);
+        let max_width = shape.max_width.max(min_width);
+
+        // Column 0 is the entry and the last column the target, both single
+        // nodes: the two fixed points of a run are not chosen between.
+        let mut columns: Vec<Vec<NodeId>> = Vec::with_capacity(length);
+        let mut next_id: NodeId = 0;
+
+        for column_index in 0..length {
+            let width = if column_index == 0 || column_index == length - 1 {
+                1
+            } else {
+                rng.random_range(min_width..=max_width)
+            };
+
+            let mut column = Vec::with_capacity(width);
+            for _ in 0..width {
+                column.push(next_id);
+                next_id += 1;
+            }
+            columns.push(column);
+        }
+
+        // Every node gets one or two ways forward, then any node in the next
+        // column nothing reached is wired up, so no route is left stranded.
+        let mut connections: BTreeMap<NodeId, BTreeSet<NodeId>> = BTreeMap::new();
+        for pair in columns.windows(2) {
+            let (current, next) = (&pair[0], &pair[1]);
+
+            for node_id in current {
+                let mut candidates = next.clone();
+                candidates.shuffle(rng);
+                let take = rng.random_range(1..=2.min(candidates.len()));
+                connections
+                    .entry(*node_id)
+                    .or_default()
+                    .extend(candidates.into_iter().take(take));
+            }
+
+            for node_id in next {
+                let reached = current
+                    .iter()
+                    .any(|from| connections.get(from).is_some_and(|to| to.contains(node_id)));
+                if !reached {
+                    let from = current[rng.random_range(0..current.len())];
+                    connections.entry(from).or_default().insert(*node_id);
+                }
+            }
+        }
+
+        let last_column = length - 1;
+        let nodes: Vec<EncounterNode> = columns
+            .iter()
+            .enumerate()
+            .flat_map(|(column_index, column)| {
+                column.iter().map(move |node_id| {
+                    let encounter_type = if column_index == 0 {
+                        EncounterType::Entry
+                    } else if column_index == last_column {
+                        EncounterType::Elite
+                    } else {
+                        EncounterType::Combat
+                    };
+                    (*node_id, encounter_type)
+                })
+            })
+            .map(|(node_id, encounter_type)| {
+                let next_nodes: Vec<NodeId> = connections
+                    .get(&node_id)
+                    .map(|set| set.iter().copied().collect())
+                    .unwrap_or_default();
+                EncounterNode::new(node_id, encounter_type, next_nodes)
+            })
+            .collect();
+
+        let mut contract = Self::new(nodes, 0)
+            .expect("a generated contract is acyclic and fully connected by construction");
+        contract.assign_encounter_types(rng);
+        contract
+    }
+
+    /// Gives the encounters between the entry and the target their types.
+    ///
+    /// Done as a second pass so the mix is chosen over the whole contract
+    /// rather than column by column.
+    fn assign_encounter_types(&mut self, rng: &mut impl Rng) {
+        let start = self.start_node;
+        for node in self.nodes.values_mut() {
+            if node.id == start || node.next_nodes.is_empty() {
+                continue;
+            }
+
+            // Mostly fights, with quieter nodes mixed through so a route has
+            // some texture to it.
+            node.encounter_type = match rng.random_range(0..100u8) {
+                0..=54 => EncounterType::Combat,
+                55..=74 => EncounterType::Event,
+                75..=89 => EncounterType::Shop,
+                _ => EncounterType::Elite,
+            };
+        }
+    }
+
+    /// Authored data used by the tests. The two opening routes rejoin before
+    /// the final elite encounter.
     pub fn demo() -> Self {
         Self::new(
             [
@@ -331,14 +479,18 @@ impl ContractMap {
         Ok(())
     }
 
-    /// How far each node sits from the entry, along the longest path that
-    /// reaches it. Used to measure a route's length.
+    /// How far each node sits from the entry, measured along the longest path
+    /// that reaches it.
+    ///
+    /// Longest rather than shortest, so a node every branch reconverges on
+    /// lands in the final column instead of being pulled left by whichever
+    /// route happened to be shorter.
     fn node_depths(&self) -> BTreeMap<NodeId, usize> {
         let mut depths: BTreeMap<NodeId, usize> = BTreeMap::new();
         depths.insert(self.start_node, 0);
 
-        // The graph is validated as acyclic, so relaxing every edge settles
-        // after at most one pass per node.
+        // The graph is validated as acyclic, so repeatedly relaxing every edge
+        // settles after at most one pass per node.
         for _ in 0..self.nodes.len() {
             let mut changed = false;
             for node in self.nodes.values() {
@@ -361,6 +513,7 @@ impl ContractMap {
             }
         }
 
+        // A node no route reaches still needs somewhere to sit.
         for node_id in self.nodes.keys() {
             depths.entry(*node_id).or_insert(0);
         }
@@ -372,8 +525,8 @@ impl ContractMap {
     /// standing, without passing through a branch that has been locked out.
     ///
     /// Anything outside this set is unreachable for the rest of the contract,
-    /// however far ahead it sits, which is what the map needs in order to stop
-    /// describing dead routes as "further ahead".
+    /// however far ahead it sits, which is what the map needs in order to
+    /// stop describing dead routes as "further ahead".
     fn reachable_from_current(&self) -> BTreeSet<NodeId> {
         let mut reachable = BTreeSet::new();
         let mut queue = VecDeque::new();
@@ -396,7 +549,8 @@ impl ContractMap {
         reachable
     }
 
-    /// Every node with its current status, in id order, for drawing the map.
+    /// Every node with its current status and position, in id order, for
+    /// drawing the map.
     pub fn node_progress(&self) -> Vec<NodeProgress> {
         let selectable: BTreeSet<NodeId> = self
             .selectable_encounters()
@@ -404,6 +558,15 @@ impl ContractMap {
             .map(|node| node.id)
             .collect();
         let reachable = self.reachable_from_current();
+        let depths = self.node_depths();
+        let max_depth = depths.values().copied().max().unwrap_or(0);
+
+        // Nodes sharing a column are spread evenly down it, so a branch reads
+        // as parallel routes rather than a single line.
+        let mut columns: BTreeMap<usize, Vec<NodeId>> = BTreeMap::new();
+        for (node_id, depth) in &depths {
+            columns.entry(*depth).or_default().push(*node_id);
+        }
 
         self.nodes
             .values()
@@ -422,11 +585,27 @@ impl ContractMap {
                     NodeStatus::Upcoming
                 };
 
+                let depth = depths.get(&node.id).copied().unwrap_or(0);
+                let x = if max_depth == 0 {
+                    0.5
+                } else {
+                    depth as f32 / max_depth as f32
+                };
+
+                let column = &columns[&depth];
+                let row = column.iter().position(|id| *id == node.id).unwrap_or(0);
+                let y = (row + 1) as f32 / (column.len() + 1) as f32;
+
                 NodeProgress {
                     node_id: node.id,
                     encounter_type: node.encounter_type,
                     status,
+                    x,
+                    y,
+                    is_entry: node.id == self.start_node,
                     is_current: node.id == self.current_node,
+                    is_target: node.next_nodes.is_empty(),
+                    connections: node.next_nodes.clone(),
                 }
             })
             .collect()
@@ -506,6 +685,8 @@ fn graph_contains_cycle(nodes: &BTreeMap<NodeId, EncounterNode>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     fn branching_map() -> ContractMap {
         ContractMap::new(
@@ -707,6 +888,85 @@ mod tests {
         );
     }
 
+    /// A node that could only have been reached through a branch the player
+    /// passed over is gone for good, however far ahead it sits. Telling them
+    /// it is "further ahead on the contract" is the confusion the statuses
+    /// exist to prevent.
+    #[test]
+    fn nodes_behind_a_locked_branch_are_locked_too() {
+        let mut contract = ContractMap::demo();
+
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+
+        assert_eq!(
+            status_of(&contract, 2),
+            NodeStatus::Locked,
+            "the branch passed over"
+        );
+        assert_eq!(
+            status_of(&contract, 4),
+            NodeStatus::Locked,
+            "node 4 is only reachable through node 2, so it is unreachable too"
+        );
+        assert_eq!(
+            status_of(&contract, 3),
+            NodeStatus::Available,
+            "the route actually taken stays open"
+        );
+        assert_eq!(
+            status_of(&contract, 5),
+            NodeStatus::Upcoming,
+            "the target is still ahead on the chosen route"
+        );
+    }
+
+    /// Deeper contracts strand far more nodes behind a single choice, so the
+    /// rule has to hold at depth rather than just on the two-level demo.
+    #[test]
+    fn a_generated_contract_locks_everything_it_can_no_longer_reach() {
+        let mut contract = generated(4);
+
+        let first = contract.selectable_encounters()[0].id;
+        contract.select_encounter(first).expect("selectable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+
+        let reachable = contract.reachable_from_current();
+        for entry in contract.node_progress() {
+            if entry.status == NodeStatus::Completed || entry.node_id == contract.current_node {
+                continue;
+            }
+
+            let should_be_locked = !reachable.contains(&entry.node_id);
+            assert_eq!(
+                entry.status == NodeStatus::Locked,
+                should_be_locked,
+                "node {} is {:?} but reachable={}",
+                entry.node_id,
+                entry.status,
+                !should_be_locked
+            );
+        }
+    }
+
+    /// Nothing is ruled out before the player has chosen anything.
+    #[test]
+    fn a_fresh_contract_locks_nothing() {
+        let contract = ContractMap::demo();
+
+        assert!(
+            !contract
+                .node_progress()
+                .iter()
+                .any(|entry| entry.status == NodeStatus::Locked),
+            "no branch has been passed over yet"
+        );
+    }
+
     /// Acceptance scenario 2: overall progress is countable, e.g. "2 of 5".
     #[test]
     fn progress_counts_completed_encounters_and_excludes_the_entry_node() {
@@ -764,80 +1024,29 @@ mod tests {
         );
     }
 
-    /// A node that could only have been reached through a branch the player
-    /// passed over is gone for good, however far ahead it sits. Telling them
-    /// it is "further ahead on the contract" is the confusion the statuses
-    /// exist to prevent.
-    #[test]
-    fn nodes_behind_a_locked_branch_are_locked_too() {
-        let mut contract = ContractMap::demo();
-
-        contract.select_encounter(1).expect("node 1 is reachable");
-        contract
-            .complete_current_encounter()
-            .expect("an encounter is active");
-
-        assert_eq!(
-            status_of(&contract, 2),
-            NodeStatus::Locked,
-            "the branch passed over"
-        );
-        assert_eq!(
-            status_of(&contract, 4),
-            NodeStatus::Locked,
-            "node 4 is only reachable through node 2, so it is unreachable too"
-        );
-        assert_eq!(
-            status_of(&contract, 3),
-            NodeStatus::Available,
-            "the route actually taken stays open"
-        );
-    }
-
-    #[test]
-    fn a_fresh_contract_locks_nothing() {
-        let contract = ContractMap::demo();
-
-        assert!(
-            !contract
-                .node_progress()
-                .iter()
-                .any(|entry| entry.status == NodeStatus::Locked),
-            "no branch has been passed over yet"
-        );
-    }
-
-    /// A cleared node is both completed and where the player stands, and the
-    /// map has to be able to show both.
+    /// Card 70 scenario 2: a cleared node is both completed and where the
+    /// player stands, and the map has to be able to show both.
     #[test]
     fn the_node_the_player_stands_on_is_marked_even_once_it_is_completed() {
         let mut contract = ContractMap::demo();
-        assert!(
-            contract
-                .node_progress()
-                .into_iter()
-                .find(|entry| entry.node_id == 0)
-                .expect("entry exists")
-                .is_current
-        );
+        assert!(progress_of(&contract, 0).is_current);
 
         contract.select_encounter(1).expect("node 1 is reachable");
         contract
             .complete_current_encounter()
             .expect("an encounter is active");
 
-        let standing_on = contract
-            .node_progress()
-            .into_iter()
-            .find(|entry| entry.node_id == 1)
-            .expect("node 1 exists");
+        let standing_on = progress_of(&contract, 1);
         assert!(standing_on.is_current, "the player is standing on node 1");
         assert_eq!(
             standing_on.status,
             NodeStatus::Completed,
             "and has also cleared it"
         );
-
+        assert!(
+            !progress_of(&contract, 0).is_current,
+            "the entry is behind them now"
+        );
         assert_eq!(
             contract
                 .node_progress()
@@ -858,5 +1067,313 @@ mod tests {
         ids.sort_unstable();
 
         assert_eq!(ids, vec![0, 1, 2, 3, 4, 5]);
+    }
+    fn progress_of(contract: &ContractMap, node_id: NodeId) -> NodeProgress {
+        contract
+            .node_progress()
+            .into_iter()
+            .find(|entry| entry.node_id == node_id)
+            .expect("node exists on the contract")
+    }
+
+    /// Card 70 scenario 1: the entry and the target are the two fixed points
+    /// of a run, so they sit at either end of the layout.
+    #[test]
+    fn the_layout_runs_from_the_entry_on_the_left_to_the_target_on_the_right() {
+        let contract = ContractMap::demo();
+
+        let entry = progress_of(&contract, 0);
+        let target = progress_of(&contract, 5);
+
+        assert_eq!(entry.x, 0.0, "the entry starts the layout");
+        assert!(entry.is_entry);
+        assert_eq!(target.x, 1.0, "the target ends it");
+        assert!(target.is_target);
+
+        for entry in contract.node_progress() {
+            assert!(
+                (0.0..=1.0).contains(&entry.x) && (0.0..=1.0).contains(&entry.y),
+                "node {} sits outside the layout at ({}, {})",
+                entry.node_id,
+                entry.x,
+                entry.y
+            );
+        }
+    }
+
+    /// A node every branch reconverges on belongs in the final column, not
+    /// pulled left by whichever route reached it first.
+    #[test]
+    fn a_reconverging_node_sits_past_every_branch_that_leads_to_it() {
+        let contract = ContractMap::demo();
+
+        let target = progress_of(&contract, 5);
+        for node_id in [1, 2, 3, 4] {
+            let node = progress_of(&contract, node_id);
+            assert!(
+                node.x < target.x,
+                "node {node_id} should sit left of the target it leads to"
+            );
+        }
+    }
+
+    /// Two routes running in parallel have to be drawn apart, or the branch
+    /// reads as a single line.
+    #[test]
+    fn nodes_in_the_same_column_are_spread_apart() {
+        let contract = ContractMap::demo();
+
+        let first_branch = progress_of(&contract, 1);
+        let second_branch = progress_of(&contract, 2);
+
+        assert_eq!(
+            first_branch.x, second_branch.x,
+            "both opening branches are one step from the entry"
+        );
+        assert_ne!(
+            first_branch.y, second_branch.y,
+            "but they must not be drawn on top of each other"
+        );
+    }
+
+    #[test]
+    fn no_two_nodes_share_a_position() {
+        let contract = ContractMap::demo();
+
+        let mut seen: Vec<(u32, u32)> = Vec::new();
+        for entry in contract.node_progress() {
+            // Compare as fixed-point, since positions are computed floats.
+            let point = ((entry.x * 1000.0) as u32, (entry.y * 1000.0) as u32);
+            assert!(
+                !seen.contains(&point),
+                "node {} overlaps another node at {point:?}",
+                entry.node_id
+            );
+            seen.push(point);
+        }
+    }
+
+    /// The lines between nodes are drawn from these, so every connection in
+    /// the graph has to survive into the layout.
+    #[test]
+    fn every_connection_is_carried_through_for_drawing() {
+        let contract = ContractMap::demo();
+
+        let entry = progress_of(&contract, 0);
+        assert_eq!(entry.connections, vec![1, 2]);
+
+        let target = progress_of(&contract, 5);
+        assert!(
+            target.connections.is_empty(),
+            "nothing leads on from the target"
+        );
+
+        let converging = progress_of(&contract, 3);
+        assert_eq!(converging.connections, vec![5]);
+    }
+
+    #[test]
+    fn the_layout_does_not_move_as_the_run_progresses() {
+        let mut contract = ContractMap::demo();
+        let before: Vec<(NodeId, u32, u32)> = contract
+            .node_progress()
+            .into_iter()
+            .map(|e| (e.node_id, (e.x * 1000.0) as u32, (e.y * 1000.0) as u32))
+            .collect();
+
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+
+        let after: Vec<(NodeId, u32, u32)> = contract
+            .node_progress()
+            .into_iter()
+            .map(|e| (e.node_id, (e.x * 1000.0) as u32, (e.y * 1000.0) as u32))
+            .collect();
+
+        assert_eq!(before, after, "nodes must not jump around mid-run");
+    }
+    fn generated(seed: u64) -> ContractMap {
+        let mut rng = StdRng::seed_from_u64(seed);
+        ContractMap::generate(ContractShape::default(), &mut rng)
+    }
+
+    /// The whole point of generating: a contract long enough to be a run.
+    #[test]
+    fn a_generated_contract_is_as_long_as_it_was_asked_to_be() {
+        for seed in 0..25 {
+            let contract = generated(seed);
+            let depth = contract.node_depths().values().copied().max().unwrap_or(0);
+            assert_eq!(
+                depth + 1,
+                ContractShape::default().length,
+                "seed {seed} produced a contract of the wrong length"
+            );
+        }
+    }
+
+    /// Whichever branches the player commits to, the route has to keep going
+    /// until it reaches the target. This walks a full run to prove it.
+    #[test]
+    fn every_route_through_a_generated_contract_reaches_the_target() {
+        for seed in 0..25 {
+            let mut contract = generated(seed);
+            let mut steps = 0;
+
+            loop {
+                let options = contract.selectable_encounters();
+                if options.is_empty() {
+                    break;
+                }
+                // Take whichever branch is offered first; any of them must do.
+                let chosen = options[0].id;
+                contract
+                    .select_encounter(chosen)
+                    .expect("an offered encounter must be selectable");
+                contract
+                    .complete_current_encounter()
+                    .expect("an encounter is active");
+                steps += 1;
+                assert!(steps < 50, "seed {seed} never reached the target");
+            }
+
+            let ended_on = contract.current_encounter();
+            assert!(
+                ended_on.next_nodes.is_empty(),
+                "seed {seed} stopped at node {} without reaching a target",
+                ended_on.id
+            );
+            assert_eq!(
+                steps + 1,
+                ContractShape::default().length,
+                "seed {seed} traversed the wrong number of encounters"
+            );
+        }
+    }
+
+    /// A finished contract has to read as finished, not as a fraction of a
+    /// graph the player was never able to walk all of.
+    #[test]
+    fn walking_a_generated_contract_to_the_end_completes_its_progress() {
+        let mut contract = generated(3);
+
+        loop {
+            let options = contract.selectable_encounters();
+            if options.is_empty() {
+                break;
+            }
+            let chosen = options[0].id;
+            contract.select_encounter(chosen).expect("selectable");
+            contract.complete_current_encounter().expect("active");
+        }
+
+        let progress = contract.progress();
+        assert_eq!(
+            progress.completed, progress.total,
+            "reaching the target should read as {} of {} complete",
+            progress.total, progress.total
+        );
+        assert_eq!(
+            progress.total,
+            ContractShape::default().length - 1,
+            "a route is one encounter per column after the entry"
+        );
+    }
+
+    #[test]
+    fn a_generated_contract_has_one_entry_and_one_target() {
+        for seed in 0..25 {
+            let contract = generated(seed);
+
+            let entries: Vec<_> = contract
+                .node_progress()
+                .into_iter()
+                .filter(|node| node.is_entry)
+                .collect();
+            assert_eq!(
+                entries.len(),
+                1,
+                "seed {seed} has {} entries",
+                entries.len()
+            );
+
+            let targets: Vec<_> = contract
+                .node_progress()
+                .into_iter()
+                .filter(|node| node.is_target)
+                .collect();
+            assert_eq!(
+                targets.len(),
+                1,
+                "seed {seed} has {} targets",
+                targets.len()
+            );
+        }
+    }
+
+    /// A node with no way in cannot be reached, and one with no way out is a
+    /// dead end the player could get stranded on.
+    #[test]
+    fn no_generated_node_is_stranded() {
+        for seed in 0..25 {
+            let contract = generated(seed);
+
+            for node in contract.nodes.values() {
+                if !node.next_nodes.is_empty() {
+                    continue;
+                }
+                assert!(
+                    contract
+                        .node_progress()
+                        .into_iter()
+                        .find(|entry| entry.node_id == node.id)
+                        .expect("node exists")
+                        .is_target,
+                    "seed {seed}: node {} is a dead end but is not the target",
+                    node.id
+                );
+            }
+
+            for node in contract.nodes.values() {
+                if node.id == contract.start_node {
+                    continue;
+                }
+                let has_way_in = contract
+                    .nodes
+                    .values()
+                    .any(|other| other.next_nodes.contains(&node.id));
+                assert!(has_way_in, "seed {seed}: nothing leads to node {}", node.id);
+            }
+        }
+    }
+
+    #[test]
+    fn generating_offers_branches_to_choose_between() {
+        let contract = generated(1);
+        let branch_points = contract
+            .nodes
+            .values()
+            .filter(|node| node.next_nodes.len() > 1)
+            .count();
+        assert!(
+            branch_points > 0,
+            "a contract with no branches is a corridor, not a map"
+        );
+    }
+
+    #[test]
+    fn the_same_seed_generates_the_same_contract() {
+        assert_eq!(generated(7), generated(7));
+    }
+
+    #[test]
+    fn different_seeds_generate_different_contracts() {
+        let first = generated(1);
+        let second = generated(2);
+        assert_ne!(
+            first, second,
+            "two runs should not lay out the same contract"
+        );
     }
 }

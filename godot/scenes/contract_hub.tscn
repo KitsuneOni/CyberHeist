@@ -1,6 +1,7 @@
-[gd_scene load_steps=3 format=3 uid="uid://bchub5cene001"]
+[gd_scene load_steps=4 format=3 uid="uid://bchub5cene001"]
 
 [ext_resource type="Script" uid="uid://dchub5cr1pt01" path="res://scenes/contract_hub.gd" id="1_hub"]
+[ext_resource type="Script" path="res://scenes/map_graph.gd" id="2_mapgraph"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_map"]
 bg_color = Color(0.047, 0.067, 0.09, 0.96)
@@ -41,9 +42,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/margin_left = 96
-theme_override_constants/margin_top = 32
+theme_override_constants/margin_top = 24
 theme_override_constants/margin_right = 96
-theme_override_constants/margin_bottom = 32
+theme_override_constants/margin_bottom = 24
 
 [node name="VBox" type="VBoxContainer" parent="Page"]
 layout_mode = 2
@@ -86,13 +87,6 @@ theme_override_constants/margin_bottom = 24
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="CurrentLabel" type="Label" parent="Page/VBox/MapPanel/MapMargin/MapContent"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.85, 0.9, 0.95, 1)
-theme_override_font_sizes/font_size = 20
-text = "Current position: Entry"
-horizontal_alignment = 1
-
 [node name="CreditsLabel" type="Label" parent="Page/VBox/MapPanel/MapMargin/MapContent"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.65, 0.85, 0.72, 1)
@@ -107,9 +101,17 @@ theme_override_font_sizes/font_size = 16
 text = "Contract progress: 0 of 0 encounters complete"
 horizontal_alignment = 1
 
-[node name="MapList" type="VBoxContainer" parent="Page/VBox/MapPanel/MapMargin/MapContent"]
+[node name="MapScroll" type="ScrollContainer" parent="Page/VBox/MapPanel/MapMargin/MapContent"]
 layout_mode = 2
-theme_override_constants/separation = 2
+custom_minimum_size = Vector2(0, 230)
+horizontal_scroll_mode = 2
+vertical_scroll_mode = 0
+follow_focus = true
+
+[node name="MapGraph" type="Control" parent="Page/VBox/MapPanel/MapMargin/MapContent/MapScroll"]
+layout_mode = 2
+mouse_filter = 0
+script = ExtResource("2_mapgraph")
 
 [node name="InstructionLabel" type="Label" parent="Page/VBox/MapPanel/MapMargin/MapContent"]
 layout_mode = 2
@@ -118,12 +120,6 @@ theme_override_font_sizes/font_size = 15
 text = "Choose your next encounter."
 horizontal_alignment = 1
 autowrap_mode = 2
-
-[node name="Choices" type="HBoxContainer" parent="Page/VBox/MapPanel/MapMargin/MapContent"]
-layout_mode = 2
-size_flags_vertical = 3
-theme_override_constants/separation = 24
-alignment = 1
 
 [node name="KeyLabel" type="Label" parent="Page/VBox/MapPanel/MapMargin/MapContent"]
 layout_mode = 2
