@@ -1,0 +1,102 @@
+[gd_scene load_steps=3 format=3 uid="uid://brwd7card0053"]
+
+[ext_resource type="Script" uid="uid://drwd7card0053" path="res://scenes/card_reward.gd" id="1_reward"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_reward"]
+bg_color = Color(0.047, 0.067, 0.09, 0.96)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.95, 0.78, 0.8)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
+[node name="CardReward" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_reward")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.018, 0.027, 0.043, 1)
+
+[node name="Page" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 64
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 64
+theme_override_constants/margin_bottom = 48
+
+[node name="RewardPanel" type="PanelContainer" parent="Page"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_reward")
+
+[node name="Margin" type="MarginContainer" parent="Page/RewardPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 32
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 32
+theme_override_constants/margin_bottom = 24
+
+[node name="Content" type="VBoxContainer" parent="Page/RewardPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 14
+alignment = 1
+
+[node name="RewardTitle" type="Label" parent="Page/RewardPanel/Margin/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.35, 1, 0.82, 1)
+theme_override_font_sizes/font_size = 30
+text = "Encounter cleared"
+horizontal_alignment = 1
+
+[node name="RewardSubtitle" type="Label" parent="Page/RewardPanel/Margin/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.75, 0.82, 0.86, 1)
+theme_override_font_sizes/font_size = 16
+text = "Take one card for the rest of this run."
+horizontal_alignment = 1
+
+[node name="OfferContainer" type="VBoxContainer" parent="Page/RewardPanel/Margin/Content"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 10
+
+[node name="DeckLabel" type="Label" parent="Page/RewardPanel/Margin/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.65, 0.85, 0.72, 1)
+theme_override_font_sizes/font_size = 15
+text = "Deck: 0 cards"
+horizontal_alignment = 1
+
+[node name="SkipButton" type="Button" parent="Page/RewardPanel/Margin/Content"]
+custom_minimum_size = Vector2(260, 42)
+layout_mode = 2
+size_flags_horizontal = 4
+text = "Skip"
+
+[node name="StatusLabel" type="Label" parent="Page/RewardPanel/Margin/Content"]
+custom_minimum_size = Vector2(0, 24)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.72, 0.36, 1)
+horizontal_alignment = 1
+
+[connection signal="pressed" from="Page/RewardPanel/Margin/Content/SkipButton" to="." method="_on_skip_pressed"]
