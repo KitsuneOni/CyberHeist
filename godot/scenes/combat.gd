@@ -42,11 +42,20 @@ func _on_end_turn_button_pressed() -> void:
 	selected_index = -1
 	status_label.text = ""
 	var hand: PackedStringArray = draw_phase.end_turn()
-	_rebuild_card_buttons(hand)
-	_refresh_status_labels()
 
 	var turn := sentry_turn
 	sentry_turn = {}
+
+	# A boss lockdown takes energy off the turn end_turn() has just opened, not
+	# the one that was spent getting here. Applied before the hand is drawn on
+	# screen, so cards the player can no longer afford come up disabled rather
+	# than failing when clicked.
+	var drained := 0
+	if turn.get("ok", false):
+		drained = draw_phase.drain_energy(int(turn.get("energy_drain", 0)))
+
+	_rebuild_card_buttons(hand)
+	_refresh_status_labels()
 
 	# A full noise meter means the player has been spotted, so the new hand
 	# never gets played and the detection screen takes over instead.
@@ -60,6 +69,8 @@ func _on_end_turn_button_pressed() -> void:
 			turn.get("action", ""),
 			turn.get("noise_added", 0),
 		]
+		if drained > 0:
+			status_label.text += " Lockdown cost you %d energy this turn." % drained
 
 
 # Connected in the scene to the sentry, which announces its turn from inside
@@ -229,6 +240,12 @@ func _update_noise_label() -> void:
 	noise_bar.value = current
 	noise_label.text = "Noise: %d / %d" % [current, max_val]
 
+	# Only worth saying when there is some: an unhardened construct reads as
+	# the plain meter it has always been.
+	var resistance: int = NoiseMeterGlobal.get_resistance_percent()
+	if resistance > 0:
+		noise_label.text += "  (recovery -%d%%)" % resistance
+
 
 func _update_energy_label() -> void:
 	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]
@@ -240,9 +257,21 @@ func _update_intent_label() -> void:
 	var action: String = sentry.queued_action_name()
 	if action == "":
 		intent_label.text = "%s: nothing queued" % sentry.construct_name()
-	else:
+		return
+
+	# An ability is announced with the intent rather than sprung afterwards, so
+	# ending the turn into a lockdown is a decision and not a surprise.
+	var ability: String = sentry.queued_action_ability()
+	if ability == "":
 		intent_label.text = "%s will: %s (+%d noise)" % [
 			sentry.construct_name(),
 			action,
 			sentry.queued_action_noise(),
+		]
+	else:
+		intent_label.text = "%s will: %s (+%d noise, %s)" % [
+			sentry.construct_name(),
+			action,
+			sentry.queued_action_noise(),
+			ability,
 		]
