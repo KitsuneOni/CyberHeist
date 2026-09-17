@@ -179,18 +179,18 @@ func _on_play_button_pressed() -> void:
 		selected_index = -1
 		var noise_change: int = result.get("noise_change", 0)
 		var damage_dealt: int = result.get("damage_dealt", 0)
-		status_label.text = "%s played. Noise change: %+d. Damage: %d." % [
-			result.get("name", "Card"),
-			noise_change,
-			damage_dealt,
-		]
 		var shield_added: int = result.get("shield_added", 0)
-		status_label.text = "%s played. Noise change: %+d. Damage: %d. Shield: +%d." % [
+
+		var message: String = "%s played. Noise change: %+d." % [
 			result.get("name", "Card"),
 			noise_change,
-			damage_dealt,
-			shield_added,
 		]
+		if damage_dealt > 0:
+			message += " Damage: %d." % damage_dealt
+		if shield_added > 0:
+			message += " Shield: +%d." % shield_added
+		status_label.text = message
+
 		if damage_dealt > 0:
 			sentry.take_damage(damage_dealt)
 		_rebuild_card_buttons(draw_phase.hand_names())
