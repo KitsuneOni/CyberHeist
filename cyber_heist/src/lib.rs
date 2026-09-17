@@ -14,6 +14,7 @@
 mod card_data;
 mod card_database;
 mod card_play;
+mod card_reward;
 mod card_text;
 mod contract_map;
 mod deck;
@@ -21,6 +22,8 @@ mod encounter_text;
 mod events;
 mod events_node;
 mod noise_meter;
+mod run_deck;
+mod run_deck_node;
 mod run_state;
 mod run_state_node;
 mod sentry;
@@ -34,6 +37,7 @@ use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
 use noise_meter::NoiseMeter;
 use sentry_node::SentryNode;
+use run_deck_node::RunDeckNode;
 
 struct CyberHeistExtension;
 
@@ -197,23 +201,49 @@ impl INode for DrawPhase {
             .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
         let card_db = card_db.bind();
 
-        // Every run starts from the same predefined list rather than one copy
-        // of every card in the database.
-        let entries = starter_deck::load_starter_deck_entries();
-        let starter_cards: Vec<CardData> =
-            match starter_deck::build_starter_deck(&entries, |id| card_db.get(id)) {
-                Ok(cards) => cards,
-                Err(missing) => {
+        // The run owns its cards, so anything gained mid-run is still here at
+        // the next encounter. Falling back to the starter list keeps the combat
+        // scene runnable on its own, e.g. opened directly to test it.
+        let run_deck = self
+            .base()
+            .try_get_node_as::<RunDeckNode>("/root/FlowCoordinator/RunDeck");
+
+        let encounter_cards: Vec<CardData> = match &run_deck {
+            Some(node) => {
+                let owned = node.bind().owned_card_ids();
+                let mut cards = Vec::with_capacity(owned.len());
+                let mut missing = Vec::new();
+                for id in owned {
+                    match card_db.get(&id) {
+                        Some(card) => cards.push(card.clone()),
+                        None => missing.push(id),
+                    }
+                }
+                if !missing.is_empty() {
                     godot_error!(
-                        "starter_deck.ron refers to cards that do not exist in cards.ron: {}",
+                        "the run deck holds cards that do not exist in cards.ron: {}",
                         missing.join(", ")
                     );
-                    Vec::new()
                 }
-            };
+                cards
+            }
+            None => {
+                let entries = starter_deck::load_starter_deck_entries();
+                match starter_deck::build_starter_deck(&entries, |id| card_db.get(id)) {
+                    Ok(cards) => cards,
+                    Err(missing) => {
+                        godot_error!(
+                            "starter_deck.ron refers to cards that do not exist in cards.ron: {}",
+                            missing.join(", ")
+                        );
+                        Vec::new()
+                    }
+                }
+            }
+        };
 
         let mut rng = rand::rng();
-        self.deck = Deck::new(starter_cards, &mut rng);
+        self.deck = Deck::new(encounter_cards, &mut rng);
     }
 }
 

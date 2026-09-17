@@ -5,6 +5,11 @@
 # only wires them to the screen, and MapGraph does the drawing.
 extends Control
 
+# How many frames to give the map graph to reach the width it asked for before
+# scrolling anyway. Layout normally settles in one or two; the bound just stops
+# a contract that never grows from waiting forever.
+const MAX_LAYOUT_FRAMES := 8
+
 @onready var credits_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/CreditsLabel
 @onready var progress_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/ProgressLabel
 @onready var map_scroll: ScrollContainer = $Page/VBox/MapPanel/MapMargin/MapContent/MapScroll
@@ -59,7 +64,19 @@ func _rebuild_map() -> void:
 func _focus_current_node() -> void:
 	# The graph resizes to the contract, and container sizes settle a frame
 	# later, so wait before measuring where to scroll to.
-	await get_tree().process_frame
+	#
+	# One frame is not always enough. On a hub that has just been instantiated
+	# the graph has not yet reached the width it asked for, and the
+	# ScrollContainer clamps scroll_horizontal against that width, so scrolling
+	# too early silently lands back at the left edge. Wait for the graph to
+	# reach its requested width, bounded so a contract that never grows cannot
+	# stall the hub.
+	for _attempt in MAX_LAYOUT_FRAMES:
+		await get_tree().process_frame
+		if not is_instance_valid(map_graph) or not is_instance_valid(map_scroll):
+			return
+		if map_graph.size.x >= map_graph.custom_minimum_size.x:
+			break
 
 	var node_x: float = map_graph.current_node_x()
 	if node_x < 0.0:
