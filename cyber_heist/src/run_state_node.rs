@@ -4,6 +4,9 @@ use godot::builtin::{VarDictionary, Variant};
 use godot::prelude::*;
 
 use crate::contract_map::{EncounterNode, EncounterSelection};
+use crate::encounter_text::{
+    all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
+};
 use crate::run_state::{RunState, RunStateError};
 
 #[derive(GodotClass)]
@@ -17,7 +20,8 @@ struct RunStateNode {
 impl INode for RunStateNode {
     fn init(base: Base<Node>) -> Self {
         Self {
-            state: RunState::new(),
+            // Every launch rolls a fresh contract.
+            state: RunState::generated(&mut rand::rng()),
             base,
         }
     }
@@ -32,6 +36,80 @@ impl RunStateNode {
             encounters.push(&encounter_dictionary(node));
         }
         encounters
+    }
+
+    /// Every node on the contract with its status, so the map screen can show
+    /// what is done, where the player is, and what lies ahead.
+    #[func]
+    fn map_progress(&self) -> Array<VarDictionary> {
+        let mut entries = Array::new();
+        for entry in self.state.node_progress() {
+            let type_text = encounter_type_text(entry.encounter_type);
+            let status_text = node_status_text(entry.status);
+
+            let mut connections: Array<i64> = Array::new();
+            for next_node in &entry.connections {
+                connections.push(i64::from(*next_node));
+            }
+
+            entries.push(&vdict! {
+                "id" => i64::from(entry.node_id),
+                "type" => entry.encounter_type.as_str(),
+                "type_name" => type_text.name,
+                "type_marker" => type_text.marker,
+                "description" => type_text.description,
+                "status" => entry.status.as_str(),
+                "status_marker" => status_text.marker,
+                "x" => entry.x as f64,
+                "y" => entry.y as f64,
+                "is_entry" => entry.is_entry,
+                "is_current" => entry.is_current,
+                "is_target" => entry.is_target,
+                "connections" => &connections,
+            });
+        }
+        entries
+    }
+
+    /// The map key: what each encounter marker and status marker means.
+    /// Returns `{encounter_types: [...], statuses: [...]}`.
+    #[func]
+    fn map_key(&self) -> VarDictionary {
+        let mut types: Array<VarDictionary> = Array::new();
+        for encounter_type in all_encounter_types() {
+            let text = encounter_type_text(encounter_type);
+            types.push(&vdict! {
+                "type" => encounter_type.as_str(),
+                "marker" => text.marker,
+                "name" => text.name,
+                "description" => text.description,
+            });
+        }
+
+        let mut statuses: Array<VarDictionary> = Array::new();
+        for status in all_node_statuses() {
+            let text = node_status_text(status);
+            statuses.push(&vdict! {
+                "status" => status.as_str(),
+                "marker" => text.marker,
+                "description" => text.description,
+            });
+        }
+
+        vdict! {
+            "encounter_types" => &types,
+            "statuses" => &statuses,
+        }
+    }
+
+    /// Completed encounters out of the total, e.g. for "2 of 5 complete".
+    #[func]
+    fn contract_progress(&self) -> VarDictionary {
+        let progress = self.state.progress();
+        vdict! {
+            "completed" => progress.completed as i64,
+            "total" => progress.total as i64,
+        }
     }
 
     #[func]

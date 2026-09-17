@@ -96,3 +96,9 @@ jobs:
       # scene connection or a missed transition fails the job here.
       - name: Run headless combat smoke test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/combat_smoke_test.gd
+
+      - name: Run headless detection recovery test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/lower_detection_test.gd
+
+      - name: Run headless shared noise and social threshold test
+        run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh

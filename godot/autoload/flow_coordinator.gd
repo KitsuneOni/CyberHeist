@@ -44,6 +44,18 @@ func current_contract_node() -> Dictionary:
 	return _run_state.current_contract_node()
 
 
+func map_progress() -> Array:
+	return _run_state.map_progress()
+
+
+func contract_progress() -> Dictionary:
+	return _run_state.contract_progress()
+
+
+func map_key() -> Dictionary:
+	return _run_state.map_key()
+
+
 func select_encounter(node_id: int) -> Dictionary:
 	var option: Dictionary = _run_state.encounter_option(node_id)
 	if not option.get("ok", false):
@@ -104,6 +116,10 @@ func finish_caught() -> Dictionary:
 		_dispose_screen(prepared["screen"])
 		return transition
 
+	# Clear detection only after a successful caught exit. Normal encounter
+	# completion and rejected transitions must preserve the shared meter.
+	var noise_meter: Node = get_node("/root/NoiseMeterGlobal")
+	noise_meter.add_noise(-noise_meter.noise)
 	_replace_screen(prepared["screen"])
 	return transition
 

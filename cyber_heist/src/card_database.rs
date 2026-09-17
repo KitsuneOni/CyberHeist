@@ -42,10 +42,12 @@ impl INode for CardDatabase {
 }
 
 impl CardDatabase {
-    #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Option<&CardData> {
         self.cards.get(id)
     }
+
+    // Kept for callers that want the whole pool, e.g. card rewards.
+    #[allow(dead_code)]
     pub fn all(&self) -> impl Iterator<Item = &CardData> {
         self.cards.values()
     }
@@ -66,6 +68,7 @@ mod tests {
             card_type: Skill,
             rarity: Common,
             keywords: [Intangible(1)],
+            weak_side: None,
         ),
     ]
     "#;

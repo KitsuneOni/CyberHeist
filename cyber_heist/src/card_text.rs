@@ -79,6 +79,9 @@ pub fn keyword_label(keyword: &Keyword) -> String {
         Keyword::Damage(amount) => format!("Damage {amount}"),
         Keyword::Block(amount) => format!("Block {amount}"),
         Keyword::Penetrating(amount) => format!("Penetrating {amount}"),
+        // A negative amount strips corruption rather than applying it, so it
+        // gets its own name instead of reading as "Corrupting -15".
+        Keyword::Corrupting(amount) if *amount < 0 => format!("Cleansing {}", amount.abs()),
         Keyword::Corrupting(amount) => format!("Corrupting {amount}"),
         Keyword::Intangible(amount) => format!("Intangible {amount}"),
         Keyword::Knowledge(amount) => format!("Knowledge {amount}"),
@@ -104,6 +107,9 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
         Keyword::Penetrating(amount) => {
             format!("Deals {amount} damage straight through the target's block.")
         }
+        Keyword::Corrupting(amount) if *amount < 0 => {
+            format!("Removes {} corruption from the target.", amount.abs())
+        }
         Keyword::Corrupting(amount) => {
             format!("Applies {amount} corruption. Some cards hit corrupted targets harder.")
         }
@@ -125,17 +131,17 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
 }
 
 /// Builds the full player-facing breakdown of a card.
-pub fn describe(card: &CardData) -> CardDetail {
+pub fn describe(card: &CardData, current_noise: i32) -> CardDetail {
     CardDetail {
-        name: card.name.clone(),
+        name: card.display_name(current_noise),
         card_type: card_type_name(card.card_type).to_string(),
         rarity: rarity_name(card.rarity).to_string(),
         cost: i64::from(card.cost),
         cost_text: cost_text(card.cost),
         noise_text: noise_text(card.noise_generated),
-        description: card.description.clone(),
+        description: card.active_description(current_noise).to_string(),
         keywords: card
-            .keywords
+            .active_keywords(current_noise)
             .iter()
             .map(|keyword| KeywordDetail {
                 label: keyword_label(keyword),
@@ -176,6 +182,7 @@ mod tests {
             card_type: CardType::Skill,
             rarity: Rarity::Rare,
             keywords,
+            weak_side: None,
         }
     }
 
@@ -204,6 +211,15 @@ mod tests {
         assert_eq!(keyword_label(&Keyword::Damage(6)), "Damage 6");
         assert_eq!(keyword_label(&Keyword::Corrupting(4)), "Corrupting 4");
         assert_eq!(keyword_label(&Keyword::Exhaust), "Exhaust");
+    }
+
+    #[test]
+    fn negative_corruption_reads_as_cleansing_rather_than_a_minus_sign() {
+        assert_eq!(keyword_label(&Keyword::Corrupting(-15)), "Cleansing 15");
+        assert_eq!(
+            keyword_explanation(&Keyword::Corrupting(-15)),
+            "Removes 15 corruption from the target."
+        );
     }
 
     #[test]
@@ -236,7 +252,7 @@ mod tests {
             vec![Keyword::Damage(8), Keyword::Corrupting(4)],
         );
 
-        let detail = describe(&card);
+        let detail = describe(&card, 0);
 
         assert_eq!(detail.name, "Test Card");
         assert_eq!(detail.card_type, "Skill");
@@ -255,7 +271,7 @@ mod tests {
     fn a_card_without_effects_still_describes_cleanly() {
         let card = test_card("Nothing happens.", Vec::new());
 
-        let detail = describe(&card);
+        let detail = describe(&card, 0);
 
         assert!(detail.keywords.is_empty());
         assert!(!detail.description.trim().is_empty());
@@ -271,7 +287,7 @@ mod tests {
         assert!(!cards.is_empty());
 
         for card in cards.values() {
-            let detail = describe(card);
+            let detail = describe(card, 0);
 
             assert!(!detail.name.trim().is_empty(), "{} has no name", card.id);
             assert!(

@@ -1,0 +1,8 @@
+// Fixture only. These are real authored cards; social cards are not currently
+// in the production starter deck. Two copies keep a social card visible after
+// playing the other. Drawing all four avoids shuffle-dependent assertions.
+[
+    (id: "vpn", count: 1),
+    (id: "trojan", count: 1),
+    (id: "nigerian_king", count: 2),
+]
