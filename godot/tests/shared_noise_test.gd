@@ -128,7 +128,7 @@ func _run() -> void:
 
 	# A social card itself pays once, reports its pre-play side, and changes
 	# the same meter. No damage/keyword execution is claimed by this slice.
-		if not _play("Nigerian Prince"):
+	if not _play("Nigerian Prince"):
 		_finish()
 		return
 	_check_shared_noise(65)
