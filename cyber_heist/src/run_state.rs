@@ -9,7 +9,7 @@ use rand::Rng;
 
 use crate::contract_map::{
     ContractMap, ContractMapError, ContractProgress, ContractShape, EncounterNode,
-    EncounterSelection, EncounterType, NodeId, NodeProgress,
+    EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +33,7 @@ impl ContractPhase {
 pub struct ActiveEncounter {
     id: String,
     encounter_type: EncounterType,
+    zone: usize,
 }
 
 impl ActiveEncounter {
@@ -42,6 +43,17 @@ impl ActiveEncounter {
 
     pub fn encounter_type(&self) -> EncounterType {
         self.encounter_type
+    }
+
+    /// Which zone this encounter sits in, counting from 0.
+    pub fn zone(&self) -> usize {
+        self.zone
+    }
+
+    /// Whether this is the boss closing its zone, rather than one of the
+    /// encounters on the way to it.
+    pub fn is_boss(&self) -> bool {
+        self.encounter_type.is_boss()
     }
 }
 
@@ -103,6 +115,11 @@ impl RunState {
         self.contract_map.progress()
     }
 
+    /// Which zone the player is in, how many are open, and how many there are.
+    pub fn zone_progress(&self) -> ZoneProgress {
+        self.contract_map.zone_progress()
+    }
+
     pub fn selectable_encounters(&self) -> Vec<&EncounterNode> {
         if self.phase != ContractPhase::Hub {
             return Vec::new();
@@ -131,6 +148,7 @@ impl RunState {
         self.active_encounter = Some(ActiveEncounter {
             id: selection.node_id.to_string(),
             encounter_type: selection.encounter_type,
+            zone: selection.zone,
         });
         Ok(selection)
     }

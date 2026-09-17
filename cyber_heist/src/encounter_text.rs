@@ -55,17 +55,23 @@ pub fn encounter_type_text(encounter_type: EncounterType) -> EncounterTypeText {
             name: "Elite",
             description: "A far tougher security system, with a better payout.",
         },
+        EncounterType::Boss => EncounterTypeText {
+            marker: "[#]",
+            name: "Boss",
+            description: "The system guarding this zone. Beat it to open the next one.",
+        },
     }
 }
 
 /// Every encounter type, for building the map key.
-pub fn all_encounter_types() -> [EncounterType; 5] {
+pub fn all_encounter_types() -> [EncounterType; 6] {
     [
         EncounterType::Entry,
         EncounterType::Combat,
         EncounterType::Event,
         EncounterType::Shop,
         EncounterType::Elite,
+        EncounterType::Boss,
     ]
 }
 
@@ -96,6 +102,10 @@ pub fn node_status_text(status: NodeStatus) -> NodeStatusText {
             marker: "[-]",
             description: "Locked out by an earlier choice.",
         },
+        NodeStatus::Sealed => NodeStatusText {
+            marker: "[=]",
+            description: "Sealed until this zone's boss is beaten.",
+        },
         NodeStatus::Upcoming => NodeStatusText {
             marker: "[ ]",
             description: "Further ahead on the contract.",
@@ -104,12 +114,13 @@ pub fn node_status_text(status: NodeStatus) -> NodeStatusText {
 }
 
 /// Every node status, for building the map key.
-pub fn all_node_statuses() -> [NodeStatus; 5] {
+pub fn all_node_statuses() -> [NodeStatus; 6] {
     [
         NodeStatus::Completed,
         NodeStatus::Current,
         NodeStatus::Available,
         NodeStatus::Locked,
+        NodeStatus::Sealed,
         NodeStatus::Upcoming,
     ]
 }
@@ -227,9 +238,10 @@ mod tests {
                 | EncounterType::Combat
                 | EncounterType::Event
                 | EncounterType::Shop
-                | EncounterType::Elite => {}
+                | EncounterType::Elite
+                | EncounterType::Boss => {}
             }
         }
-        assert_eq!(all_encounter_types().len(), 5);
+        assert_eq!(all_encounter_types().len(), 6);
     }
 }
