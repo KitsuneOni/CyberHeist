@@ -210,7 +210,6 @@ func _on_play_button_pressed() -> void:
 	if NoiseMeterGlobal.is_at_cap():
 		_report_detected()
 
-
 func _report_sentry_defeated() -> void:
 	status_label.text = "%s is down. Encounter cleared." % sentry.construct_name()
 	var result: Dictionary = FlowCoordinator.complete_active_encounter()

@@ -128,14 +128,14 @@ func _run() -> void:
 
 	# A social card itself pays once, reports its pre-play side, and changes
 	# the same meter. No damage/keyword execution is claimed by this slice.
-	if not _play("Nigerian Prince"):
+		if not _play("Nigerian Prince"):
 		_finish()
 		return
 	_check_shared_noise(65)
 	_check(_combat.draw_phase.energy == 2, "social play pays its authored cost")
 	_check(_combat.draw_phase.discard_pile_count() == 1, "social play discards once")
 	_check(
-		_combat.status_label.text == "Nigerian Prince played. Noise change: +15.",
+		_combat.status_label.text == "Nigerian Prince played. Noise change: +15. Damage: 8.",
 		"play feedback preserves the active social side and signed actual change"
 	)
 	_check_social("Nigerian Prince", 8)
