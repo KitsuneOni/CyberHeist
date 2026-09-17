@@ -100,5 +100,12 @@ jobs:
       - name: Run headless detection recovery test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/lower_detection_test.gd
 
+      # Walks a generated contract to its first boss, fights it, and follows
+      # the zone unlock back onto the map. Covers what the Rust tests cannot
+      # see: which construct a boss node actually loads, its resistance
+      # reaching the shared meter, and its lockdown taking the player's energy.
+      - name: Run headless zone boss encounter test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/boss_encounter_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh
