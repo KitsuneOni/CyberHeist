@@ -5,6 +5,7 @@ const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const PLACEHOLDER_ENCOUNTER_SCENE_PATH := "res://scenes/placeholder_encounter.tscn"
 const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
+const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
 const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
@@ -12,7 +13,12 @@ const ENCOUNTER_SCENES := {
 	"elite": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
 }
 
+# Encounter types that earn a card reward when cleared. Event and shop nodes
+# hand out their own rewards, so they go straight back to the hub.
+const REWARDING_ENCOUNTERS := ["combat", "elite"]
+
 @onready var _run_state: Node = $RunState
+@onready var _run_deck: Node = $RunDeck
 
 var _screen_host: Node
 
@@ -79,7 +85,13 @@ func select_encounter(node_id: int) -> Dictionary:
 
 
 func complete_active_encounter() -> Dictionary:
-	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	# Read the encounter type before completing, because completing clears it.
+	var next_scene := HUB_SCENE_PATH
+	var active = run_snapshot().get("active_encounter")
+	if typeof(active) == TYPE_DICTIONARY and active.get("type", "") in REWARDING_ENCOUNTERS:
+		next_scene = CARD_REWARD_SCENE_PATH
+
+	var prepared := _prepare_screen(next_scene)
 	if not prepared.get("ok", false):
 		return prepared
 
@@ -90,6 +102,33 @@ func complete_active_encounter() -> Dictionary:
 
 	_replace_screen(prepared["screen"])
 	return transition
+
+
+# Cards on offer after clearing an encounter. Each is a dictionary of
+# {id, name, type, rarity, cost_text, noise_text, description}.
+func offer_card_reward(count: int) -> Array:
+	return _run_deck.offer_reward(count)
+
+
+# Adds a chosen reward to the run's deck. False for an id the card database
+# does not know, so the reward screen can say so rather than silently dropping it.
+func take_card_reward(card_id: String) -> bool:
+	return _run_deck.add_card(card_id)
+
+
+func run_deck_size() -> int:
+	return _run_deck.size()
+
+
+# Leaves the reward screen for the hub. The encounter was already completed by
+# complete_active_encounter, so there is no run state transition left to make.
+func finish_reward() -> Dictionary:
+	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	if not prepared.get("ok", false):
+		return prepared
+
+	_replace_screen(prepared["screen"])
+	return {"ok": true}
 
 
 func report_caught() -> Dictionary:

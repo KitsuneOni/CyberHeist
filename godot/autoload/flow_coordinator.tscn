@@ -6,3 +6,5 @@
 script = ExtResource("1_flow")
 
 [node name="RunState" type="RunStateNode" parent="."]
+
+[node name="RunDeck" type="RunDeckNode" parent="."]
