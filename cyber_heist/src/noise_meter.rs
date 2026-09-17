@@ -60,7 +60,7 @@ impl NoiseLevel {
     /// amount added (mirrors `add`'s clamped-delta contract).
     pub fn add_shield(&mut self, amount: i32) -> i32 {
         let before = self.shield;
-        self.shield = (self.shield + amount).max(0);
+        self.shield = self.shield.saturating_add(amount).max(0);
         self.shield - before
     }
 
