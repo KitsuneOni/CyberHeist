@@ -57,6 +57,10 @@ impl SentryNode {
             .expect("SentryNode must be ready")
             .clone()
     }
+
+    pub(crate) fn sentry_mut(&mut self) -> &mut Sentry {
+        &mut self.sentry
+    }
 }
 
 #[godot_api]

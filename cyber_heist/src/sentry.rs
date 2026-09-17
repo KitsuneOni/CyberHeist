@@ -131,7 +131,7 @@ impl Sentry {
     /// nothing currently does this, but the clamp makes it safe either way.
     pub fn take_damage(&mut self, amount: i32) -> i32 {
         let before = self.health;
-        self.health = (self.health - amount).clamp(0, self.max_health);
+        self.health = self.health.saturating_sub(amount).clamp(0, self.max_health);
         before - self.health
     }
 

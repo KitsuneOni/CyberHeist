@@ -191,8 +191,6 @@ func _on_play_button_pressed() -> void:
 			message += " Shield: +%d." % shield_added
 		status_label.text = message
 
-		if damage_dealt > 0:
-			sentry.take_damage(damage_dealt)
 		_rebuild_card_buttons(draw_phase.hand_names())
 	else:
 		match result.get("error", ""):
@@ -210,6 +208,7 @@ func _on_play_button_pressed() -> void:
 	if NoiseMeterGlobal.is_at_cap():
 		_report_detected()
 
+	
 func _report_sentry_defeated() -> void:
 	status_label.text = "%s is down. Encounter cleared." % sentry.construct_name()
 	var result: Dictionary = FlowCoordinator.complete_active_encounter()
