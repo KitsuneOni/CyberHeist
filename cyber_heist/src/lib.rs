@@ -381,6 +381,20 @@ impl DrawPhase {
             .collect()
     }
 
+    /// Takes energy off the turn now under way and reports how much actually
+    /// went, which is less than asked for when there was not that much left.
+    ///
+    /// Called by the combat screen after `end_turn` has refreshed the pool, so
+    /// a boss lockdown bites into the turn it opens rather than the one that
+    /// has just been spent. A negative amount is ignored: this drains, it is
+    /// not a back door for handing energy out.
+    #[func]
+    fn drain_energy(&mut self, amount: i32) -> i32 {
+        let before = self.energy;
+        self.energy = self.energy.saturating_sub(amount.max(0)).max(0);
+        before - self.energy
+    }
+
     #[func]
     fn draw_pile_count(&self) -> i32 {
         self.deck.draw_pile_len() as i32
