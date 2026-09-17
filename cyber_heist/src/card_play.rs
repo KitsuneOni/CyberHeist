@@ -22,7 +22,7 @@ fn total_damage(keywords: &[Keyword]) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Damage(amount) | Keyword::Penetrating(amount) => *amount as i32,
+            Keyword::Damage(amount) | Keyword::Penetrating(amount) => *amount,
             _ => 0,
         })
         .sum()
@@ -32,7 +32,7 @@ fn total_shield(keywords: &[Keyword]) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Block(amount) => *amount as i32,
+            Keyword::Block(amount) => *amount,
             _ => 0,
         })
         .sum()
