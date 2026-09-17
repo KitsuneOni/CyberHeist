@@ -10,6 +10,9 @@ const ENCOUNTER_SCENES := {
 	"event": EVENT_SCENE_PATH,
 	"shop": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
 	"elite": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
+	# A boss is a combat encounter; what makes it one is the construct behind
+	# it, which SentryNode builds from the run rather than from the scene.
+	"boss": COMBAT_SCENE_PATH,
 }
 
 @onready var _run_state: Node = $RunState
@@ -50,6 +53,10 @@ func map_progress() -> Array:
 
 func contract_progress() -> Dictionary:
 	return _run_state.contract_progress()
+
+
+func zone_progress() -> Dictionary:
+	return _run_state.zone_progress()
 
 
 func map_key() -> Dictionary:
@@ -152,6 +159,16 @@ func _replace_screen(screen: Node) -> void:
 	for child in _screen_host.get_children():
 		_screen_host.remove_child(child)
 		child.queue_free()
+
+	# Detection resistance belongs to the construct being faced, so it is
+	# cleared on the way out of every screen. The incoming screen's SentryNode
+	# sets its own during the add_child below, which is why this has to happen
+	# first: a screen with no sentry on it then simply leaves it at zero.
+	# Noise itself is deliberately untouched, since it carries across a run.
+	var noise_meter: Node = get_node_or_null("/root/NoiseMeterGlobal")
+	if noise_meter != null:
+		noise_meter.set_resistance_percent(0)
+
 	_screen_host.add_child(screen)
 
 
