@@ -36,9 +36,10 @@ success. `FlowCoordinator.run_snapshot()` returns:
 }
 ```
 
-Supported lifecycle encounter types are `combat`, `event`, `shop`, and
-`elite`. Combat has its gameplay scene; the other types currently use a shared
-placeholder scene until their separate stories are implemented.
+Supported lifecycle encounter types are `combat`, `event`, `shop`, `elite`
+and `boss`. Combat and boss share the combat gameplay scene; the other types
+currently use a shared placeholder scene until their separate stories are
+implemented.
 
 ## Contract route selection
 
@@ -60,10 +61,45 @@ nodes from the chosen route are offered. Graph rules and lock-out behaviour are
 implemented in `cyber_heist/src/contract_map.rs`; encounter contents remain a
 separate concern.
 
+## Zones and their bosses
+
+A contract is a run of **zones**. Each zone is a few columns of ordinary
+encounters closed off by a single **boss** column, so the boss is always the
+last node of its zone and the only way into the next one. `ContractShape`
+decides the split; the default is three zones of two encounter columns each,
+which is the same ten-column contract as before.
+
+A node's zone is derived from where the bosses sit rather than stored on the
+node: a node's zone is the number of boss columns before it. An authored
+contract with no boss on it is therefore a single open zone, which is what
+every contract predating this slice keeps being.
+
+Zones gate selection. `unlocked_zones` starts at zero and is raised **only** by
+completing a boss encounter, so nodes in a later zone cannot be entered however
+directly the graph leads into them — an authored edge going around a boss is
+refused with `ZoneSealed`. Failing a boss leaves the zone shut, and the boss
+remains the only thing on offer to retry.
+
+Those nodes report a `sealed` status, which is deliberately distinct from
+`locked`: a locked node was ruled out by the player's own branch choice and is
+gone for good, while a sealed one opens the moment the zone's boss goes down.
+Where both apply, `locked` wins, because being permanently ruled out is the
+more useful thing to tell the player. The map draws bosses as diamonds and
+sealed nodes in amber, and the key explains both.
+
+```gdscript
+FlowCoordinator.zone_progress()
+# {"current_zone": 0, "unlocked_zones": 1, "total_zones": 3}
+```
+
+`current_zone` is the zone the player is standing in. Clearing a boss raises
+`unlocked_zones` but leaves `current_zone` alone: the boss closes the zone it
+guards, so the player is still in it until they step into the next one.
+
 ## The sentry's turn
 
 Combat alternates a player turn and the sentry's turn. A sentry is the named
-security construct guarding an encounter, WARDEN-7 by default. `DrawPhase` owns
+security construct guarding an encounter, WARDEN-7 in the first zone. `DrawPhase` owns
 the turn boundary: `end_turn()` discards what is left in hand, emits the
 `security_phase` signal, then refreshes energy and deals the next hand. Godot
 delivers that signal straight away, so anything the sentry does has already
@@ -83,13 +119,54 @@ $Sentry.noise()
 $Sentry.max_noise()
 $Sentry.queued_action_name()      # "" when nothing is queued
 $Sentry.queued_action_noise()
+$Sentry.queued_action_ability()   # "-1 energy", or "" when it only makes noise
+$Sentry.has_ability()
+$Sentry.detection_resistance()
 $Sentry.add_noise(amount)         # noise from anywhere else, clamped
 $Sentry.perform_queued_action()
 ```
 
 The name is data, not code. `SentryNode` exports a `sentry_name` property, so
 a scene can field a different construct from the Inspector without touching
-any of the rules. Leaving it blank keeps the built-in WARDEN-7.
+any of the rules. Leaving it blank keeps the construct chosen for the encounter.
+
+### Which construct guards an encounter
+
+`SentryNode` builds its sentry on `ready` from the run, not from the scene: it
+asks `RunStateNode.active_encounter_profile()` for the active encounter's zone
+and whether it is that zone's boss, then calls `Sentry::for_encounter`. With no
+run behind the screen — a combat scene opened on its own — it falls back to
+first-zone security, the same way `DrawPhase` falls back to the starter deck.
+
+Standard security is the authored WARDEN script scaled by zone, so zone 1 is
+WARDEN-7 exactly as before. A zone's boss is then defined against the security
+around it rather than against a fixed bar:
+
+- every one of its actions is louder than the loudest standard action in that
+  zone,
+- it resists detection 30 points harder than standard security there, and
+- it carries an ability no standard construct has.
+
+That ability is **Grid Lockdown**: noise plus energy taken off the player's
+next turn, one point per zone deep. It is announced with the intent before it
+lands, so ending the turn into it is a decision rather than a surprise.
+`SentryNode` reports it in the turn outcome as `energy_drain`, and the combat
+screen applies it through `DrawPhase.drain_energy()` after `end_turn()` has
+refreshed the pool — so it bites into the turn it opens, and cards the player
+can no longer afford come up disabled rather than failing when clicked.
+
+### Detection resistance
+
+Resistance is a percentage that works against the player pulling noise **down**,
+never against the security system putting it up: a hardened construct is hard to
+hide from, not louder by itself. It lives on the one shared `NoiseLevel`
+alongside the noise, so there is no second value to drift, and it is rounded
+towards zero so a blunted recovery can come to nothing but never pays out.
+
+It belongs to the encounter, not the run. `FlowCoordinator` clears it to zero in
+`_replace_screen` before the incoming screen is added; that screen's `SentryNode`
+then sets its own, and a screen with no sentry simply leaves it at zero. Noise
+itself is deliberately untouched there, because noise carries across a run.
 
 Both connections live in `combat.tscn` rather than in code, so they are not
 made twice: `DrawPhase.security_phase` runs the sentry's turn, and the sentry's
@@ -104,6 +181,8 @@ own `turn_resolved` signal hands the result to the combat screen as:
     "noise": 5,
     "max_noise": 100,
     "run_failed": false,
+    "energy_drain": 0,  # >0 only for a boss lockdown
+    "ability": "",      # "-1 energy" when the action carries one
 }
 ```
 
@@ -172,6 +251,19 @@ The generated contract does not guarantee an opening combat option. The shared
 a reachable node and mounting combat content if that node has another type.
 These tests exercise combat, not the random encounter scene registry.
 
+For the zone boss slice, run:
+
+```sh
+godot --headless --path godot -s res://tests/boss_encounter_test.gd
+```
+
+It walks a generated contract to its first boss without playing the encounters
+on the way, then checks the parts the Rust tests cannot see: that a boss node
+loads the boss construct, that its resistance reaches the shared meter and
+blunts a real VPN play, that its lockdown takes energy off the turn it opens,
+and that beating it turns the next zone's nodes from sealed into ones the hub
+offers. It also checks the resistance does not outlive the encounter.
+
 For cross-component sharing and the authored social threshold (50), run:
 
 ```sh
@@ -202,6 +294,7 @@ ordinary encounter progression still carries noise forward.
 ```gdscript
 FlowCoordinator.selectable_encounters()
 FlowCoordinator.current_contract_node()
+FlowCoordinator.zone_progress()
 FlowCoordinator.select_encounter(node_id: int)
 FlowCoordinator.complete_active_encounter()
 FlowCoordinator.report_caught()
