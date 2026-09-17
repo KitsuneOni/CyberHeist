@@ -36,8 +36,8 @@ use deck::Deck;
 use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
 use noise_meter::NoiseMeter;
-use sentry_node::SentryNode;
 use run_deck_node::RunDeckNode;
+use sentry_node::SentryNode;
 
 struct CyberHeistExtension;
 
