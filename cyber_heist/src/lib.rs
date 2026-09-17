@@ -260,6 +260,10 @@ impl DrawPhase {
                     "ok" => true,
                     "name" => played.name.as_str(),
                     "noise_change" => played.noise_change,
+                    "damage_dealt" => played.damage_dealt,
+                    "shield_added" => played.shield_added,
+
+
                 }
             }
             Err(error) => {
@@ -366,6 +370,7 @@ impl DrawPhase {
         self.deck.discard(remaining_hand);
 
         self.signals().security_phase().emit(finished_turn);
+        self.noise_meter().clone().bind_mut().clear_shield();
 
         // Control comes back to the player for a fresh turn.
         self.turn_number += 1;

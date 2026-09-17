@@ -1,7 +1,13 @@
 //! One paid card play, kept independent of Godot so rejection is testable.
-//! Only the card's signed noise is resolved here; keywords are separate work.
+//!
+//! Resolves the card's signed noise against the shared meter and totals up
+//! any damage its active keywords deal. Damage is only computed and reported
+//! here, not applied to anything — this module has no idea a sentry exists.
+//! The caller (currently `combat.gd`, via `SentryNode::take_damage`) decides
+//! where that damage lands. Other keywords (Block, Corrupting, Knowledge,
+//! Draw, ...) are separate work, following the same pattern once needed.
 
-use crate::card_data::CardData;
+use crate::card_data::{CardData, Keyword};
 use crate::deck::Deck;
 use crate::noise_meter::NoiseLevel;
 
@@ -17,6 +23,35 @@ pub struct PlayedCard {
     pub name: String,
     /// Actual signed change after clamping, not the authored amount.
     pub noise_change: i32,
+    /// Damage dealt by this play's active `Damage`/`Penetrating` keywords.
+    /// Not applied to anything by this function — purely reported so the
+    /// caller can apply it wherever damage belongs (e.g. the sentry).
+    pub damage_dealt: i32,
+    pub shield_added: i32,
+
+}
+
+/// Sums every `Damage`/`Penetrating` keyword in `keywords`. Both currently
+/// count the same amount; they'll diverge once something can block damage
+/// and `Penetrating` needs to ignore that block.
+fn total_damage(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Damage(amount) | Keyword::Penetrating(amount) => *amount as i32,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_shield(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Block(amount) => *amount as i32,
+            _ => 0,
+        })
+        .sum()
 }
 
 /// Reject before mutating anything. A full meter is already a failed encounter,
@@ -40,9 +75,21 @@ pub fn play_card(
 
     let card = hand.remove(index);
     *energy -= cost;
+
+    // Read noise once, before this card's own noise lands, so display name,
+    // active keywords and damage all agree on which side of a flip is live.
+    let pre_play_noise = noise.noise();
+    let active_keywords = card.active_keywords(pre_play_noise);
+    let damage_dealt = total_damage(&active_keywords);
+
+    let shield_added = noise.add_shield(total_shield(&active_keywords));
+
+
     let played = PlayedCard {
-        name: card.display_name(noise.noise()),
+        name: card.display_name(pre_play_noise),
         noise_change: noise.add(i32::from(card.noise_generated)),
+        damage_dealt,
+        shield_added,
     };
     deck.discard(vec![card]);
     Ok(played)
@@ -96,6 +143,7 @@ mod tests {
 
         assert_eq!(played.name, "VPN");
         assert_eq!(played.noise_change, -10);
+        assert_eq!(played.damage_dealt, 0);
         assert_eq!(combat.noise.noise(), 89);
         assert_eq!(combat.sentry.queued_action(), intent.as_ref());
         assert_eq!(combat.energy, 1);
@@ -213,5 +261,50 @@ mod tests {
             assert_eq!(combat.play(0).unwrap().noise_change, expected - 5);
             assert_eq!(combat.noise.noise(), expected);
         }
+    }
+
+    #[test]
+    fn strike_deals_its_authored_damage() {
+        let mut combat = Combat::with_card("strike", 0);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 6);
+    }
+
+    #[test]
+    fn non_damage_cards_report_zero_damage() {
+        for id in ["vpn", "shield", "background_check", "social_engineering"] {
+            let mut combat = Combat::with_card(id, 0);
+            assert_eq!(
+                combat.play(0).unwrap().damage_dealt,
+                0,
+                "{id} should not deal damage"
+            );
+        }
+    }
+
+    #[test]
+    fn penetrating_damage_is_counted_the_same_as_plain_damage() {
+        let mut combat = Combat::with_card("trojan", 0); // Penetrating(6)
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 6);
+    }
+
+    #[test]
+    fn a_flipped_card_deals_its_weak_side_damage() {
+        // nigerian_king: Damage(18) strong side, flips to Damage(8) at
+        // noise >= 50. Confirms damage respects the same flip as the name.
+        let mut combat = Combat::with_card("nigerian_king", 49);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 18);
+
+        let mut combat = Combat::with_card("nigerian_king", 50);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 8);
+    }
+
+    #[test]
+    fn multi_keyword_cards_sum_every_damage_keyword() {
+        // wannacry: Penetrating(30) on its strong side only, single keyword —
+        // covered by other cases. This checks a card whose damage total
+        // must be summed rather than just unwrapped, using ransomware which
+        // authors both a Damage keyword and its own noise independently.
+        let mut combat = Combat::with_card("ransomware", 0);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 10);
     }
 }

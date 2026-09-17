@@ -16,7 +16,8 @@ extends Control
 @onready var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
 @onready var noise_bar: ProgressBar = $NoiseBarContainer/NoiseBar
 @onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
-
+@onready var health_label: Label = $VBoxContainer/HealthLabel  
+@onready var shield_label: Label = $VBoxContainer/ShieldLabel
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 
@@ -177,10 +178,21 @@ func _on_play_button_pressed() -> void:
 		play_count_label.text = "Cards played: %d" % draw_phase.play_count
 		selected_index = -1
 		var noise_change: int = result.get("noise_change", 0)
-		status_label.text = "%s played. Noise change: %+d." % [
+		var damage_dealt: int = result.get("damage_dealt", 0)
+		status_label.text = "%s played. Noise change: %+d. Damage: %d." % [
 			result.get("name", "Card"),
 			noise_change,
+			damage_dealt,
 		]
+		var shield_added: int = result.get("shield_added", 0)
+		status_label.text = "%s played. Noise change: %+d. Damage: %d. Shield: +%d." % [
+			result.get("name", "Card"),
+			noise_change,
+			damage_dealt,
+			shield_added,
+		]
+		if damage_dealt > 0:
+			sentry.take_damage(damage_dealt)
 		_rebuild_card_buttons(draw_phase.hand_names())
 	else:
 		match result.get("error", ""):
@@ -190,10 +202,24 @@ func _on_play_button_pressed() -> void:
 				status_label.text = "That card is no longer in your hand. Select another card."
 
 	_refresh_status_labels()
-	# Positive card noise uses the same caught flow as the sentry's turn. This
-	# happens before another card can be played, never at the next turn boundary.
+
+	if sentry.is_defeated():
+		_report_sentry_defeated()
+		return
+
 	if NoiseMeterGlobal.is_at_cap():
 		_report_detected()
+
+
+func _report_sentry_defeated() -> void:
+	status_label.text = "%s is down. Encounter cleared." % sentry.construct_name()
+	var result: Dictionary = FlowCoordinator.complete_active_encounter()
+	if not result.get("ok", false):
+		push_error("Could not complete encounter: %s" % result.get("error", "unknown error"))
+
+
+func _update_health_label() -> void:
+	health_label.text = "%s: %d / %d HP" % [sentry.construct_name(), sentry.health(), sentry.max_health()]
 
 
 func _refresh_status_labels() -> void:
@@ -203,6 +229,8 @@ func _refresh_status_labels() -> void:
 	_update_pile_label()
 	_update_energy_label()
 	_update_noise_label()
+	_update_health_label()
+	_update_shield_label()
 
 
 # Refreshed alongside everything else, so spending or earning shows up the
@@ -221,6 +249,9 @@ func _update_pile_label() -> void:
 		draw_phase.discard_pile_count(),
 	]
 
+
+func _update_shield_label() -> void:
+	shield_label.text = "Shield: %d" % NoiseMeterGlobal.shield
 
 func _update_noise_label() -> void:
 	var current: int = NoiseMeterGlobal.noise

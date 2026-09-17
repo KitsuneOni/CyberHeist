@@ -90,6 +90,14 @@ horizontal_alignment = 1
 layout_mode = 2
 horizontal_alignment = 1
 
+[node name="HealthLabel" type="Label" parent="VBoxContainer" unique_id=316815099]
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="ShieldLabel" type="Label" parent="VBoxContainer" unique_id=2032366159]
+layout_mode = 2
+horizontal_alignment = 1
+
 [node name="CardContainer" type="HBoxContainer" parent="VBoxContainer" unique_id=847287290]
 layout_mode = 2
 alignment = 1

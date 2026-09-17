@@ -7,6 +7,12 @@
 //! 2. If that action pushes the noise meter to its cap, the meter stops at the
 //!    cap and the run ends in detection failure.
 //!
+//! Also covers the sentry having its own health, so damage cards like Strike
+//! can bring it down and end the encounter that way:
+//! 3. Damage applied to the sentry is clamped between 0 and its max health,
+//!    and the actual amount lost (not the authored amount) is reported back.
+//! 4. A sentry at 0 health is defeated and takes no further turns.
+//!
 //! Every sentry has a name, so a later encounter can put a different construct
 //! in the way without any of these rules changing.
 //!
@@ -37,7 +43,9 @@ impl SentryAction {
 }
 
 /// A named security construct and the actions it works through.
-/// Noise is owned by the shared meter, not by an encounter.
+/// Noise is owned by the shared meter, not by an encounter; health belongs to
+/// the sentry itself, since it's specific to this construct rather than
+/// shared across the encounter the way noise is.
 ///
 /// Actions come from an authored list that the sentry cycles, so a turn plays
 /// out the same way every time and is easy to test. Picking actions in
@@ -47,10 +55,13 @@ pub struct Sentry {
     name: String,
     script: Vec<SentryAction>,
     next_index: usize,
+    health: i32,
+    max_health: i32,
 }
 
 impl Sentry {
-    /// Builds a sentry with `script` as its action queue.
+    /// Builds a sentry with `script` as its action queue, at a default
+    /// health of 50/50. Use `with_health` to set a different amount.
     ///
     /// An empty script is allowed and means the sentry has nothing queued, so
     /// its turn does nothing at all.
@@ -59,7 +70,17 @@ impl Sentry {
             name: name.to_string(),
             script,
             next_index: 0,
+            health: 50,
+            max_health: 50,
         }
+    }
+
+    /// Sets both current and max health to `max_health`. Chainable so
+    /// built-in sentries like `warden_7()` can stay one-liners.
+    pub fn with_health(mut self, max_health: i32) -> Self {
+        self.health = max_health;
+        self.max_health = max_health;
+        self
     }
 
     /// The sentry guarding the current combat encounter, with three cycling
@@ -73,6 +94,7 @@ impl Sentry {
                 SentryAction::new("Lockdown Probe", 3),
             ],
         )
+        .with_health(40)
     }
 
     /// Renames the sentry, for an encounter that fields a different construct
@@ -83,6 +105,34 @@ impl Sentry {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn health(&self) -> i32 {
+        self.health
+    }
+
+    pub fn max_health(&self) -> i32 {
+        self.max_health
+    }
+
+    /// True once health has been brought down to 0. A defeated sentry takes
+    /// no further turns (enforced by the caller, e.g. `SentryNode`).
+    pub fn is_defeated(&self) -> bool {
+        self.health <= 0
+    }
+
+    /// Applies damage, clamped so health stays within `0..=max_health`.
+    /// Returns how much health was actually lost, which may be less than
+    /// `amount` if the sentry didn't have that much health left — mirrors
+    /// `NoiseLevel::add`'s clamped-delta contract so callers report the real
+    /// effect rather than the authored amount.
+    ///
+    /// A negative `amount` would heal the sentry, clamped at `max_health`;
+    /// nothing currently does this, but the clamp makes it safe either way.
+    pub fn take_damage(&mut self, amount: i32) -> i32 {
+        let before = self.health;
+        self.health = (self.health - amount).clamp(0, self.max_health);
+        before - self.health
     }
 
     /// The action the sentry will take when its turn begins, or `None` if
@@ -198,6 +248,45 @@ mod tests {
         sentry.set_name("BLACKGATE");
         assert_eq!(sentry.name(), "BLACKGATE");
     }
+
+    #[test]
+    fn a_fresh_sentry_starts_at_full_health() {
+        let sentry = Sentry::warden_7();
+        assert_eq!(sentry.health(), sentry.max_health());
+        assert_eq!(sentry.health(), 40);
+        assert!(!sentry.is_defeated());
+    }
+
+    #[test]
+    fn with_health_sets_both_current_and_max() {
+        let sentry = Sentry::warden_7().with_health(10);
+        assert_eq!(sentry.health(), 10);
+        assert_eq!(sentry.max_health(), 10);
+    }
+
+    #[test]
+    fn damage_clamps_at_zero_and_reports_actual_amount_lost() {
+        let mut sentry = Sentry::warden_7().with_health(10);
+        assert_eq!(sentry.take_damage(6), 6);
+        assert_eq!(sentry.health(), 4);
+        assert!(!sentry.is_defeated());
+
+        assert_eq!(sentry.take_damage(10), 4, "clamped, not the full 10");
+        assert_eq!(sentry.health(), 0);
+        assert!(sentry.is_defeated());
+
+        assert_eq!(sentry.take_damage(5), 0, "already dead, no further loss");
+        assert_eq!(sentry.health(), 0);
+    }
+
+    #[test]
+    fn damage_does_not_overshoot_max_health_when_negative() {
+        let mut sentry = Sentry::warden_7().with_health(10);
+        sentry.take_damage(5);
+        assert_eq!(sentry.health(), 5);
+        assert_eq!(sentry.take_damage(-100), -5, "clamped to max, not the full heal");
+        assert_eq!(sentry.health(), 10);
+    }
 }
 
 #[cfg(test)]
@@ -229,6 +318,24 @@ mod stress {
                 assert_eq!(meter.noise() - before, delta);
                 assert!((0..=cap).contains(&meter.noise()));
                 assert_eq!(meter.is_at_cap(), meter.noise() == cap);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "stress: run with --ignored"]
+    fn damage_of_any_size_keeps_health_within_bounds() {
+        let mut seed = 0xDEAD_BEEF_u32;
+        for max_health in [0, 1, 40, 1_000] {
+            let mut sentry = Sentry::warden_7().with_health(max_health);
+            for _ in 0..50_000 {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let amount = seed as i32;
+                let before = sentry.health();
+                let lost = sentry.take_damage(amount);
+                assert_eq!(sentry.health(), before - lost);
+                assert!((0..=max_health).contains(&sentry.health()));
+                assert_eq!(sentry.is_defeated(), sentry.health() == 0);
             }
         }
     }
