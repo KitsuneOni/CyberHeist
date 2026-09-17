@@ -45,7 +45,10 @@ impl NoiseLevel {
             let blocked = amount.min(self.shield);
             self.shield -= blocked;
             let remaining = amount - blocked;
-            self.noise = self.noise.saturating_add(remaining).clamp(0, self.max_noise);
+            self.noise = self
+                .noise
+                .saturating_add(remaining)
+                .clamp(0, self.max_noise);
         } else {
             self.noise = self.noise.saturating_add(amount).clamp(0, self.max_noise);
         }

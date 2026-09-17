@@ -28,7 +28,6 @@ pub struct PlayedCard {
     /// caller can apply it wherever damage belongs (e.g. the sentry).
     pub damage_dealt: i32,
     pub shield_added: i32,
-
 }
 
 /// Sums every `Damage`/`Penetrating` keyword in `keywords`. Both currently
@@ -83,7 +82,6 @@ pub fn play_card(
     let damage_dealt = total_damage(&active_keywords);
 
     let shield_added = noise.add_shield(total_shield(&active_keywords));
-
 
     let played = PlayedCard {
         name: card.display_name(pre_play_noise),

@@ -284,7 +284,11 @@ mod tests {
         let mut sentry = Sentry::warden_7().with_health(10);
         sentry.take_damage(5);
         assert_eq!(sentry.health(), 5);
-        assert_eq!(sentry.take_damage(-100), -5, "clamped to max, not the full heal");
+        assert_eq!(
+            sentry.take_damage(-100),
+            -5,
+            "clamped to max, not the full heal"
+        );
         assert_eq!(sentry.health(), 10);
     }
 }
