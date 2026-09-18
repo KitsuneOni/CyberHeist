@@ -93,6 +93,10 @@ impl SentryNode {
             .expect("SentryNode must be ready")
             .clone()
     }
+
+    pub(crate) fn sentry_mut(&mut self) -> &mut Sentry {
+        &mut self.sentry
+    }
 }
 
 #[godot_api]
@@ -134,6 +138,28 @@ impl SentryNode {
     #[func]
     fn max_noise(&self) -> i32 {
         self.noise_meter().bind().get_max_noise()
+    }
+
+    #[func]
+    fn health(&self) -> i32 {
+        self.sentry.health()
+    }
+
+    #[func]
+    fn max_health(&self) -> i32 {
+        self.sentry.max_health()
+    }
+
+    #[func]
+    fn is_defeated(&self) -> bool {
+        self.sentry.is_defeated()
+    }
+
+    /// Applies damage from a played card. Returns actual health lost, clamped —
+    /// mirrors `add_noise`'s contract.
+    #[func]
+    fn take_damage(&mut self, amount: i32) -> i32 {
+        self.sentry.take_damage(amount)
     }
 
     /// Name of the action the sentry will take next, or an empty string if it
@@ -184,6 +210,16 @@ impl SentryNode {
         self.noise_meter().bind_mut().add_noise(noise)
     }
 
+    #[func]
+    fn corruption(&self) -> i32 {
+        self.sentry.corruption()
+    }
+
+    #[func]
+    fn corruption_boost(&self) -> i32 {
+        self.sentry.corruption_boost()
+    }
+
     /// Takes the sentry's turn and reports what it did:
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed}`.
     ///
@@ -193,9 +229,13 @@ impl SentryNode {
     fn perform_queued_action(&mut self) -> VarDictionary {
         let meter = self.noise_meter();
 
+        let corruption_damage = self.sentry.resolve_corruption_tick();
+        let corruption = self.sentry.corruption();
+
         let action = if self.base().is_inside_tree()
             && !self.base().is_queued_for_deletion()
             && !meter.bind().is_at_cap()
+            && !self.sentry.is_defeated()
         {
             self.sentry.perform_queued_action()
         } else {
@@ -221,6 +261,9 @@ impl SentryNode {
                     // since the player's energy belongs to DrawPhase.
                     "energy_drain" => action.ability.energy_drain(),
                     "ability" => action.ability.describe().as_str(),
+                    "corruption_damage" => corruption_damage,
+                    "corruption" => corruption,
+                    "defeated" => self.sentry.is_defeated(),
                 }
             }
             None => {
@@ -238,6 +281,9 @@ impl SentryNode {
                     "run_failed" => run_failed,
                     "energy_drain" => 0,
                     "ability" => "",
+                    "corruption_damage" => corruption_damage,
+                    "corruption" => corruption,
+                    "defeated" => self.sentry.is_defeated(),
                 }
             }
         }

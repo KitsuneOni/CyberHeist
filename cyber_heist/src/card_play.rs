@@ -1,9 +1,10 @@
-//! One paid card play, kept independent of Godot so rejection is testable.
-//! Only the card's signed noise is resolved here; keywords are separate work.
+use rand::Rng;
 
-use crate::card_data::CardData;
+use crate::card_data::{CardData, Keyword};
 use crate::deck::Deck;
+use crate::knowledge::Knowledge;
 use crate::noise_meter::NoiseLevel;
+use crate::sentry::Sentry;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PlayError {
@@ -15,17 +16,98 @@ pub enum PlayError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PlayedCard {
     pub name: String,
-    /// Actual signed change after clamping, not the authored amount.
     pub noise_change: i32,
+    pub damage_dealt: i32,
+    pub shield_added: i32,
+    pub cards_drawn: i32,
+    pub knowledge_change: i32,
+    pub max_energy_gained: i32,
+    pub corruption_added: i32,
+    pub corruption_boost_added: i32,
+}
+
+fn total_damage(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Damage(amount) | Keyword::Penetrating(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_shield(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Block(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_draw(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Draw(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_knowledge(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Knowledge(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_max_energy_boost(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::MaxEnergyBoost(amount) => *amount as i32,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_corrupting(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Corrupting(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_corrupting_boost(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::CorruptingBoost(amount) => *amount as i32,
+            _ => 0,
+        })
+        .sum()
 }
 
 /// Reject before mutating anything. A full meter is already a failed encounter,
 /// not an opportunity to play a recovery card.
+#[allow(clippy::too_many_arguments)]
 pub fn play_card(
     hand: &mut Vec<CardData>,
     deck: &mut Deck,
     energy: &mut i32,
+    max_energy: &mut i32,
     noise: &mut NoiseLevel,
+    sentry: &mut Sentry,
+    knowledge: &mut Knowledge,
+    rng: &mut impl Rng,
     index: i32,
 ) -> Result<PlayedCard, PlayError> {
     if noise.is_at_cap() {
@@ -40,9 +122,40 @@ pub fn play_card(
 
     let card = hand.remove(index);
     *energy -= cost;
+
+    // Read noise once, before this card's own noise lands, so display name,
+    // active keywords and every effect below agree on which side of a flip
+    // is live.
+    let pre_play_noise = noise.noise();
+    let active_keywords = card.active_keywords(pre_play_noise);
+
+    // Shield lands before this card's own noise, so it can absorb it too.
+    let shield_added = noise.add_shield(total_shield(&active_keywords));
+    let damage_dealt = sentry.take_damage(total_damage(&active_keywords));
+    let knowledge_change = knowledge.add(total_knowledge(&active_keywords));
+    let corruption_added = sentry.add_corruption(total_corrupting(&active_keywords));
+    let corruption_boost_added =
+        sentry.add_corruption_boost(total_corrupting_boost(&active_keywords));
+
+    let max_energy_gained = total_max_energy_boost(&active_keywords);
+    *max_energy += max_energy_gained;
+    *energy += max_energy_gained;
+
+    let draw_count = usize::try_from(total_draw(&active_keywords)).unwrap_or(0);
+    let drawn = deck.draw_hand(draw_count, rng);
+    let cards_drawn = drawn.len() as i32;
+    hand.extend(drawn);
+
     let played = PlayedCard {
-        name: card.display_name(noise.noise()),
+        name: card.display_name(pre_play_noise),
         noise_change: noise.add(i32::from(card.noise_generated)),
+        damage_dealt,
+        shield_added,
+        cards_drawn,
+        knowledge_change,
+        max_energy_gained,
+        corruption_added,
+        corruption_boost_added,
     };
     deck.discard(vec![card]);
     Ok(played)
@@ -52,15 +165,17 @@ pub fn play_card(
 mod tests {
     use super::*;
     use crate::card_database::parse_cards;
-    use crate::sentry::Sentry;
     use rand::{SeedableRng, rngs::StdRng};
 
     struct Combat {
         hand: Vec<CardData>,
         deck: Deck,
         energy: i32,
+        max_energy: i32,
         sentry: Sentry,
         noise: NoiseLevel,
+        knowledge: Knowledge,
+        rng: StdRng,
     }
 
     impl Combat {
@@ -72,8 +187,11 @@ mod tests {
                 hand: vec![cards.remove(id).expect("authored card exists")],
                 deck: Deck::new(Vec::new(), &mut StdRng::seed_from_u64(4)),
                 energy: 3,
+                max_energy: 3,
                 sentry: Sentry::warden_7(),
                 noise: level,
+                knowledge: Knowledge::new(3),
+                rng: StdRng::seed_from_u64(4),
             }
         }
 
@@ -82,7 +200,11 @@ mod tests {
                 &mut self.hand,
                 &mut self.deck,
                 &mut self.energy,
+                &mut self.max_energy,
                 &mut self.noise,
+                &mut self.sentry,
+                &mut self.knowledge,
+                &mut self.rng,
                 index,
             )
         }
@@ -96,6 +218,11 @@ mod tests {
 
         assert_eq!(played.name, "VPN");
         assert_eq!(played.noise_change, -10);
+        assert_eq!(played.damage_dealt, 0);
+        assert_eq!(played.shield_added, 0);
+        assert_eq!(played.cards_drawn, 0);
+        assert_eq!(played.knowledge_change, 0);
+        assert_eq!(played.max_energy_gained, 0);
         assert_eq!(combat.noise.noise(), 89);
         assert_eq!(combat.sentry.queued_action(), intent.as_ref());
         assert_eq!(combat.energy, 1);
@@ -138,15 +265,19 @@ mod tests {
             combat.energy = energy;
             let sentry_before = combat.sentry.clone();
             let noise_before = combat.noise;
+            let knowledge_before = combat.knowledge;
+            let max_energy_before = combat.max_energy;
 
             assert_eq!(combat.play(index), Err(error));
             assert_eq!(combat.hand.len(), 1);
             assert_eq!(combat.hand[0].id, "vpn");
             assert_eq!(combat.energy, energy);
+            assert_eq!(combat.max_energy, max_energy_before);
             assert_eq!(combat.deck.discard_pile_len(), 0);
             assert_eq!(combat.deck.draw_pile_len(), 0);
             assert_eq!(combat.sentry, sentry_before);
             assert_eq!(combat.noise, noise_before);
+            assert_eq!(combat.knowledge, knowledge_before);
         }
     }
 
@@ -213,5 +344,125 @@ mod tests {
             assert_eq!(combat.play(0).unwrap().noise_change, expected - 5);
             assert_eq!(combat.noise.noise(), expected);
         }
+    }
+
+    #[test]
+    fn strike_deals_its_authored_damage_and_it_lands_on_the_sentry() {
+        let mut combat = Combat::with_card("strike", 0);
+        let health_before = combat.sentry.health();
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_dealt, 6);
+        assert_eq!(
+            combat.sentry.health(),
+            health_before - 6,
+            "damage must actually be applied to the sentry, not just reported"
+        );
+    }
+
+    #[test]
+    fn non_damage_cards_report_zero_damage_and_leave_the_sentry_untouched() {
+        for id in ["vpn", "shield", "background_check", "social_engineering"] {
+            let mut combat = Combat::with_card(id, 0);
+            let health_before = combat.sentry.health();
+            assert_eq!(
+                combat.play(0).unwrap().damage_dealt,
+                0,
+                "{id} should not deal damage"
+            );
+            assert_eq!(combat.sentry.health(), health_before);
+        }
+    }
+
+    #[test]
+    fn penetrating_damage_is_counted_the_same_as_plain_damage() {
+        let mut combat = Combat::with_card("trojan", 0);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 6);
+        assert_eq!(combat.sentry.health(), combat.sentry.max_health() - 6);
+    }
+
+    #[test]
+    fn a_flipped_card_deals_its_weak_side_damage() {
+        let mut combat = Combat::with_card("nigerian_king", 49);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 18);
+
+        let mut combat = Combat::with_card("nigerian_king", 50);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 8);
+    }
+
+    #[test]
+    fn multi_keyword_cards_sum_every_damage_keyword() {
+        let mut combat = Combat::with_card("ransomware", 0);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 10);
+    }
+
+    #[test]
+    fn damage_clamps_to_the_sentrys_remaining_health_and_reports_the_actual_amount() {
+        let mut combat = Combat::with_card("wannacry", 0);
+        combat.sentry = Sentry::warden_7().with_health(10);
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_dealt, 10, "clamped, not the authored 30");
+        assert_eq!(combat.sentry.health(), 0);
+        assert!(combat.sentry.is_defeated());
+    }
+
+    #[test]
+    fn damage_against_an_already_defeated_sentry_reports_zero() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.sentry = Sentry::warden_7().with_health(0);
+        assert!(combat.sentry.is_defeated());
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_dealt, 0, "nothing left to lose");
+        assert_eq!(combat.sentry.health(), 0);
+    }
+
+    #[test]
+    fn shield_deals_its_authored_amount_and_blocks_noise() {
+        let mut combat = Combat::with_card("shield", 0);
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.shield_added, 6);
+        assert_eq!(combat.noise.shield(), 6);
+    }
+
+    #[test]
+    fn shield_added_by_a_card_blocks_that_same_cards_own_noise() {
+        let mut combat = Combat::with_card("burner_phone", 20);
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.shield_added, 8);
+        assert_eq!(played.noise_change, -10);
+        assert_eq!(combat.noise.noise(), 10);
+        assert_eq!(
+            combat.noise.add(5),
+            0,
+            "the 8 shield from this play blocks a later 5 noise hit"
+        );
+    }
+
+    #[test]
+    fn non_shield_cards_report_zero_shield_added() {
+        for id in ["strike", "vpn", "background_check"] {
+            let mut combat = Combat::with_card(id, 0);
+            assert_eq!(
+                combat.play(0).unwrap().shield_added,
+                0,
+                "{id} should not grant shield"
+            );
+        }
+    }
+
+    #[test]
+    fn a_play_that_both_shields_and_damages_applies_both_in_the_same_transaction() {
+        let mut cards = parse_cards(include_str!("../../godot/data/cards.ron"));
+        let mut hybrid = cards.remove("strike").expect("strike exists");
+        hybrid.keywords = vec![Keyword::Damage(6), Keyword::Block(4)];
+
+        let mut combat = Combat::with_card("strike", 0);
+        combat.hand[0] = hybrid;
+        let health_before = combat.sentry.health();
+
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_dealt, 6);
+        assert_eq!(played.shield_added, 4);
+        assert_eq!(combat.sentry.health(), health_before - 6);
+        assert_eq!(combat.noise.shield(), 4);
     }
 }

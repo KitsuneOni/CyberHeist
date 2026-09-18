@@ -215,11 +215,19 @@ func _run() -> void:
 	var drained_turn_seen := false
 	for turn in 4:
 		var announced_drain: String = _combat.sentry.queued_action_ability()
+		var noise_before: int = _noise_meter.noise
+		if announced_drain != "":
+			_noise_meter.add_shield(_combat.sentry.queued_action_noise())
 		_press_end_turn()
 		if announced_drain == "":
 			continue
 
 		drained_turn_seen = true
+		_check(
+			_noise_meter.noise == noise_before,
+			"shield absorbs lockdown noise, not its energy drain"
+		)
+		_check(_noise_meter.get_shield() == 0, "shield is cleared after the boss turn")
 		_check(
 			announced_drain == "-1 energy",
 			"the lockdown is announced before it lands (got '%s')" % announced_drain
@@ -268,6 +276,9 @@ func _run() -> void:
 		retry_options.size() == 1 and int(retry_options[0].id) == boss_id,
 		"the failed boss is the only retry offered"
 	)
+	# Fixture: add an authored corruption card before the retry so victory can
+	# exercise the real security-phase death path rather than force completion.
+	_check(_flow.take_card_reward("malware"), "the retry fixture includes Malware")
 	var retried: Dictionary = _flow.select_encounter(boss_id)
 	_check(retried.get("ok", false), "the boss can be retried")
 	_check(
@@ -275,8 +286,21 @@ func _run() -> void:
 	)
 
 	# --- beating the boss unlocks the next zone -----------------------------
-	var completed: Dictionary = _flow.complete_active_encounter()
-	_check(completed.get("ok", false), "the boss encounter can be completed")
+	_combat = _screen()
+	_combat.sentry.take_damage(_combat.sentry.health() - 9)
+	_draw_whole_deck()
+	var malware_index: int = _combat.draw_phase.hand_names().find("Malware")
+	_check(malware_index >= 0, "Malware is in the retry hand")
+	if malware_index < 0:
+		_finish()
+		return
+	_combat.card_buttons[malware_index].pressed.emit()
+	_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	_check(_combat.sentry.health() == 1, "Malware leaves the boss alive for the corruption tick")
+	var noise_before_victory: int = _noise_meter.noise
+	_press_end_turn()
+	_check(_flow.run_snapshot().phase == "hub", "corruption defeat completes the boss encounter")
+	_check(_noise_meter.noise == noise_before_victory, "a defeated boss takes no action")
 	var reward := _screen()
 	_check(reward != null and reward.name == "CardReward", "beating a boss offers a card reward")
 	if reward == null or reward.name != "CardReward":

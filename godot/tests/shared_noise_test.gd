@@ -135,7 +135,7 @@ func _run() -> void:
 	_check(_combat.draw_phase.energy == 2, "social play pays its authored cost")
 	_check(_combat.draw_phase.discard_pile_count() == 1, "social play discards once")
 	_check(
-		_combat.status_label.text == "Nigerian Prince played. Noise change: +15.",
+		_combat.status_label.text == "Nigerian Prince played. Noise change: +15. Damage: 8.",
 		"play feedback preserves the active social side and signed actual change"
 	)
 	_check_social("Nigerian Prince", 8)

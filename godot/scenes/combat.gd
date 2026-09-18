@@ -12,11 +12,16 @@ extends Control
 @onready var card_container: HBoxContainer = $VBoxContainer/CardContainer
 @onready var detail_title: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailTitle
 @onready var detail_stats: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailStats
-@onready var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
-@onready var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
+@onready
+var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
+@onready
+var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
 @onready var noise_bar: ProgressBar = $NoiseBarContainer/NoiseBar
 @onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
-
+@onready var health_label: Label = $VBoxContainer/HealthLabel
+@onready var shield_label: Label = $VBoxContainer/ShieldLabel
+@onready var knowledge_label: Label = $VBoxContainer/KnowledgeLabel
+@onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 
@@ -35,10 +40,6 @@ func _on_end_turn_button_pressed() -> void:
 	if not _can_act():
 		return
 
-	# Rust owns the whole turn boundary: discard what's left, hand the sentry
-	# its phase, then deal the next turn's hand with refreshed energy. The
-	# sentry reports back through _on_sentry_turn_resolved before this call
-	# returns, so the labels below are already up to date.
 	selected_index = -1
 	status_label.text = ""
 	var hand: PackedStringArray = draw_phase.end_turn()
@@ -63,14 +64,32 @@ func _on_end_turn_button_pressed() -> void:
 		_report_detected()
 		return
 
+	# Corruption can kill the sentry during its own phase, on a turn where
+	# no card was played — this must be checked here too, not only after a
+	# card play, or a corruption kill at end of turn goes unnoticed.
+	if turn.get("defeated", false):
+		_report_sentry_defeated()
+		return
+
 	if turn.get("ok", false):
-		status_label.text = "%s ran %s and added %d noise." % [
-			turn.get("sentry", "?"),
-			turn.get("action", ""),
-			turn.get("noise_added", 0),
-		]
+		var message: String = (
+			"%s ran %s and added %d noise."
+			% [
+				turn.get("sentry", "?"),
+				turn.get("action", ""),
+				turn.get("noise_added", 0),
+			]
+		)
 		if drained > 0:
-			status_label.text += " Lockdown cost you %d energy this turn." % drained
+			message += " Lockdown cost you %d energy this turn." % drained
+		var corruption_damage: int = turn.get("corruption_damage", 0)
+		if corruption_damage > 0:
+			message += " Corruption dealt %d damage." % corruption_damage
+		status_label.text = message
+	else:
+		var corruption_damage: int = turn.get("corruption_damage", 0)
+		if corruption_damage > 0:
+			status_label.text = "Corruption dealt %d damage." % corruption_damage
 
 
 # Connected in the scene to the sentry, which announces its turn from inside
@@ -81,7 +100,9 @@ func _on_sentry_turn_resolved(turn: Dictionary) -> void:
 
 
 func _report_detected() -> void:
-	status_label.text = "%s has you. The noise meter is full and the run is over." % sentry.construct_name()
+	status_label.text = (
+		"%s has you. The noise meter is full and the run is over." % sentry.construct_name()
+	)
 	var result: Dictionary = FlowCoordinator.report_caught()
 	if not result.get("ok", false):
 		push_error("Could not report detection: %s" % result.get("error", "unknown error"))
@@ -151,17 +172,22 @@ func _update_card_detail() -> void:
 		detail_keywords.text = ""
 		return
 
-	detail_title.text = "%s — %s · %s" % [
-		detail.get("name", "?"),
-		detail.get("type", "?"),
-		detail.get("rarity", "?"),
-	]
+	detail_title.text = (
+		"%s — %s · %s"
+		% [
+			detail.get("name", "?"),
+			detail.get("type", "?"),
+			detail.get("rarity", "?"),
+		]
+	)
 	detail_stats.text = "%s · %s" % [detail.get("cost_text", ""), detail.get("noise_text", "")]
 	detail_description.text = str(detail.get("description", ""))
 
 	var keyword_lines: Array[String] = []
 	for keyword: Dictionary in detail.get("keywords", []):
-		keyword_lines.append("%s — %s" % [keyword.get("label", "?"), keyword.get("explanation", "")])
+		keyword_lines.append(
+			"%s — %s" % [keyword.get("label", "?"), keyword.get("explanation", "")]
+		)
 	detail_keywords.text = "\n".join(keyword_lines)
 
 
@@ -188,10 +214,37 @@ func _on_play_button_pressed() -> void:
 		play_count_label.text = "Cards played: %d" % draw_phase.play_count
 		selected_index = -1
 		var noise_change: int = result.get("noise_change", 0)
-		status_label.text = "%s played. Noise change: %+d." % [
-			result.get("name", "Card"),
-			noise_change,
-		]
+		var damage_dealt: int = result.get("damage_dealt", 0)
+		var shield_added: int = result.get("shield_added", 0)
+		var cards_drawn: int = result.get("cards_drawn", 0)
+		var knowledge_change: int = result.get("knowledge_change", 0)
+		var max_energy_gained: int = result.get("max_energy_gained", 0)
+		var corruption_added: int = result.get("corruption_added", 0)
+		var corruption_boost_added: int = result.get("corruption_boost_added", 0)
+
+		var message: String = (
+			"%s played. Noise change: %+d."
+			% [
+				result.get("name", "Card"),
+				noise_change,
+			]
+		)
+		if damage_dealt > 0:
+			message += " Damage: %d." % damage_dealt
+		if shield_added > 0:
+			message += " Shield: +%d." % shield_added
+		if cards_drawn > 0:
+			message += " Drew %d card(s)." % cards_drawn
+		if knowledge_change != 0:
+			message += " Knowledge: %+d." % knowledge_change
+		if max_energy_gained > 0:
+			message += " Max energy +%d!" % max_energy_gained
+		if corruption_added > 0:
+			message += " Corruption +%d." % corruption_added
+		if corruption_boost_added > 0:
+			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
+		status_label.text = message
+
 		_rebuild_card_buttons(draw_phase.hand_names())
 	else:
 		match result.get("error", ""):
@@ -201,10 +254,36 @@ func _on_play_button_pressed() -> void:
 				status_label.text = "That card is no longer in your hand. Select another card."
 
 	_refresh_status_labels()
-	# Positive card noise uses the same caught flow as the sentry's turn. This
-	# happens before another card can be played, never at the next turn boundary.
+
+	if sentry.is_defeated():
+		_report_sentry_defeated()
+		return
+
 	if NoiseMeterGlobal.is_at_cap():
 		_report_detected()
+
+
+func _report_sentry_defeated() -> void:
+	status_label.text = "%s is down. Encounter cleared." % sentry.construct_name()
+	var result: Dictionary = FlowCoordinator.complete_active_encounter()
+	if not result.get("ok", false):
+		push_error("Could not complete encounter: %s" % result.get("error", "unknown error"))
+
+
+func _update_health_label() -> void:
+	health_label.text = (
+		"%s: %d / %d HP" % [sentry.construct_name(), sentry.health(), sentry.max_health()]
+	)
+
+
+func _update_knowledge_label() -> void:
+	knowledge_label.text = (
+		"Knowledge: %d / %d"
+		% [
+			KnowledgeMeterGlobal.knowledge,
+			KnowledgeMeterGlobal.max_knowledge,
+		]
+	)
 
 
 func _refresh_status_labels() -> void:
@@ -214,6 +293,10 @@ func _refresh_status_labels() -> void:
 	_update_pile_label()
 	_update_energy_label()
 	_update_noise_label()
+	_update_health_label()
+	_update_shield_label()
+	_update_knowledge_label()
+	_update_corruption_label()
 
 
 # Refreshed alongside everything else, so spending or earning shows up the
@@ -227,10 +310,21 @@ func _update_turn_label() -> void:
 
 
 func _update_pile_label() -> void:
-	pile_label.text = "Draw pile: %d | Discard pile: %d" % [
-		draw_phase.draw_pile_count(),
-		draw_phase.discard_pile_count(),
-	]
+	pile_label.text = (
+		"Draw pile: %d | Discard pile: %d"
+		% [
+			draw_phase.draw_pile_count(),
+			draw_phase.discard_pile_count(),
+		]
+	)
+
+
+func _update_corruption_label() -> void:
+	corruption_label.text = "Corruption: %d" % sentry.corruption()
+
+
+func _update_shield_label() -> void:
+	shield_label.text = "Shield: %d" % NoiseMeterGlobal.shield
 
 
 func _update_noise_label() -> void:
@@ -263,15 +357,21 @@ func _update_intent_label() -> void:
 	# ending the turn into a lockdown is a decision and not a surprise.
 	var ability: String = sentry.queued_action_ability()
 	if ability == "":
-		intent_label.text = "%s will: %s (+%d noise)" % [
-			sentry.construct_name(),
-			action,
-			sentry.queued_action_noise(),
-		]
+		intent_label.text = (
+			"%s will: %s (+%d noise)"
+			% [
+				sentry.construct_name(),
+				action,
+				sentry.queued_action_noise(),
+			]
+		)
 	else:
-		intent_label.text = "%s will: %s (+%d noise, %s)" % [
-			sentry.construct_name(),
-			action,
-			sentry.queued_action_noise(),
-			ability,
-		]
+		intent_label.text = (
+			"%s will: %s (+%d noise, %s)"
+			% [
+				sentry.construct_name(),
+				action,
+				sentry.queued_action_noise(),
+				ability,
+			]
+		)

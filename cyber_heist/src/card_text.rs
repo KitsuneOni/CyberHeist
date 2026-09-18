@@ -79,13 +79,13 @@ pub fn keyword_label(keyword: &Keyword) -> String {
         Keyword::Damage(amount) => format!("Damage {amount}"),
         Keyword::Block(amount) => format!("Block {amount}"),
         Keyword::Penetrating(amount) => format!("Penetrating {amount}"),
-        // A negative amount strips corruption rather than applying it, so it
-        // gets its own name instead of reading as "Corrupting -15".
         Keyword::Corrupting(amount) if *amount < 0 => format!("Cleansing {}", amount.abs()),
         Keyword::Corrupting(amount) => format!("Corrupting {amount}"),
         Keyword::Intangible(amount) => format!("Intangible {amount}"),
         Keyword::Knowledge(amount) => format!("Knowledge {amount}"),
         Keyword::Draw(amount) => format!("Draw {amount}"),
+        Keyword::MaxEnergyBoost(amount) => format!("Max Energy +{amount}"),
+        Keyword::CorruptingBoost(amount) => format!("Corrupting Boost {amount}"),
         Keyword::Exhaust => "Exhaust".to_string(),
         Keyword::Flip => "Flip".to_string(),
     }
@@ -120,6 +120,12 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
             format!("Reveals {amount} piece(s) of hidden information about the security system.")
         }
         Keyword::Draw(amount) => format!("Draw {amount} extra card(s) immediately."),
+        Keyword::MaxEnergyBoost(amount) => {
+            format!("Raises your max energy by {amount} for the rest of this combat.")
+        }
+        Keyword::CorruptingBoost(amount) => format!(
+            "For the rest of this turn, every Corrupting effect you apply is {amount} stronger."
+        ),
         Keyword::Exhaust => {
             "Once played, this card leaves the encounter instead of going to the discard pile."
                 .to_string()

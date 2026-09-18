@@ -44,13 +44,15 @@ pub enum Rarity {
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
 pub enum Keyword {
-    Damage(u32),
-    Block(u32),
-    Penetrating(u32),
+    Damage(i32),
+    Block(i32),
+    Penetrating(i32),
     Corrupting(i32),
-    Intangible(u32),
+    Intangible(i32),
     Knowledge(i32),
-    Draw(u32),
+    Draw(i32),
+    MaxEnergyBoost(u32),
+    CorruptingBoost(u32),
     Exhaust,
     Flip,
 }
