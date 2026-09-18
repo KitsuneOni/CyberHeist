@@ -11,7 +11,7 @@ use crate::run_state::{RunState, RunStateError};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
-struct RunStateNode {
+pub(crate) struct RunStateNode {
     state: RunState,
     base: Base<Node>,
 }
@@ -65,6 +65,8 @@ impl RunStateNode {
                 "is_entry" => entry.is_entry,
                 "is_current" => entry.is_current,
                 "is_target" => entry.is_target,
+                "is_boss" => entry.is_boss,
+                "zone" => entry.zone as i64,
                 "connections" => &connections,
             });
         }
@@ -109,6 +111,40 @@ impl RunStateNode {
         vdict! {
             "completed" => progress.completed as i64,
             "total" => progress.total as i64,
+        }
+    }
+
+    /// Which zone the player is in, how many have been opened up, and how
+    /// many the contract has, e.g. for "Zone 2 of 3".
+    #[func]
+    fn zone_progress(&self) -> VarDictionary {
+        let progress = self.state.zone_progress();
+        vdict! {
+            "current_zone" => progress.current_zone as i64,
+            "unlocked_zones" => progress.unlocked_zones as i64,
+            "total_zones" => progress.total_zones as i64,
+        }
+    }
+
+    /// The construct profile for the encounter being played: which zone it is
+    /// in and whether it is that zone's boss. `{ok: false}` between encounters.
+    ///
+    /// Read by `SentryNode` when a combat screen opens, so the security the
+    /// player faces is decided by where they are on the contract rather than
+    /// by what the scene happens to have been saved with.
+    #[func]
+    pub(crate) fn active_encounter_profile(&self) -> VarDictionary {
+        match self.state.active_encounter() {
+            Some(encounter) => vdict! {
+                "ok" => true,
+                "zone" => encounter.zone() as i64,
+                "is_boss" => encounter.is_boss(),
+            },
+            None => vdict! {
+                "ok" => false,
+                "zone" => 0_i64,
+                "is_boss" => false,
+            },
         }
     }
 
@@ -192,6 +228,8 @@ fn selection_dictionary(selection: EncounterSelection) -> VarDictionary {
         "ok" => true,
         "id" => i64::from(selection.node_id),
         "type" => selection.encounter_type.as_str(),
+        "zone" => selection.zone as i64,
+        "is_boss" => selection.encounter_type.is_boss(),
     }
 }
 

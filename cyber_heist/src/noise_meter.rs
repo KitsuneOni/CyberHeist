@@ -4,6 +4,10 @@ use godot::prelude::*;
 pub struct NoiseLevel {
     noise: i32,
     max_noise: i32,
+    /// How hard the construct currently being faced pushes back on the player
+    /// lowering detection, as a percentage. 0 leaves recovery untouched, which
+    /// is what every encounter did before bosses existed.
+    resistance_percent: i32,
 }
 
 impl NoiseLevel {
@@ -11,6 +15,7 @@ impl NoiseLevel {
         Self {
             noise: 0,
             max_noise: max_noise.max(0),
+            resistance_percent: 0,
         }
     }
 
@@ -22,10 +27,37 @@ impl NoiseLevel {
         self.max_noise
     }
 
+    pub fn resistance_percent(&self) -> i32 {
+        self.resistance_percent
+    }
+
+    /// Sets how hard recovery is resisted, clamped to 0..=100. Set per
+    /// encounter by whichever construct is guarding it.
+    pub fn set_resistance_percent(&mut self, percent: i32) {
+        self.resistance_percent = percent.clamp(0, 100);
+    }
+
     pub fn add(&mut self, amount: i32) -> i32 {
         let before = self.noise;
-        self.noise = self.noise.saturating_add(amount).clamp(0, self.max_noise);
+        self.noise = self
+            .noise
+            .saturating_add(self.resisted(amount))
+            .clamp(0, self.max_noise);
         self.noise - before
+    }
+
+    /// Detection resistance works against the player pulling noise back down,
+    /// never against the security system putting it up: a hardened construct
+    /// is hard to hide from, not louder by itself.
+    ///
+    /// Computed in i64 and rounded towards zero, so a reduction can be blunted
+    /// to nothing but can never flip sign or overflow on its way to the clamp.
+    fn resisted(&self, amount: i32) -> i32 {
+        if amount >= 0 || self.resistance_percent <= 0 {
+            return amount;
+        }
+        let kept = 100 - i64::from(self.resistance_percent);
+        (i64::from(amount) * kept / 100) as i32
     }
 
     pub fn is_at_cap(&self) -> bool {
@@ -80,6 +112,20 @@ impl NoiseMeter {
     #[func]
     pub fn is_at_cap(&self) -> bool {
         self.level.is_at_cap()
+    }
+
+    /// How hard the construct guarding this encounter resists recovery.
+    #[func]
+    pub fn get_resistance_percent(&self) -> i32 {
+        self.level.resistance_percent()
+    }
+
+    /// Set when an encounter begins, by the construct guarding it. Cleared
+    /// back to zero by the coordinator before a screen with no sentry on it,
+    /// so a boss cannot go on resisting after the player has walked away.
+    #[func]
+    pub fn set_resistance_percent(&mut self, percent: i32) {
+        self.level.set_resistance_percent(percent);
     }
 }
 
@@ -137,6 +183,79 @@ mod tests {
         level.add(4);
         assert_eq!(level.add(i32::MIN), -4);
         assert_eq!(level.noise(), 0);
+    }
+    #[test]
+    fn a_fresh_level_resists_nothing() {
+        let mut level = NoiseLevel::new(100);
+        assert_eq!(level.resistance_percent(), 0);
+
+        level.add(50);
+        assert_eq!(level.add(-10), -10, "recovery lands in full by default");
+        assert_eq!(level.noise(), 40);
+    }
+
+    /// Resistance is the boss making the player's recovery worth less. It is
+    /// not the boss being louder, so noise going on is untouched.
+    #[test]
+    fn resistance_blunts_recovery_but_never_the_noise_going_on() {
+        let mut level = NoiseLevel::new(100);
+        level.set_resistance_percent(40);
+
+        assert_eq!(level.add(50), 50, "the system's own noise is unaffected");
+        assert_eq!(level.add(-10), -6, "a 10 point recovery lands as 6");
+        assert_eq!(level.noise(), 44);
+    }
+
+    #[test]
+    fn total_resistance_cancels_recovery_without_reversing_it() {
+        let mut level = NoiseLevel::new(100);
+        level.add(30);
+        level.set_resistance_percent(100);
+
+        assert_eq!(level.add(-25), 0, "nothing comes off");
+        assert_eq!(level.noise(), 30, "and nothing goes on either");
+    }
+
+    #[test]
+    fn a_resisted_recovery_rounds_towards_zero_rather_than_paying_out() {
+        let mut level = NoiseLevel::new(100);
+        level.add(50);
+        level.set_resistance_percent(99);
+
+        // 1% of 5 is a fraction of a point, which is worth nothing rather
+        // than being rounded up into a free point of recovery.
+        assert_eq!(level.add(-5), 0);
+        assert_eq!(level.noise(), 50);
+    }
+
+    #[test]
+    fn resistance_outside_its_range_is_clamped_rather_than_believed() {
+        let mut level = NoiseLevel::new(100);
+
+        level.set_resistance_percent(-30);
+        assert_eq!(level.resistance_percent(), 0);
+
+        level.set_resistance_percent(250);
+        assert_eq!(level.resistance_percent(), 100);
+    }
+
+    /// The saturating add is what stops a loud action overflowing the meter,
+    /// and resistance must not open that back up.
+    #[test]
+    fn an_enormous_quietening_is_still_safe_against_resistance() {
+        for percent in [0, 1, 50, 99, 100] {
+            let mut level = NoiseLevel::new(10);
+            level.set_resistance_percent(percent);
+            level.add(4);
+
+            let change = level.add(i32::MIN);
+            assert!(
+                (0..=10).contains(&level.noise()),
+                "resistance {percent} left the meter at {}",
+                level.noise()
+            );
+            assert!(change <= 0, "a quietening cannot raise the meter");
+        }
     }
 }
 
