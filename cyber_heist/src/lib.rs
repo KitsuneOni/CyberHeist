@@ -37,6 +37,7 @@ use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
 use noise_meter::NoiseMeter;
 use run_deck_node::RunDeckNode;
+use sentry_node::SentryNode;
 
 struct CyberHeistExtension;
 
@@ -165,6 +166,7 @@ struct DrawPhase {
     deck: Deck,
     hand: Vec<CardData>,
     noise_meter: Option<Gd<NoiseMeter>>,
+    sentry_node: Option<Gd<SentryNode>>,
     base: Base<Node>,
 }
 
@@ -180,6 +182,7 @@ impl INode for DrawPhase {
             deck: Deck::new(Vec::new(), &mut rand::rng()),
             hand: Vec::new(),
             noise_meter: None,
+            sentry_node: None,
             base,
         }
     }
@@ -189,6 +192,10 @@ impl INode for DrawPhase {
             self.base()
                 .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
         );
+
+        self.noise_meter().clone().bind_mut().clear_shield();
+        self.sentry_node = Some(self.base().get_node_as::<SentryNode>("../Sentry"));
+
         let card_db = self
             .base()
             .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
@@ -276,11 +283,13 @@ impl DrawPhase {
         if !self.base().is_inside_tree() || self.base().is_queued_for_deletion() {
             return vdict! { "ok" => false, "error" => "inactive_encounter" };
         }
+        let mut sentry_node = self.sentry_node().clone();
         let result = card_play::play_card(
             &mut self.hand,
             &mut self.deck,
             &mut self.energy,
             meter.bind_mut().level_mut(),
+            sentry_node.bind_mut().sentry_mut(),
             index,
         );
         match result {
@@ -290,6 +299,8 @@ impl DrawPhase {
                     "ok" => true,
                     "name" => played.name.as_str(),
                     "noise_change" => played.noise_change,
+                    "damage_dealt" => played.damage_dealt,
+                    "shield_added" => played.shield_added,
                 }
             }
             Err(error) => {
@@ -396,6 +407,7 @@ impl DrawPhase {
         self.deck.discard(remaining_hand);
 
         self.signals().security_phase().emit(finished_turn);
+        self.noise_meter().clone().bind_mut().clear_shield();
 
         // Control comes back to the player for a fresh turn.
         self.turn_number += 1;
@@ -425,6 +437,10 @@ impl DrawPhase {
 impl DrawPhase {
     fn noise_meter(&self) -> &Gd<NoiseMeter> {
         self.noise_meter.as_ref().expect("DrawPhase must be ready")
+    }
+
+    fn sentry_node(&self) -> &Gd<SentryNode> {
+        self.sentry_node.as_ref().expect("DrawPhase must be ready")
     }
 
     fn current_noise(&self) -> i32 {
