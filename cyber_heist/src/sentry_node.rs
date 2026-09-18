@@ -8,7 +8,13 @@ use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
 use crate::noise_meter::NoiseMeter;
+use crate::run_state_node::RunStateNode;
 use crate::sentry::Sentry;
+
+/// Where the coordinator keeps the run. Looked up the same way as the shared
+/// meter, and optional for the same reason: the combat scene stays runnable on
+/// its own, it just falls back to first-zone security when there is no run.
+const RUN_STATE_PATH: &str = "/root/FlowCoordinator/RunState";
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -35,10 +41,25 @@ impl INode for SentryNode {
     }
 
     fn ready(&mut self) {
-        self.noise_meter = Some(
-            self.base()
-                .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
-        );
+        let mut meter = self
+            .base()
+            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal");
+
+        // Which construct is on the other side of this encounter is decided by
+        // where the player has got to on the contract, not by the scene: a
+        // zone's boss is a harder build of the security around it.
+        self.sentry = match self.encounter_profile() {
+            Some((zone, is_boss)) => Sentry::for_encounter(zone, is_boss),
+            None => Sentry::warden_7(),
+        };
+
+        // Resistance belongs to whoever is being faced, so it is set here and
+        // lives on the one shared meter rather than in a second copy.
+        meter
+            .bind_mut()
+            .set_resistance_percent(self.sentry.detection_resistance());
+        self.noise_meter = Some(meter);
+
         // The name is data, so a scene can put a different construct in the
         // way without any rule changes.
         let name = self.sentry_name.to_string();
@@ -49,6 +70,21 @@ impl INode for SentryNode {
 }
 
 impl SentryNode {
+    /// `(zone, is_boss)` for the encounter being played, or `None` when there
+    /// is no run behind this screen.
+    fn encounter_profile(&self) -> Option<(usize, bool)> {
+        let run_state = self
+            .base()
+            .try_get_node_as::<RunStateNode>(RUN_STATE_PATH)?;
+        let profile = run_state.bind().active_encounter_profile();
+        if !profile.at("ok").booleanize() {
+            return None;
+        }
+
+        let zone = usize::try_from(profile.at("zone").to::<i64>()).unwrap_or(0);
+        Some((zone, profile.at("is_boss").booleanize()))
+    }
+
     fn noise_meter(&self) -> Gd<NoiseMeter> {
         // A handle, not a second meter: reads remain valid between detachment
         // by FlowCoordinator and the old screen's deferred free.
@@ -143,6 +179,30 @@ impl SentryNode {
         self.sentry.queued_action().map_or(0, |action| action.noise)
     }
 
+    /// What the queued action does beyond the noise, e.g. "-2 energy", or an
+    /// empty string when it only makes noise. Announced with the intent, so a
+    /// boss ability is something the player can plan around rather than a
+    /// surprise after they have committed to ending the turn.
+    #[func]
+    fn queued_action_ability(&self) -> GString {
+        match self.sentry.queued_action() {
+            Some(action) => GString::from(&action.ability.describe()),
+            None => GString::new(),
+        }
+    }
+
+    /// Whether this construct has an action that does more than make noise.
+    #[func]
+    fn has_ability(&self) -> bool {
+        self.sentry.has_ability()
+    }
+
+    /// How hard this construct resists the player lowering detection.
+    #[func]
+    fn detection_resistance(&self) -> i32 {
+        self.sentry.detection_resistance()
+    }
+
     /// Adds noise from something other than the sentry, such as a loud card.
     /// Returns how much actually went on the meter.
     #[func]
@@ -197,6 +257,10 @@ impl SentryNode {
                     "noise" => noise,
                     "max_noise" => max_noise,
                     "run_failed" => run_failed,
+                    // Applied by the combat screen to the turn this one opens,
+                    // since the player's energy belongs to DrawPhase.
+                    "energy_drain" => action.ability.energy_drain(),
+                    "ability" => action.ability.describe().as_str(),
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
                     "defeated" => self.sentry.is_defeated(),
@@ -215,6 +279,8 @@ impl SentryNode {
                     "noise" => noise,
                     "max_noise" => max_noise,
                     "run_failed" => run_failed,
+                    "energy_drain" => 0,
+                    "ability" => "",
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
                     "defeated" => self.sentry.is_defeated(),

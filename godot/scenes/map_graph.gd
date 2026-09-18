@@ -10,6 +10,9 @@ signal node_selected(node_id: int)
 
 const NODE_RADIUS := 20.0
 const TARGET_HALF := 18.0
+# A boss is drawn larger than the encounters around it, so where a zone ends
+# is legible from the shape of the map alone.
+const BOSS_HALF := 24.0
 const LINE_WIDTH := 2.0
 
 # A long contract is scrolled sideways rather than squeezed, so the graph
@@ -23,6 +26,9 @@ const STATUS_COLOURS := {
 	"current": Color(0.95, 0.95, 0.98, 1),
 	"available": Color(0.55, 0.78, 0.92, 1),
 	"locked": Color(0.55, 0.42, 0.45, 1),
+	# Amber rather than the dead red of "locked": a sealed node is waiting on
+	# the zone's boss, not ruled out for good.
+	"sealed": Color(0.85, 0.66, 0.35, 1),
 	"upcoming": Color(0.5, 0.55, 0.6, 1),
 }
 const LINE_COLOUR := Color(0.32, 0.38, 0.44, 1)
@@ -136,9 +142,20 @@ func _draw() -> void:
 		var fill := colour if status == "completed" else FILL_DIM
 		var outline_width := 3.0 if node_id == _hovered_id else 2.0
 
-		# The two fixed points of a run are squares, the encounters you choose
-		# between are circles.
-		if bool(node.get("is_entry", false)) or bool(node.get("is_target", false)):
+		# Bosses are diamonds, the fixed points of a run are squares, and the
+		# encounters you choose between are circles.
+		if bool(node.get("is_boss", false)):
+			var diamond := PackedVector2Array([
+				centre + Vector2(0.0, -BOSS_HALF),
+				centre + Vector2(BOSS_HALF, 0.0),
+				centre + Vector2(0.0, BOSS_HALF),
+				centre + Vector2(-BOSS_HALF, 0.0),
+			])
+			draw_colored_polygon(diamond, fill)
+			var outline := diamond.duplicate()
+			outline.append(diamond[0])
+			draw_polyline(outline, colour, outline_width)
+		elif bool(node.get("is_entry", false)) or bool(node.get("is_target", false)):
 			var box := Rect2(
 				centre - Vector2(TARGET_HALF, TARGET_HALF),
 				Vector2(TARGET_HALF * 2.0, TARGET_HALF * 2.0)
@@ -202,6 +219,8 @@ func _update_tooltip(node: Dictionary) -> void:
 		"%s — %s" % [str(node.get("type_name", "?")), str(node.get("status", ""))],
 		str(node.get("description", "")),
 	]
+	if str(node.get("status", "")) == "sealed":
+		lines.append("Sealed until the boss of zone %d is beaten." % int(node.get("zone", 0)))
 	if _is_selectable(node):
 		lines.append("Click to start this encounter.")
 	tooltip_text = "\n".join(lines)

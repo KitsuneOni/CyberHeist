@@ -40,15 +40,21 @@ func _show_available_encounters() -> void:
 	var available: Array = FlowCoordinator.selectable_encounters()
 	if available.is_empty():
 		instruction_label.text = "Contract complete — there are no encounters left on this route."
+	elif _boss_is_next(available):
+		instruction_label.text = "The zone's boss is the only way on. Beat it to unlock the next zone."
 	else:
 		instruction_label.text = "Click a highlighted node to breach it. Unchosen branches lock for this contract."
 
 
-# "2 of 5 encounters complete", so progress through the contract is a number
-# the player can see rather than something they have to remember.
+# "Zone 2 of 3 · 4 of 9 encounters complete", so both how far through the
+# contract the player is and which zone they are in are numbers they can see
+# rather than things they have to remember.
 func _update_progress() -> void:
 	var progress: Dictionary = FlowCoordinator.contract_progress()
-	progress_label.text = "Contract progress: %d of %d encounters complete" % [
+	var zones: Dictionary = FlowCoordinator.zone_progress()
+	progress_label.text = "Zone %d of %d  ·  Contract progress: %d of %d encounters complete" % [
+		int(zones.get("current_zone", 0)) + 1,
+		int(zones.get("total_zones", 1)),
 		int(progress.get("completed", 0)),
 		int(progress.get("total", 0)),
 	]
@@ -107,6 +113,15 @@ func _build_key() -> void:
 		"   ".join(types),
 		"   ".join(statuses),
 	]
+
+
+# A boss column is a single node, so reaching it means there is nothing else
+# left to choose in this zone.
+func _boss_is_next(available: Array) -> bool:
+	for encounter: Dictionary in available:
+		if str(encounter.get("type", "")) != "boss":
+			return false
+	return not available.is_empty()
 
 
 func _on_encounter_selected(node_id: int) -> void:

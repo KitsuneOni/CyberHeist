@@ -20,6 +20,9 @@ pub enum EncounterType {
     Event,
     Shop,
     Elite,
+    /// The security system guarding the end of a zone. One per zone, always
+    /// alone in its column, and the only way through to the zone after it.
+    Boss,
 }
 
 impl EncounterType {
@@ -30,7 +33,12 @@ impl EncounterType {
             Self::Event => "event",
             Self::Shop => "shop",
             Self::Elite => "elite",
+            Self::Boss => "boss",
         }
+    }
+
+    pub fn is_boss(self) -> bool {
+        matches!(self, Self::Boss)
     }
 }
 
@@ -67,6 +75,9 @@ impl EncounterNode {
 pub struct EncounterSelection {
     pub node_id: NodeId,
     pub encounter_type: EncounterType,
+    /// Which zone the chosen encounter is in, so the construct guarding it
+    /// can be scaled to the depth the player has reached.
+    pub zone: usize,
 }
 
 /// Where a node stands from the player's point of view, for drawing the map.
@@ -80,6 +91,10 @@ pub enum NodeStatus {
     Available,
     /// Ruled out by choosing a different branch.
     Locked,
+    /// In a later zone, behind a boss that has not been beaten yet. Distinct
+    /// from `Locked`, which is permanent: a sealed node opens up again the
+    /// moment the zone's boss goes down.
+    Sealed,
     /// Further along the contract, not reachable yet.
     Upcoming,
 }
@@ -91,6 +106,7 @@ impl NodeStatus {
             Self::Current => "current",
             Self::Available => "available",
             Self::Locked => "locked",
+            Self::Sealed => "sealed",
             Self::Upcoming => "upcoming",
         }
     }
@@ -116,8 +132,25 @@ pub struct NodeProgress {
     /// fixed points of a run are drawn differently from the encounters the
     /// player chooses between.
     pub is_target: bool,
+    /// The security system at the end of its zone. Drawn apart from the
+    /// ordinary encounters, since it is the gate rather than a choice.
+    pub is_boss: bool,
+    /// Which zone this node belongs to, counting from 0.
+    pub zone: usize,
     /// Nodes this one leads to, for drawing the lines between them.
     pub connections: Vec<NodeId>,
+}
+
+/// How far through the contract's zones the player is, for the map screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZoneProgress {
+    /// Zone the player is standing in, counting from 0.
+    pub current_zone: usize,
+    /// Highest zone opened up so far. Equal to `current_zone` until a boss
+    /// goes down and the next zone's nodes become enterable.
+    pub unlocked_zones: usize,
+    /// Zones on this contract. A contract with no boss nodes is one zone.
+    pub total_zones: usize,
 }
 
 /// How far through the contract the player is.
@@ -131,11 +164,16 @@ pub struct ContractProgress {
 }
 
 /// How a generated contract is shaped.
+///
+/// A contract is a run of zones. Each zone is `zone_length` columns of
+/// ordinary encounters followed by a single boss column, so the boss is
+/// always the last node of its zone and the only way into the next one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContractShape {
-    /// Encounters the player passes through from entry to target, counting
-    /// both ends. A length of 10 is a ten node run.
-    pub length: usize,
+    /// Zones on the contract, each ending in its own boss.
+    pub zone_count: usize,
+    /// Columns of ordinary encounters in a zone, before its boss.
+    pub zone_length: usize,
     /// Fewest and most parallel routes a middle column can offer.
     pub min_width: usize,
     pub max_width: usize,
@@ -144,10 +182,19 @@ pub struct ContractShape {
 impl Default for ContractShape {
     fn default() -> Self {
         Self {
-            length: 10,
+            zone_count: 3,
+            zone_length: 2,
             min_width: 2,
             max_width: 3,
         }
+    }
+}
+
+impl ContractShape {
+    /// Columns from the entry to the final boss, counting both ends: the
+    /// entry, then each zone's encounters and the boss closing it.
+    pub fn length(&self) -> usize {
+        1 + self.zone_count.max(1) * (self.zone_length + 1)
     }
 }
 
@@ -162,6 +209,7 @@ pub enum ContractMapError {
     EncounterAlreadyInProgress(NodeId),
     NoEncounterInProgress,
     EncounterNotReachable { from: NodeId, requested: NodeId },
+    ZoneSealed { requested: NodeId, zone: usize },
 }
 
 impl fmt::Display for ContractMapError {
@@ -196,6 +244,11 @@ impl fmt::Display for ContractMapError {
                 formatter,
                 "encounter {requested} is unavailable from encounter {from}"
             ),
+            Self::ZoneSealed { requested, zone } => write!(
+                formatter,
+                "encounter {requested} is in zone {} and stays sealed until this zone's boss is beaten",
+                zone + 1
+            ),
         }
     }
 }
@@ -210,6 +263,9 @@ pub struct ContractMap {
     locked_nodes: BTreeSet<NodeId>,
     active_node: Option<NodeId>,
     completed_nodes: BTreeSet<NodeId>,
+    /// Highest zone the player may enter. Raised only by beating a boss, so
+    /// the nodes past one stay sealed however reachable the graph makes them.
+    unlocked_zones: usize,
 }
 
 impl ContractMap {
@@ -260,6 +316,7 @@ impl ContractMap {
             locked_nodes: BTreeSet::new(),
             active_node: None,
             completed_nodes: BTreeSet::new(),
+            unlocked_zones: 0,
         })
     }
 
@@ -271,17 +328,23 @@ impl ContractMap {
     /// and one way out, so whichever branch the player commits to still
     /// reaches the target.
     pub fn generate(shape: ContractShape, rng: &mut impl Rng) -> Self {
-        let length = shape.length.max(2);
+        let length = shape.length().max(2);
         let min_width = shape.min_width.max(1);
         let max_width = shape.max_width.max(min_width);
+        // Every `zone_length` columns of encounters are closed off by a boss
+        // column, so column 3, 6, 9... end zone 1, 2, 3... of a default
+        // contract. The last of them is also the contract's target.
+        let zone_stride = shape.zone_length + 1;
+        let is_boss_column =
+            |column_index: usize| column_index > 0 && column_index.is_multiple_of(zone_stride);
 
-        // Column 0 is the entry and the last column the target, both single
-        // nodes: the two fixed points of a run are not chosen between.
+        // Column 0 is the entry and every boss column holds a single node:
+        // the fixed points of a run are not chosen between.
         let mut columns: Vec<Vec<NodeId>> = Vec::with_capacity(length);
         let mut next_id: NodeId = 0;
 
         for column_index in 0..length {
-            let width = if column_index == 0 || column_index == length - 1 {
+            let width = if column_index == 0 || is_boss_column(column_index) {
                 1
             } else {
                 rng.random_range(min_width..=max_width)
@@ -322,7 +385,6 @@ impl ContractMap {
             }
         }
 
-        let last_column = length - 1;
         let nodes: Vec<EncounterNode> = columns
             .iter()
             .enumerate()
@@ -330,8 +392,8 @@ impl ContractMap {
                 column.iter().map(move |node_id| {
                     let encounter_type = if column_index == 0 {
                         EncounterType::Entry
-                    } else if column_index == last_column {
-                        EncounterType::Elite
+                    } else if is_boss_column(column_index) {
+                        EncounterType::Boss
                     } else {
                         EncounterType::Combat
                     };
@@ -360,7 +422,9 @@ impl ContractMap {
     fn assign_encounter_types(&mut self, rng: &mut impl Rng) {
         let start = self.start_node;
         for node in self.nodes.values_mut() {
-            if node.id == start || node.next_nodes.is_empty() {
+            // The entry, the bosses and the target are placed by the shape of
+            // the contract, so the mix is only rolled for the rest.
+            if node.id == start || node.next_nodes.is_empty() || node.encounter_type.is_boss() {
                 continue;
             }
 
@@ -392,6 +456,26 @@ impl ContractMap {
         .expect("the built-in contract graph must be valid")
     }
 
+    /// Authored data used by the zone tests: two zones, each opening on a
+    /// branch and closing on its own boss. Node 3 is zone 1's boss and node 6
+    /// is zone 2's, which is also the contract target.
+    #[cfg(test)]
+    pub fn demo_zoned() -> Self {
+        Self::new(
+            [
+                EncounterNode::new(0, EncounterType::Entry, vec![1, 2]),
+                EncounterNode::new(1, EncounterType::Combat, vec![3]),
+                EncounterNode::new(2, EncounterType::Event, vec![3]),
+                EncounterNode::new(3, EncounterType::Boss, vec![4, 5]),
+                EncounterNode::new(4, EncounterType::Combat, vec![6]),
+                EncounterNode::new(5, EncounterType::Shop, vec![6]),
+                EncounterNode::new(6, EncounterType::Boss, vec![]),
+            ],
+            0,
+        )
+        .expect("the built-in zoned contract graph must be valid")
+    }
+
     pub fn current_encounter(&self) -> &EncounterNode {
         self.nodes
             .get(&self.current_node)
@@ -403,10 +487,14 @@ impl ContractMap {
             return Vec::new();
         }
 
+        let zones = self.node_zones();
         self.current_encounter()
             .next_nodes
             .iter()
             .filter(|node_id| !self.locked_nodes.contains(node_id))
+            // A zone the player has not unlocked yet is not on offer, however
+            // directly the graph leads into it.
+            .filter(|node_id| zones.get(node_id).copied().unwrap_or(0) <= self.unlocked_zones)
             .map(|node_id| {
                 self.nodes
                     .get(node_id)
@@ -435,6 +523,14 @@ impl ContractMap {
             });
         }
 
+        let zone = self.node_zones().get(&requested_node).copied().unwrap_or(0);
+        if zone > self.unlocked_zones {
+            return Err(ContractMapError::ZoneSealed {
+                requested: requested_node,
+                zone,
+            });
+        }
+
         let encounter = self
             .nodes
             .get(&requested_node)
@@ -442,6 +538,7 @@ impl ContractMap {
         Ok(EncounterSelection {
             node_id: encounter.id,
             encounter_type: encounter.encounter_type,
+            zone,
         })
     }
 
@@ -476,7 +573,54 @@ impl ContractMap {
         self.current_node = completed_node;
         self.completed_nodes.insert(completed_node);
         self.completed_nodes.insert(departed_node);
+
+        // Beating the boss is the only thing that opens the next zone, so the
+        // nodes behind it stop being sealed from here on.
+        let cleared_a_boss = self
+            .nodes
+            .get(&completed_node)
+            .is_some_and(|node| node.encounter_type.is_boss());
+        if cleared_a_boss {
+            let zone = self.node_zones().get(&completed_node).copied().unwrap_or(0);
+            self.unlocked_zones = self.unlocked_zones.max(zone + 1);
+        }
         Ok(())
+    }
+
+    /// Which zone each node sits in, counting from 0.
+    ///
+    /// A zone runs up to and including its boss, so the boss closes the zone
+    /// it belongs to and the column after it opens the next. Derived from
+    /// where the bosses sit rather than stored on the nodes, so an authored
+    /// contract and a generated one agree without either declaring its zones.
+    fn node_zones(&self) -> BTreeMap<NodeId, usize> {
+        let depths = self.node_depths();
+        let boss_depths: BTreeSet<usize> = self
+            .nodes
+            .values()
+            .filter(|node| node.encounter_type.is_boss())
+            .filter_map(|node| depths.get(&node.id).copied())
+            .collect();
+
+        depths
+            .iter()
+            .map(|(node_id, depth)| {
+                let zone = boss_depths.iter().filter(|boss| *boss < depth).count();
+                (*node_id, zone)
+            })
+            .collect()
+    }
+
+    /// Which zone the player is in, how many have been opened up, and how
+    /// many the contract has in all.
+    pub fn zone_progress(&self) -> ZoneProgress {
+        let zones = self.node_zones();
+        ZoneProgress {
+            current_zone: zones.get(&self.current_node).copied().unwrap_or(0),
+            unlocked_zones: self.unlocked_zones,
+            // A contract with no boss on it is a single zone.
+            total_zones: zones.values().copied().max().unwrap_or(0) + 1,
+        }
     }
 
     /// How far each node sits from the entry, measured along the longest path
@@ -558,6 +702,7 @@ impl ContractMap {
             .map(|node| node.id)
             .collect();
         let reachable = self.reachable_from_current();
+        let zones = self.node_zones();
         let depths = self.node_depths();
         let max_depth = depths.values().copied().max().unwrap_or(0);
 
@@ -571,14 +716,19 @@ impl ContractMap {
         self.nodes
             .values()
             .map(|node| {
+                let zone = zones.get(&node.id).copied().unwrap_or(0);
                 let status = if self.completed_nodes.contains(&node.id) {
                     NodeStatus::Completed
                 } else if node.id == self.current_node {
                     NodeStatus::Current
                 } else if !reachable.contains(&node.id) {
                     // Covers the branch passed over and everything that could
-                    // only have been reached through it.
+                    // only have been reached through it. Checked before the
+                    // zone: being locked out is permanent, and that is the
+                    // more useful thing to tell the player.
                     NodeStatus::Locked
+                } else if zone > self.unlocked_zones {
+                    NodeStatus::Sealed
                 } else if selectable.contains(&node.id) {
                     NodeStatus::Available
                 } else {
@@ -605,6 +755,8 @@ impl ContractMap {
                     is_entry: node.id == self.start_node,
                     is_current: node.id == self.current_node,
                     is_target: node.next_nodes.is_empty(),
+                    is_boss: node.encounter_type.is_boss(),
+                    zone,
                     connections: node.next_nodes.clone(),
                 }
             })
@@ -923,6 +1075,321 @@ mod tests {
         );
     }
 
+    /// Walks the zoned demo up to, but not into, zone 1's boss.
+    fn standing_before_the_first_boss() -> ContractMap {
+        let mut contract = ContractMap::demo_zoned();
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+        contract
+    }
+
+    /// Card scenario 2, first half: until the boss goes down, the zone behind
+    /// it is sealed and none of it can be entered.
+    #[test]
+    fn the_next_zone_stays_sealed_until_the_boss_is_beaten() {
+        let contract = standing_before_the_first_boss();
+
+        assert_eq!(
+            contract.zone_progress(),
+            ZoneProgress {
+                current_zone: 0,
+                unlocked_zones: 0,
+                total_zones: 2,
+            }
+        );
+        for node_id in [4, 5, 6] {
+            assert_eq!(
+                status_of(&contract, node_id),
+                NodeStatus::Sealed,
+                "node {node_id} is in zone 2 and the boss is still standing"
+            );
+        }
+        assert_eq!(
+            contract
+                .selectable_encounters()
+                .iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![3],
+            "the boss is the only way on"
+        );
+    }
+
+    /// Card scenario 2, second half: beating the boss opens the next zone and
+    /// its nodes become ones the player can actually enter.
+    #[test]
+    fn beating_the_boss_unlocks_the_next_zone_and_offers_its_nodes() {
+        let mut contract = standing_before_the_first_boss();
+
+        contract.select_encounter(3).expect("the boss is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("the boss encounter is active");
+
+        assert_eq!(
+            contract.zone_progress(),
+            ZoneProgress {
+                // The boss closes zone 1, so standing on it is still standing
+                // in the zone it guarded; the next zone is now open ahead.
+                current_zone: 0,
+                unlocked_zones: 1,
+                total_zones: 2,
+            },
+            "clearing the boss opens the zone it was guarding"
+        );
+
+        let offered: Vec<NodeId> = contract
+            .selectable_encounters()
+            .iter()
+            .map(|node| node.id)
+            .collect();
+        assert_eq!(
+            offered,
+            vec![4, 5],
+            "both of the next zone's opening nodes are enterable"
+        );
+        for node_id in [4, 5] {
+            assert_eq!(
+                status_of(&contract, node_id),
+                NodeStatus::Available,
+                "node {node_id} should read as somewhere the player can go"
+            );
+        }
+        assert!(
+            !contract
+                .node_progress()
+                .iter()
+                .any(|entry| entry.status == NodeStatus::Sealed),
+            "nothing is left sealed once the only boss in the way is beaten"
+        );
+
+        // And stepping into it is what actually moves the player on a zone.
+        contract.select_encounter(4).expect("node 4 is now open");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+        assert_eq!(contract.zone_progress().current_zone, 1);
+    }
+
+    /// The gate is a rule, not merely a shape of graph. A contract that links
+    /// straight past its boss still cannot be walked past it: the request is
+    /// refused, it says which zone is in the way, and nothing moves.
+    #[test]
+    fn an_edge_that_bypasses_the_boss_is_still_refused() {
+        let contract = ContractMap::new(
+            [
+                // Node 2 sits in zone 2 but the entry links directly to it,
+                // going around the boss entirely.
+                EncounterNode::new(0, EncounterType::Entry, vec![1, 2]),
+                EncounterNode::new(1, EncounterType::Boss, vec![2]),
+                EncounterNode::new(2, EncounterType::Combat, vec![]),
+            ],
+            0,
+        )
+        .expect("the bypass graph is valid");
+        let before = contract.clone();
+
+        assert_eq!(
+            contract.encounter_option(2),
+            Err(ContractMapError::ZoneSealed {
+                requested: 2,
+                zone: 1
+            }),
+            "the zone gate holds even where the graph offers a way round"
+        );
+        assert_eq!(contract, before, "a refused entry changes nothing");
+        assert_eq!(
+            contract
+                .selectable_encounters()
+                .iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![1],
+            "only the boss is on offer"
+        );
+        assert_eq!(
+            status_of(&contract, 2),
+            NodeStatus::Sealed,
+            "and the bypassed node reads as sealed rather than available"
+        );
+        assert!(
+            ContractMapError::ZoneSealed {
+                requested: 2,
+                zone: 1
+            }
+            .to_string()
+            .contains("zone 2"),
+            "the message counts zones the way the player does"
+        );
+    }
+
+    /// Failing the boss must not open the zone it was guarding: only beating
+    /// it does.
+    #[test]
+    fn a_failed_boss_encounter_leaves_the_next_zone_sealed() {
+        let mut contract = standing_before_the_first_boss();
+
+        contract.select_encounter(3).expect("the boss is reachable");
+        contract
+            .fail_current_encounter()
+            .expect("the boss encounter is active");
+
+        assert_eq!(contract.zone_progress().unlocked_zones, 0);
+        assert_eq!(status_of(&contract, 4), NodeStatus::Sealed);
+        assert_eq!(
+            contract
+                .selectable_encounters()
+                .iter()
+                .map(|node| node.id)
+                .collect::<Vec<_>>(),
+            vec![3],
+            "the boss is still the only way on, and can be retried"
+        );
+    }
+
+    /// Being locked out by your own branch choice is permanent, so it is the
+    /// more useful thing to show even where the zone gate also applies.
+    #[test]
+    fn a_node_ruled_out_by_an_earlier_choice_reads_as_locked_not_sealed() {
+        let mut contract = ContractMap::demo_zoned();
+        contract.select_encounter(1).expect("node 1 is reachable");
+        contract
+            .complete_current_encounter()
+            .expect("an encounter is active");
+
+        assert_eq!(
+            status_of(&contract, 2),
+            NodeStatus::Locked,
+            "the branch passed over is gone for good, zones or no zones"
+        );
+    }
+
+    /// A contract with no boss on it is one open zone, which is what every
+    /// authored contract predating zones has to keep being.
+    #[test]
+    fn a_contract_without_a_boss_is_a_single_unsealed_zone() {
+        let contract = ContractMap::demo();
+
+        assert_eq!(
+            contract.zone_progress(),
+            ZoneProgress {
+                current_zone: 0,
+                unlocked_zones: 0,
+                total_zones: 1,
+            }
+        );
+        assert!(
+            !contract
+                .node_progress()
+                .iter()
+                .any(|entry| entry.status == NodeStatus::Sealed),
+            "there is no boss to seal anything behind"
+        );
+    }
+
+    /// Card scenario 1, structural half: the player reaches a boss at the end
+    /// of every zone, and it is always a column of its own.
+    #[test]
+    fn a_generated_contract_ends_every_zone_with_one_boss() {
+        let shape = ContractShape::default();
+        for seed in 0..25 {
+            let contract = generated(seed);
+            let bosses: Vec<NodeProgress> = contract
+                .node_progress()
+                .into_iter()
+                .filter(|entry| entry.is_boss)
+                .collect();
+
+            assert_eq!(
+                bosses.len(),
+                shape.zone_count,
+                "seed {seed} should field one boss per zone"
+            );
+            for boss in &bosses {
+                assert_eq!(
+                    contract
+                        .node_progress()
+                        .iter()
+                        .filter(|entry| entry.x == boss.x)
+                        .count(),
+                    1,
+                    "seed {seed}: the boss at zone {} shares its column",
+                    boss.zone
+                );
+            }
+
+            let mut zones: Vec<usize> = bosses.iter().map(|boss| boss.zone).collect();
+            zones.sort_unstable();
+            assert_eq!(
+                zones,
+                (0..shape.zone_count).collect::<Vec<_>>(),
+                "seed {seed} should have exactly one boss closing each zone"
+            );
+            assert!(
+                bosses
+                    .iter()
+                    .any(|boss| boss.is_target && boss.zone == shape.zone_count - 1),
+                "seed {seed}: the last zone's boss is the contract target"
+            );
+        }
+    }
+
+    /// Walking a whole generated contract has to pass through every zone gate,
+    /// which is the end-to-end version of the two scenarios above.
+    #[test]
+    fn walking_a_generated_contract_unlocks_each_zone_in_turn() {
+        let shape = ContractShape::default();
+        for seed in 0..10 {
+            let mut contract = generated(seed);
+            let mut bosses_beaten = 0;
+
+            loop {
+                let options = contract.selectable_encounters();
+                if options.is_empty() {
+                    break;
+                }
+                let chosen = options[0].id;
+                let was_boss = options[0].encounter_type.is_boss();
+                let unlocked_before = contract.zone_progress().unlocked_zones;
+
+                contract.select_encounter(chosen).expect("selectable");
+                contract.complete_current_encounter().expect("active");
+
+                let unlocked_after = contract.zone_progress().unlocked_zones;
+                if was_boss {
+                    bosses_beaten += 1;
+                    assert_eq!(
+                        unlocked_after,
+                        unlocked_before + 1,
+                        "seed {seed}: beating a boss has to open the next zone"
+                    );
+                } else {
+                    assert_eq!(
+                        unlocked_after, unlocked_before,
+                        "seed {seed}: only a boss opens a zone"
+                    );
+                }
+
+                // Nothing beyond the zones opened so far is ever on offer.
+                for option in contract.selectable_encounters() {
+                    let zone = contract.node_zones().get(&option.id).copied().unwrap_or(0);
+                    assert!(
+                        zone <= unlocked_after,
+                        "seed {seed}: node {} in zone {zone} was offered too early",
+                        option.id
+                    );
+                }
+            }
+
+            assert_eq!(
+                bosses_beaten, shape.zone_count,
+                "seed {seed}: a full run goes through every zone's boss"
+            );
+        }
+    }
+
     /// Deeper contracts strand far more nodes behind a single choice, so the
     /// rule has to hold at depth rather than just on the two-level demo.
     #[test]
@@ -1207,7 +1674,7 @@ mod tests {
             let depth = contract.node_depths().values().copied().max().unwrap_or(0);
             assert_eq!(
                 depth + 1,
-                ContractShape::default().length,
+                ContractShape::default().length(),
                 "seed {seed} produced a contract of the wrong length"
             );
         }
@@ -1246,7 +1713,7 @@ mod tests {
             );
             assert_eq!(
                 steps + 1,
-                ContractShape::default().length,
+                ContractShape::default().length(),
                 "seed {seed} traversed the wrong number of encounters"
             );
         }
@@ -1276,7 +1743,7 @@ mod tests {
         );
         assert_eq!(
             progress.total,
-            ContractShape::default().length - 1,
+            ContractShape::default().length() - 1,
             "a route is one encounter per column after the entry"
         );
     }
