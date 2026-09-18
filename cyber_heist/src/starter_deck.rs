@@ -42,6 +42,7 @@ pub fn load_starter_deck_entries() -> Vec<StarterDeckEntry> {
 /// An id that is not in the card database is returned as an error rather than
 /// skipped, so a typo shows up immediately instead of quietly shrinking the
 /// deck.
+#[allow(dead_code)]
 pub fn build_starter_deck<'a>(
     entries: &[StarterDeckEntry],
     lookup: impl Fn(&str) -> Option<&'a CardData>,

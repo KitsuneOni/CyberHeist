@@ -150,6 +150,16 @@ impl SentryNode {
         self.noise_meter().bind_mut().add_noise(noise)
     }
 
+    #[func]
+    fn corruption(&self) -> i32 {
+        self.sentry.corruption()
+    }
+
+    #[func]
+    fn corruption_boost(&self) -> i32 {
+        self.sentry.corruption_boost()
+    }
+
     /// Takes the sentry's turn and reports what it did:
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed}`.
     ///
@@ -158,6 +168,9 @@ impl SentryNode {
     #[func]
     fn perform_queued_action(&mut self) -> VarDictionary {
         let meter = self.noise_meter();
+
+        let corruption_damage = self.sentry.resolve_corruption_tick();
+        let corruption = self.sentry.corruption();
 
         let action = if self.base().is_inside_tree()
             && !self.base().is_queued_for_deletion()
@@ -184,6 +197,9 @@ impl SentryNode {
                     "noise" => noise,
                     "max_noise" => max_noise,
                     "run_failed" => run_failed,
+                    "corruption_damage" => corruption_damage,
+                    "corruption" => corruption,
+                    "defeated" => self.sentry.is_defeated(),
                 }
             }
             None => {
@@ -199,6 +215,9 @@ impl SentryNode {
                     "noise" => noise,
                     "max_noise" => max_noise,
                     "run_failed" => run_failed,
+                    "corruption_damage" => corruption_damage,
+                    "corruption" => corruption,
+                    "defeated" => self.sentry.is_defeated(),
                 }
             }
         }

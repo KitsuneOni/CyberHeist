@@ -57,6 +57,8 @@ pub struct Sentry {
     next_index: usize,
     health: i32,
     max_health: i32,
+    corruption: i32,
+    corruption_boost: i32,
 }
 
 impl Sentry {
@@ -72,6 +74,8 @@ impl Sentry {
             next_index: 0,
             health: 50,
             max_health: 50,
+            corruption: 0,
+            corruption_boost: 0,
         }
     }
 
@@ -115,6 +119,14 @@ impl Sentry {
         self.max_health
     }
 
+    pub fn corruption(&self) -> i32 {
+        self.corruption
+    }
+
+    pub fn corruption_boost(&self) -> i32 {
+        self.corruption_boost
+    }
+
     /// True once health has been brought down to 0. A defeated sentry takes
     /// no further turns (enforced by the caller, e.g. `SentryNode`).
     pub fn is_defeated(&self) -> bool {
@@ -133,6 +145,39 @@ impl Sentry {
         let before = self.health;
         self.health = self.health.saturating_sub(amount).clamp(0, self.max_health);
         before - self.health
+    }
+
+    pub fn add_corruption(&mut self, amount: i32) -> i32 {
+        let actual_amount = if amount > 0 {
+            amount + self.corruption_boost
+        } else {
+            amount
+        };
+        let before = self.corruption;
+        self.corruption = (self.corruption + actual_amount).max(0);
+        self.corruption - before
+    }
+
+    pub fn add_corruption_boost(&mut self, amount: i32) -> i32 {
+        let before = self.corruption_boost;
+        self.corruption_boost = (self.corruption_boost + amount).max(0);
+        self.corruption_boost - before
+    }
+
+    pub fn clear_corruption_boost(&mut self) -> i32 {
+        let cleared = self.corruption_boost;
+        self.corruption_boost = 0;
+        cleared
+    }
+
+    pub fn resolve_corruption_tick(&mut self) -> i32 {
+        if self.corruption <= 0 {
+            return 0;
+        }
+        let damage = self.corruption;
+        let dealt = self.take_damage(damage);
+        self.corruption = (self.corruption - 1).max(0);
+        dealt
     }
 
     /// The action the sentry will take when its turn begins, or `None` if

@@ -21,6 +21,7 @@ CardDatabaseGlobal="*uid://dtbixqmoduffh"
 PlayerStateGlobal="*uid://blp2t361n2gt7"
 FlowCoordinator="*res://autoload/flow_coordinator.tscn"
 NoiseMeterGlobal="*res://autoload/NoiseMeter.tscn"
+KnowledgeMeterGlobal="*uid://dhouwtqtiq0ne"
 
 [display]
 

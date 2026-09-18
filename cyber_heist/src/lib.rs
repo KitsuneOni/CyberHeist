@@ -1,16 +1,3 @@
-//! CyberHeist GDExtension library for Godot 4.
-//!
-//! Game logic lives in this crate; the Godot project under `../godot` handles
-//! scenes, UI and presentation. Add new gameplay modules here and register them
-//! as Godot classes with `#[derive(GodotClass)]`.
-//!
-//! Classes defined here:
-//! - 'BridgeCheck' temporary demo proving the bridge between Godot and Rust works. Delete once real gameplay and classes are wired up
-//! - 'PlayerState' - autoload singleton tracking player money and upgrades,
-//!   and applying the "caught" penalty (fine + lose this contract's upgrades).
-//! - 'SentryNode' - the named security construct guarding an encounter: the
-//!   action it has queued, applied to the shared NoiseMeterGlobal autoload.
-
 mod card_data;
 mod card_database;
 mod card_play;
@@ -21,6 +8,7 @@ mod deck;
 mod encounter_text;
 mod events;
 mod events_node;
+mod knowledge;
 mod noise_meter;
 mod run_deck;
 mod run_deck_node;
@@ -35,19 +23,21 @@ use card_database::CardDatabase;
 use deck::Deck;
 use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
+use knowledge::KnowledgeMeter;
 use noise_meter::NoiseMeter;
 use run_deck_node::RunDeckNode;
 use sentry_node::SentryNode;
+
+/// Where `RunDeckNode` lives relative to the scene root. Per its own doc
+/// comment it's a child of the `FlowCoordinator` autoload, not its own
+/// top-level autoload — confirm this path matches your actual scene tree.
+const RUN_DECK_PATH: &str = "/root/FlowCoordinator/RunDeck";
 
 struct CyberHeistExtension;
 
 #[gdextension]
 unsafe impl ExtensionLibrary for CyberHeistExtension {}
 
-/// Temporary node that proves the Rust <-> Godot bridge is wired up correctly.
-///
-/// This no longer appears in the bootstrap scene, but remains available for
-/// targeted bridge diagnostics until a later cleanup removes it.
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct BridgeCheck {
@@ -67,30 +57,22 @@ impl INode for BridgeCheck {
 
 #[godot_api]
 impl BridgeCheck {
-    /// Callable from GDScript to confirm calls cross the bridge, e.g.
-    /// `print($BridgeCheck.ping())`.
     #[func]
     fn ping(&self) -> GString {
         "pong from Rust".into()
     }
 }
 
-/// Tracks player money and the upgrades earned so far during the current contract.
-/// Exposed as an autoload singleton so GDScript can call it from anywhere
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct PlayerState {
     base: Base<Node>,
     money: i64,
-    // Upgrades gained during the current contract only. Cleared on
-    // apply_penalty' (caught) - permanent upgrades would need separate storage.
     upgrades: Vec<GString>,
 }
 
 #[godot_api]
 impl INode for PlayerState {
-    // called once when the autoload node enters the scene tree
-    // starting values: no money, no upgrades yet.
     fn init(base: Base<Node>) -> Self {
         Self {
             base,
@@ -102,37 +84,26 @@ impl INode for PlayerState {
 
 #[godot_api]
 impl PlayerState {
-    // Records an upgrade earned this contract e.g. called when the player picks a reward mid run
     #[func]
     fn add_upgrade(&mut self, name: GString) {
         self.upgrades.push(name);
     }
 
-    // Current credit balance. Read by screens that show the player's money,
-    // e.g. after an event node changes it.
     #[func]
     fn money(&self) -> i64 {
         self.money
     }
 
-    // Adds credits to the balance. `amount` may be negative for a cost, e.g.
-    // paying a broker during an event.
     #[func]
     fn add_credits(&mut self, amount: i64) {
         self.money += amount;
     }
 
-    // Called when the player is caught. Deducts 'fine' from money and wipes out any upgrades earned this contract
-    // Returns what was lost so the CaugthtScreen can display it:
-    // {"fine": int, "lost_upgrades": Array[String] }.
     #[func]
     fn apply_penalty(&mut self, fine: i64) -> VarDictionary {
-        // take ownership of the current upgrades list and empty it out
-        // drain(..) removes every element and hands them to lost
         let lost: Array<GString> = self.upgrades.drain(..).collect();
         self.money -= fine;
 
-        // build the untyped dictionary GDScript expects back
         dict! {
             "fine" => fine,
             "lost_upgrades" => &lost,
@@ -142,9 +113,10 @@ impl PlayerState {
 
 /// Godot-facing node for the draw phase.
 ///
-/// Wraps a [`Deck`] built from the starter pack. Gameplay rules live in
-/// `deck.rs`/`card.rs`/`pack.rs` as plain Rust so they stay unit testable;
-/// this node just exposes them to GDScript.
+/// Wraps a [`Deck`] built each encounter from whatever `RunDeckNode` says the
+/// run currently owns — not from `starter_deck.ron` directly, so a card
+/// gained mid-run (e.g. via `RunDeckNode::add_card`) is actually available at
+/// the next encounter instead of being silently discarded.
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct DrawPhase {
@@ -167,6 +139,7 @@ struct DrawPhase {
     hand: Vec<CardData>,
     noise_meter: Option<Gd<NoiseMeter>>,
     sentry_node: Option<Gd<SentryNode>>,
+    knowledge_meter: Option<Gd<KnowledgeMeter>>,
     base: Base<Node>,
 }
 
@@ -183,6 +156,7 @@ impl INode for DrawPhase {
             hand: Vec::new(),
             noise_meter: None,
             sentry_node: None,
+            knowledge_meter: None,
             base,
         }
     }
@@ -193,69 +167,57 @@ impl INode for DrawPhase {
                 .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
         );
 
+        // Shield is per-encounter; clearing it here — not just at end_turn —
+        // means it can't leak in regardless of how the previous encounter
+        // ended (normal completion, caught, or a mid-turn sentry defeat).
         self.noise_meter().clone().bind_mut().clear_shield();
+
+        // DrawPhase and Sentry are sibling nodes under CombatScreen.
         self.sentry_node = Some(self.base().get_node_as::<SentryNode>("../Sentry"));
+
+        // Knowledge is run-persistent, unlike noise/shield/health, so it is
+        // deliberately NOT reset here — it carries across encounters.
+        self.knowledge_meter = Some(
+            self.base()
+                .get_node_as::<KnowledgeMeter>("/root/KnowledgeMeterGlobal"),
+        );
 
         let card_db = self
             .base()
             .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
         let card_db = card_db.bind();
 
-        // The run owns its cards, so anything gained mid-run is still here at
-        // the next encounter. Falling back to the starter list keeps the combat
-        // scene runnable on its own, e.g. opened directly to test it.
-        let run_deck = self
-            .base()
-            .try_get_node_as::<RunDeckNode>("/root/FlowCoordinator/RunDeck");
+        // The run's cards live on RunDeckNode, not starter_deck.ron directly.
+        // Reading it fresh here means every encounter deals from whatever
+        // the run currently owns, including anything gained since the last
+        // encounter (e.g. a reward picked via RunDeckNode::add_card).
+        let run_deck = self.base().get_node_as::<RunDeckNode>(RUN_DECK_PATH);
+        let owned_ids = run_deck.bind().owned_card_ids();
 
-        let encounter_cards: Vec<CardData> = match &run_deck {
-            Some(node) => {
-                let owned = node.bind().owned_card_ids();
-                let mut cards = Vec::with_capacity(owned.len());
-                let mut missing = Vec::new();
-                for id in owned {
-                    match card_db.get(&id) {
-                        Some(card) => cards.push(card.clone()),
-                        None => missing.push(id),
-                    }
-                }
-                if !missing.is_empty() {
-                    godot_error!(
-                        "the run deck holds cards that do not exist in cards.ron: {}",
-                        missing.join(", ")
-                    );
-                }
-                cards
+        let mut cards = Vec::with_capacity(owned_ids.len());
+        let mut missing = Vec::new();
+        for id in &owned_ids {
+            match card_db.get(id) {
+                Some(card) => cards.push(card.clone()),
+                None => missing.push(id.clone()),
             }
-            None => {
-                let entries = starter_deck::load_starter_deck_entries();
-                match starter_deck::build_starter_deck(&entries, |id| card_db.get(id)) {
-                    Ok(cards) => cards,
-                    Err(missing) => {
-                        godot_error!(
-                            "starter_deck.ron refers to cards that do not exist in cards.ron: {}",
-                            missing.join(", ")
-                        );
-                        Vec::new()
-                    }
-                }
-            }
-        };
+        }
+        if !missing.is_empty() {
+            godot_error!(
+                "RunDeckNode owns ids that do not exist in cards.ron: {}",
+                missing.join(", ")
+            );
+        }
 
         let mut rng = rand::rng();
-        self.deck = Deck::new(encounter_cards, &mut rng);
+        self.deck = Deck::new(cards, &mut rng);
     }
 }
 
 #[godot_api]
 impl DrawPhase {
     /// Draws a new hand of `hand_size` randomized cards, reshuffling the
-    /// discard pile into the draw pile if it runs out mid-draw. Returns the
-    /// drawn cards' names for GDScript to display.
-    ///
-    /// Any cards still held from a previous hand go to the discard pile
-    /// first, so calling this repeatedly cycles cards through the discard
-    /// pile instead of quietly dropping them.
+    /// discard pile into the draw pile if it runs out mid-draw.
     #[func]
     fn draw_hand(&mut self) -> PackedStringArray {
         let previous_hand = std::mem::take(&mut self.hand);
@@ -272,8 +234,10 @@ impl DrawPhase {
             .collect()
     }
 
-    /// Resolves one paid play against the shared noise meter. The model owns
-    /// validation, energy, discard and signed noise as one transaction.
+    /// Resolves one paid play against the shared noise meter, the sentry's
+    /// health, run-persistent knowledge, and this encounter's deck/hand for
+    /// card draw. The model owns validation, energy, discard, and every
+    /// signed/clamped effect as one transaction.
     #[func]
     fn play_card(&mut self, index: i32) -> VarDictionary {
         let mut meter = self.noise_meter().clone();
@@ -284,12 +248,17 @@ impl DrawPhase {
             return vdict! { "ok" => false, "error" => "inactive_encounter" };
         }
         let mut sentry_node = self.sentry_node().clone();
+        let mut knowledge_meter = self.knowledge_meter().clone();
+        let mut rng = rand::rng();
         let result = card_play::play_card(
             &mut self.hand,
             &mut self.deck,
             &mut self.energy,
+            &mut self.max_energy,
             meter.bind_mut().level_mut(),
             sentry_node.bind_mut().sentry_mut(),
+            knowledge_meter.bind_mut().level_mut(),
+            &mut rng,
             index,
         );
         match result {
@@ -301,6 +270,11 @@ impl DrawPhase {
                     "noise_change" => played.noise_change,
                     "damage_dealt" => played.damage_dealt,
                     "shield_added" => played.shield_added,
+                    "cards_drawn" => played.cards_drawn,
+                    "knowledge_change" => played.knowledge_change,
+                    "max_energy_gained" => played.max_energy_gained,
+                    "corruption_added" => played.corruption_added,
+                    "corruption_boost_added" => played.corruption_boost_added,
                 }
             }
             Err(error) => {
@@ -323,12 +297,6 @@ impl DrawPhase {
             .collect()
     }
 
-    /// Everything worth knowing about the card at `index` in hand, for the
-    /// detail panel: name, type, rarity, cost, noise, description and one
-    /// entry per effect with an explanation of what that effect does.
-    ///
-    /// Returns `{ok: false}` for an index that is not in hand, so a stale
-    /// selection cannot show another card's details.
     #[func]
     fn card_detail(&self, index: i32) -> VarDictionary {
         let Ok(index) = usize::try_from(index) else {
@@ -362,38 +330,27 @@ impl DrawPhase {
         }
     }
 
-    /// Energy costs of the current hand, in the same order as
-    /// `hand_names()`/`draw_hand()`, so GDScript can disable cards it can't
-    /// afford.
     #[func]
     fn hand_costs(&self) -> PackedInt32Array {
         self.hand.iter().map(|c| c.cost as i32).collect()
     }
 
-    /// Sends the current hand to the discard pile, e.g. at end of turn.
     #[func]
     fn discard_hand(&mut self) {
         let hand = std::mem::take(&mut self.hand);
         self.deck.discard(hand);
     }
 
-    /// Emitted after the player's turn ends and before the next one begins,
-    /// carrying the turn number that just finished.
-    ///
-    /// The combat scene connects this to the sentry, which resolves its action
-    /// synchronously before the next hand is dealt.
     #[signal]
     fn security_phase(finished_turn: i32);
 
     /// Ends the player's turn: every card still in hand goes to the discard
-    /// pile, the security system gets its phase, then the next turn begins
-    /// with refreshed energy and a freshly drawn hand.
-    ///
-    /// Returns the new hand's card names, so GDScript can render it directly.
+    /// pile (however many there are — a `Draw` play earlier this turn may
+    /// have grown the hand past `hand_size`, and all of it still goes to
+    /// discard here), the security system gets its phase, then the next turn
+    /// begins with refreshed energy and a freshly drawn hand.
     #[func]
     fn end_turn(&mut self) -> PackedStringArray {
-        // A removed screen can receive queued calls until it is freed. No
-        // discard, intent advancement or energy refresh may land after caught.
         if !self.base().is_inside_tree()
             || self.base().is_queued_for_deletion()
             || self.noise_meter().bind().is_at_cap()
@@ -402,14 +359,17 @@ impl DrawPhase {
         }
         let finished_turn = self.turn_number;
 
-        // The player's turn ends: nothing is carried over into the next hand.
         let remaining_hand = std::mem::take(&mut self.hand);
         self.deck.discard(remaining_hand);
 
         self.signals().security_phase().emit(finished_turn);
         self.noise_meter().clone().bind_mut().clear_shield();
+        self.sentry_node()
+            .clone()
+            .bind_mut()
+            .sentry_mut()
+            .clear_corruption_boost();
 
-        // Control comes back to the player for a fresh turn.
         self.turn_number += 1;
         self.energy = self.max_energy;
 
@@ -441,6 +401,12 @@ impl DrawPhase {
 
     fn sentry_node(&self) -> &Gd<SentryNode> {
         self.sentry_node.as_ref().expect("DrawPhase must be ready")
+    }
+
+    fn knowledge_meter(&self) -> &Gd<KnowledgeMeter> {
+        self.knowledge_meter
+            .as_ref()
+            .expect("DrawPhase must be ready")
     }
 
     fn current_noise(&self) -> i32 {

@@ -18,6 +18,9 @@ extends Control
 @onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
 @onready var health_label: Label = $VBoxContainer/HealthLabel  
 @onready var shield_label: Label = $VBoxContainer/ShieldLabel
+@onready var knowledge_label: Label = $VBoxContainer/KnowledgeLabel
+@onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
+
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 
@@ -36,10 +39,6 @@ func _on_end_turn_button_pressed() -> void:
 	if not _can_act():
 		return
 
-	# Rust owns the whole turn boundary: discard what's left, hand the sentry
-	# its phase, then deal the next turn's hand with refreshed energy. The
-	# sentry reports back through _on_sentry_turn_resolved before this call
-	# returns, so the labels below are already up to date.
 	selected_index = -1
 	status_label.text = ""
 	var hand: PackedStringArray = draw_phase.end_turn()
@@ -49,18 +48,31 @@ func _on_end_turn_button_pressed() -> void:
 	var turn := sentry_turn
 	sentry_turn = {}
 
-	# A full noise meter means the player has been spotted, so the new hand
-	# never gets played and the detection screen takes over instead.
 	if turn.get("run_failed", false):
 		_report_detected()
 		return
 
+	# Corruption can kill the sentry during its own phase, on a turn where
+	# no card was played — this must be checked here too, not only after a
+	# card play, or a corruption kill at end of turn goes unnoticed.
+	if turn.get("defeated", false):
+		_report_sentry_defeated()
+		return
+
 	if turn.get("ok", false):
-		status_label.text = "%s ran %s and added %d noise." % [
+		var message: String = "%s ran %s and added %d noise." % [
 			turn.get("sentry", "?"),
 			turn.get("action", ""),
 			turn.get("noise_added", 0),
 		]
+		var corruption_damage: int = turn.get("corruption_damage", 0)
+		if corruption_damage > 0:
+			message += " Corruption dealt %d damage." % corruption_damage
+		status_label.text = message
+	else:
+		var corruption_damage: int = turn.get("corruption_damage", 0)
+		if corruption_damage > 0:
+			status_label.text = "Corruption dealt %d damage." % corruption_damage
 
 
 # Connected in the scene to the sentry, which announces its turn from inside
@@ -180,6 +192,11 @@ func _on_play_button_pressed() -> void:
 		var noise_change: int = result.get("noise_change", 0)
 		var damage_dealt: int = result.get("damage_dealt", 0)
 		var shield_added: int = result.get("shield_added", 0)
+		var cards_drawn: int = result.get("cards_drawn", 0)
+		var knowledge_change: int = result.get("knowledge_change", 0)
+		var max_energy_gained: int = result.get("max_energy_gained", 0)
+		var corruption_added: int = result.get("corruption_added", 0)
+		var corruption_boost_added: int = result.get("corruption_boost_added", 0)
 
 		var message: String = "%s played. Noise change: %+d." % [
 			result.get("name", "Card"),
@@ -189,8 +206,18 @@ func _on_play_button_pressed() -> void:
 			message += " Damage: %d." % damage_dealt
 		if shield_added > 0:
 			message += " Shield: +%d." % shield_added
+		if cards_drawn > 0:
+			message += " Drew %d card(s)." % cards_drawn
+		if knowledge_change != 0:
+			message += " Knowledge: %+d." % knowledge_change
+		if max_energy_gained > 0:
+			message += " Max energy +%d!" % max_energy_gained
+		if corruption_added > 0:
+			message += " Corruption +%d." % corruption_added
+		if corruption_boost_added > 0:
+			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
 		status_label.text = message
-
+		
 		_rebuild_card_buttons(draw_phase.hand_names())
 	else:
 		match result.get("error", ""):
@@ -220,6 +247,14 @@ func _update_health_label() -> void:
 	health_label.text = "%s: %d / %d HP" % [sentry.construct_name(), sentry.health(), sentry.max_health()]
 
 
+func _update_knowledge_label() -> void:
+	knowledge_label.text = "Knowledge: %d / %d" % [
+		KnowledgeMeterGlobal.knowledge,
+		KnowledgeMeterGlobal.max_knowledge,
+	]
+
+
+
 func _refresh_status_labels() -> void:
 	_update_credits_label()
 	_update_turn_label()
@@ -229,6 +264,9 @@ func _refresh_status_labels() -> void:
 	_update_noise_label()
 	_update_health_label()
 	_update_shield_label()
+	_update_knowledge_label()
+	_update_corruption_label()
+
 
 
 # Refreshed alongside everything else, so spending or earning shows up the
@@ -248,6 +286,9 @@ func _update_pile_label() -> void:
 	]
 
 
+func _update_corruption_label() -> void:
+	corruption_label.text = "Corruption: %d" % sentry.corruption()
+
 func _update_shield_label() -> void:
 	shield_label.text = "Shield: %d" % NoiseMeterGlobal.shield
 
@@ -261,6 +302,7 @@ func _update_noise_label() -> void:
 
 func _update_energy_label() -> void:
 	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]
+	
 
 
 # Shows what the sentry will do next, so ending the turn is a choice made with
