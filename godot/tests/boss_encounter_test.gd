@@ -78,6 +78,11 @@ func _advance_to_first_boss() -> int:
 		if not completed.get("ok", false):
 			push_error("could not complete %s: %s" % [chosen, completed])
 			return -1
+		if str(chosen.get("type", "")) in ["combat", "elite"]:
+			var skipped: Dictionary = _flow.finish_reward()
+			if not skipped.get("ok", false):
+				push_error("could not leave the card reward: %s" % skipped)
+				return -1
 		await process_frame
 		await process_frame
 	return -1
@@ -98,9 +103,7 @@ func _press_end_turn() -> void:
 # Fixture only: reuse the real draw API rather than add a debug gameplay API.
 func _draw_whole_deck() -> void:
 	var draw: Node = _combat.draw_phase
-	draw.hand_size = (
-		draw.hand_names().size() + draw.draw_pile_count() + draw.discard_pile_count()
-	)
+	draw.hand_size = (draw.hand_names().size() + draw.draw_pile_count() + draw.discard_pile_count())
 	_combat.selected_index = -1
 	_combat._draw_hand()
 
@@ -130,10 +133,7 @@ func _run() -> void:
 		int(zones.get("total_zones", 0)) > 1,
 		"a generated contract is split into zones (got %d)" % int(zones.get("total_zones", 0))
 	)
-	_check(
-		int(zones.get("unlocked_zones", -1)) == 0,
-		"a fresh run has only its first zone open"
-	)
+	_check(int(zones.get("unlocked_zones", -1)) == 0, "a fresh run has only its first zone open")
 
 	var key: Dictionary = _flow.map_key()
 	var key_types: Array = []
@@ -172,18 +172,23 @@ func _run() -> void:
 	)
 	_check(
 		_combat.sentry.queued_action_noise() > LOUDEST_STANDARD_NOISE,
-		"the boss opens louder than standard security in this zone (%d > %d)" % [
-			_combat.sentry.queued_action_noise(), LOUDEST_STANDARD_NOISE
-		]
+		(
+			"the boss opens louder than standard security in this zone (%d > %d)"
+			% [_combat.sentry.queued_action_noise(), LOUDEST_STANDARD_NOISE]
+		)
 	)
 	_check(_combat.sentry.has_ability(), "the boss carries an ability")
 
 	# Resistance reaches the one shared meter, rather than a second copy of it.
 	_check(
-		_combat.sentry.detection_resistance() == BOSS_RESISTANCE
-		and _noise_meter.get_resistance_percent() == BOSS_RESISTANCE,
-		"the boss's detection resistance is set on the shared meter (got %d)"
-		% _noise_meter.get_resistance_percent()
+		(
+			_combat.sentry.detection_resistance() == BOSS_RESISTANCE
+			and _noise_meter.get_resistance_percent() == BOSS_RESISTANCE
+		),
+		(
+			"the boss's detection resistance is set on the shared meter (got %d)"
+			% _noise_meter.get_resistance_percent()
+		)
 	)
 	_check(
 		_combat.noise_label.text.contains("recovery -%d%%" % BOSS_RESISTANCE),
@@ -221,9 +226,10 @@ func _run() -> void:
 		)
 		_check(
 			_combat.draw_phase.energy == max_energy - 1,
-			"the lockdown leaves the new turn short of energy (%d of %d)" % [
-				_combat.draw_phase.energy, max_energy
-			]
+			(
+				"the lockdown leaves the new turn short of energy (%d of %d)"
+				% [_combat.draw_phase.energy, max_energy]
+			)
 		)
 		_check(
 			_combat.energy_label.text == "Energy: %d / %d" % [max_energy - 1, max_energy],
@@ -235,10 +241,56 @@ func _run() -> void:
 		)
 		break
 	_check(drained_turn_seen, "the boss uses its lockdown within its first few turns")
+	var costs: PackedInt32Array = _combat.draw_phase.hand_costs()
+	for index in costs.size():
+		_check(
+			_combat.card_buttons[index].disabled == (costs[index] > max_energy - 1),
+			"lockdown updates card %d's affordability" % index
+		)
+	_press_end_turn()
+	_check(
+		_combat.draw_phase.energy == max_energy,
+		"lockdown lasts one turn, not the rest of the encounter"
+	)
+
+	# --- losing the boss does not unlock the zone ---------------------------
+	_noise_meter.add_noise(_noise_meter.max_noise - 1 - _noise_meter.noise)
+	_press_end_turn()
+	_check(_flow.run_snapshot().phase == "caught", "a boss turn at the cap enters caught")
+	_check(_screen().name == "CaughtScreen", "losing the boss shows the caught screen")
+	_check(_noise_meter.get_resistance_percent() == 0, "caught clears boss resistance")
+	var recovered: Dictionary = _flow.finish_caught()
+	_check(recovered.get("ok", false), "caught returns to the hub")
+	_check(_noise_meter.noise == 0, "caught recovery fully clears noise after a boss")
+	_check(_flow.zone_progress().unlocked_zones == 0, "losing leaves the next zone sealed")
+	var retry_options: Array = _flow.selectable_encounters()
+	_check(
+		retry_options.size() == 1 and int(retry_options[0].id) == boss_id,
+		"the failed boss is the only retry offered"
+	)
+	var retried: Dictionary = _flow.select_encounter(boss_id)
+	_check(retried.get("ok", false), "the boss can be retried")
+	_check(
+		_noise_meter.get_resistance_percent() == BOSS_RESISTANCE, "retry restores boss resistance"
+	)
 
 	# --- beating the boss unlocks the next zone -----------------------------
 	var completed: Dictionary = _flow.complete_active_encounter()
 	_check(completed.get("ok", false), "the boss encounter can be completed")
+	var reward := _screen()
+	_check(reward != null and reward.name == "CardReward", "beating a boss offers a card reward")
+	if reward == null or reward.name != "CardReward":
+		_finish()
+		return
+	_check(reward.offered.size() > 0, "the boss reward offers cards to choose from")
+	_check(
+		_noise_meter.get_resistance_percent() == 0,
+		"boss resistance is cleared on the reward screen"
+	)
+	var deck_size: int = _flow.run_deck_size()
+	reward._on_skip_pressed()
+	_check(_screen().name == "ContractHub", "skipping the boss reward returns to the hub")
+	_check(_flow.run_deck_size() == deck_size, "skipping a boss reward leaves the deck unchanged")
 
 	var after: Dictionary = _flow.zone_progress()
 	_check(
@@ -259,6 +311,10 @@ func _run() -> void:
 		"and they are exactly what the hub offers next"
 	)
 
+	if newly_open.is_empty():
+		_finish()
+		return
+
 	# Walking into one of them is what actually moves the player on a zone.
 	var stepped: Dictionary = _flow.select_encounter(newly_open[0].id)
 	_check(stepped.get("ok", false), "a newly opened node can be entered")
@@ -273,8 +329,10 @@ func _run() -> void:
 	# player out of the boss fight.
 	_check(
 		_noise_meter.get_resistance_percent() == 0,
-		"the boss's resistance does not outlive its encounter (got %d)"
-		% _noise_meter.get_resistance_percent()
+		(
+			"the boss's resistance does not outlive its encounter (got %d)"
+			% _noise_meter.get_resistance_percent()
+		)
 	)
 
 	_finish()

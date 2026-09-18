@@ -18,7 +18,7 @@ const ENCOUNTER_SCENES := {
 
 # Encounter types that earn a card reward when cleared. Event and shop nodes
 # hand out their own rewards, so they go straight back to the hub.
-const REWARDING_ENCOUNTERS := ["combat", "elite"]
+const REWARDING_ENCOUNTERS := ["combat", "elite", "boss"]
 
 @onready var _run_state: Node = $RunState
 @onready var _run_deck: Node = $RunDeck
@@ -231,7 +231,9 @@ func _destination_for_snapshot(snapshot: Dictionary) -> Dictionary:
 				return _failure("Encounter-active run state has no active encounter.")
 			var encounter_type: String = active_encounter.get("type", "")
 			if not ENCOUNTER_SCENES.has(encounter_type):
-				return _failure("No gameplay scene is registered for encounter type '%s'." % encounter_type)
+				return _failure(
+					"No gameplay scene is registered for encounter type '%s'." % encounter_type
+				)
 			return {"ok": true, "path": ENCOUNTER_SCENES[encounter_type]}
 		"caught":
 			return {"ok": true, "path": CAUGHT_SCENE_PATH}
