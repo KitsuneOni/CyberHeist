@@ -14,14 +14,42 @@ const ACTION_NAMES := ["Packet Sniff", "Trace Sweep", "Lockdown Probe"]
 const ACTION_NOISE := [1, 2, 3]
 const EXPECTED_FINE := 50
 
+# A script error inside _run kills the coroutine part way through, so the run
+# never reaches _finish and the engine sits there until CI's job timeout kills
+# it. The watchdog turns that into a fast, readable failure instead. Generous
+# enough that a slow runner never trips it: the whole run takes well under a
+# second.
+const WATCHDOG_SECONDS := 60.0
+
 var _flow: Node
 var _player_state: Node
 var _failures: Array[String] = []
+var _finished := false
+var _elapsed := 0.0
 var _resolved_turns: Array[Dictionary] = []
 
 
 func _initialize() -> void:
 	_run.call_deferred()
+
+
+# SceneTree calls this every frame, which gives the watchdog somewhere to live
+# that a dead coroutine cannot take down with it.
+func _process(delta: float) -> bool:
+	if _finished:
+		return true
+
+	_elapsed += delta
+	if _elapsed >= WATCHDOG_SECONDS:
+		print("")
+		print("combat smoke test: TIMED OUT after %.0fs" % WATCHDOG_SECONDS)
+		print("  The run stopped part way through, which usually means a script")
+		print("  error above killed it. Check for a parse error in a scene it loads.")
+		_finished = true
+		quit(1)
+		return true
+
+	return false
 
 
 func _check(condition: bool, description: String) -> void:
@@ -61,6 +89,7 @@ func _check_intent(combat: Node, action_index: int) -> void:
 
 
 func _finish() -> void:
+	_finished = true
 	print("")
 	if _failures.is_empty():
 		print("combat smoke test: PASSED")
@@ -103,6 +132,19 @@ func _run() -> void:
 	var combat := _screen()
 	_check(combat != null and combat.name == "CombatScreen", "the combat screen is showing")
 	if combat == null:
+		_finish()
+		return
+
+	# A scene whose script fails to parse still loads: Godot substitutes a plain
+	# placeholder of the base type, so the name and the node tree look right and
+	# every check below would pass against a screen that cannot actually be
+	# played. Checking the script attached is what catches that.
+	_check(combat.get_script() != null, "the combat script loaded (no parse error above)")
+	_check(
+		combat.has_method("_on_end_turn_button_pressed"),
+		"the combat screen can end a turn"
+	)
+	if combat.get_script() == null or not combat.has_method("_on_end_turn_button_pressed"):
 		_finish()
 		return
 
