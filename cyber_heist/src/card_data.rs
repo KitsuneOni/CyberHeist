@@ -51,6 +51,8 @@ pub enum Keyword {
     Intangible(i32),
     Knowledge(i32),
     Draw(i32),
+    MaxEnergyBoost(u32),
+    CorruptingBoost(u32),
     Exhaust,
     Flip,
 }
