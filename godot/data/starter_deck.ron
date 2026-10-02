@@ -8,6 +8,4 @@
     (id: "shield", count: 4),
     (id: "trojan", count: 1),
     (id: "vpn", count: 1),
-    (id: "infection", count: 1),
-    (id: "short_circuit", count: 1),
 ]
