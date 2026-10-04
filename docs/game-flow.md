@@ -147,6 +147,74 @@ Run the headless check with a built extension:
 godot --headless --path godot -s res://tests/contract_offer_test.gd
 ```
 
+## Run stats and new runs (story #121)
+
+`RunState` keeps a `RunStats` (`cyber_heist/src/run_stats.rs`) for the run: how
+many fights were won, how many credits were earned and how many cards were
+added to the deck. The stats belong to the run, so they start at zero with it
+and a new run starts them again.
+
+- **Wins** are counted by `RunState::complete_encounter` itself, so nothing
+  else has to remember to. Completing a combat, elite or boss encounter is a
+  win (`EncounterType::is_fight`). Events and shops are not fights, and an
+  encounter the player was caught in is never completed, so neither counts.
+- **Credits earned** adds up every gain. A loss, such as a fine or a bad event
+  gamble, changes the balance but not what the run earned. Whatever applies
+  credits records the change once, gain or loss alike:
+  - `EventNode` applies event credits in Rust and records them on the run
+    itself.
+  - Anything applying credits from GDScript (the combat payout in #114, the
+    contract payout in #89/#23) calls `FlowCoordinator.change_credits(amount)`,
+    which updates `PlayerStateGlobal` and records the change together.
+  - The caught fine is a loss, so it is not recorded and does not need to be.
+- **Cards added** counts cards that go into the run's deck on top of the
+  starter deck. Every card is added through
+  `FlowCoordinator.add_card_to_deck(card_id)`, which only counts a card the
+  deck accepted. `take_card_reward` uses it, and so should a shop.
+
+The end screen reads everything in one call:
+
+```gdscript
+FlowCoordinator.run_summary()
+# {"combats_won": 4, "credits_earned": 180, "cards_added": 3,
+#  "encounters_completed": 5, "total_encounters": 9,
+#  "zones_cleared": 1, "total_zones": 3}
+```
+
+`encounters_completed` and `total_encounters` are the same numbers as
+`contract_progress()`. `zones_cleared` counts the zones whose boss has been
+beaten.
+
+### Starting a new run
+
+```gdscript
+FlowCoordinator.start_new_run()
+# {"ok": true}, or {"ok": false, "error": "..."}
+```
+
+A new run gets a fresh default contract and a fresh set of offers, with nothing
+accepted, no zone progress and no stats. In Rust it is exactly what
+`RunState::generated` builds, so nothing from the old run can leak into it. The
+coordinator then resets what lives outside the Rust run state: the deck goes
+back to the starter deck, noise and shield go to 0, detection resistance is
+cleared and knowledge goes back to its starting level. Finally it shows the hub.
+
+A new run can start from the hub or the caught screen, which is where a run
+ends. It is refused during an encounter, with nothing changed, because that
+encounter's screen would otherwise carry on playing against a run that no
+longer exists.
+
+**Credits and upgrades carry over.** They live on `PlayerStateGlobal`, which is
+the player's rather than the run's: the balance is what the shop and contract
+stories spend between runs. Only the run's own stats (`credits_earned`) start
+again from zero.
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/run_stats_test.gd
+```
+
 ## The sentry's turn
 
 Combat alternates a player turn and the sentry's turn. A sentry is the named
@@ -346,6 +414,10 @@ ordinary encounter progression still carries noise forward.
 FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
+FlowCoordinator.run_summary()
+FlowCoordinator.change_credits(amount: int)
+FlowCoordinator.add_card_to_deck(card_id: String)
+FlowCoordinator.start_new_run()
 FlowCoordinator.selectable_encounters()
 FlowCoordinator.current_contract_node()
 FlowCoordinator.zone_progress()

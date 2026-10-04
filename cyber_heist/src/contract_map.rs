@@ -40,6 +40,12 @@ impl EncounterType {
     pub fn is_boss(self) -> bool {
         matches!(self, Self::Boss)
     }
+
+    /// Whether the player fights security here, so completing it is a win.
+    /// Matches the encounters `FlowCoordinator` follows with a card reward.
+    pub fn is_fight(self) -> bool {
+        matches!(self, Self::Combat | Self::Elite | Self::Boss)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

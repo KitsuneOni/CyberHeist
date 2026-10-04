@@ -2,12 +2,15 @@
 //!
 //! Holds the event currently on screen so that resolving a choice applies the
 //! outcome exactly once, then hands the result back for the scene to display.
+//! The credits it moves are also recorded on the run, so the end screen can
+//! count what the run earned.
 
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
 use crate::PlayerState;
 use crate::events::{EventDefinition, random_event};
+use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -96,6 +99,7 @@ impl EventNode {
             }
             player_state.money()
         };
+        self.record_credit_change_on_run(effect.credits);
 
         self.resolved = true;
 
@@ -107,6 +111,19 @@ impl EventNode {
             "upgrade" => upgrade.as_str(),
             "credits_total" => credits_total,
         }
+    }
+}
+
+impl EventNode {
+    /// Tells the run about the credits this event moved, so they count
+    /// towards what the run earned. Skipped when the event screen is open on
+    /// its own with no run behind it, as `SentryNode` does.
+    fn record_credit_change_on_run(&self, credits: i64) {
+        let Some(mut run_state) = self.base().try_get_node_as::<RunStateNode>(RUN_STATE_PATH)
+        else {
+            return;
+        };
+        run_state.bind_mut().record_credit_change(credits);
     }
 }
 

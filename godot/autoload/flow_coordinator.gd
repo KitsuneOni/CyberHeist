@@ -142,7 +142,37 @@ func offer_card_reward(count: int) -> Array:
 # Adds a chosen reward to the run's deck. False for an id the card database
 # does not know, so the reward screen can say so rather than silently dropping it.
 func take_card_reward(card_id: String) -> bool:
-	return _run_deck.add_card(card_id)
+	return add_card_to_deck(card_id)
+
+
+# Adds a card to the run's deck and counts it in the run's stats. Every way of
+# gaining a card (rewards today, a shop later) goes through here, so the end
+# screen's count cannot miss one or count one twice. False, with nothing
+# counted, for an id the card database does not know.
+func add_card_to_deck(card_id: String) -> bool:
+	if not _run_deck.add_card(card_id):
+		return false
+	_run_state.record_card_added()
+	return true
+
+
+# Changes the player's credits by `amount` (negative to take them away) and
+# records the change on the run, where only gains count as earned. Returns the
+# new balance. Use this for credits applied from GDScript, such as a combat or
+# contract payout, so the end screen's total includes them. Events apply and
+# record their credits in Rust, through EventNode, so they do not call this.
+func change_credits(amount: int) -> int:
+	var player_state: Node = get_node("/root/PlayerStateGlobal")
+	player_state.add_credits(amount)
+	_run_state.record_credit_change(amount)
+	return player_state.money()
+
+
+# What the run has achieved so far, for the end screen:
+# {combats_won, credits_earned, cards_added, encounters_completed,
+#  total_encounters, zones_cleared, total_zones}.
+func run_summary() -> Dictionary:
+	return _run_state.run_summary()
 
 
 func run_deck_size() -> int:
@@ -196,6 +226,31 @@ func run_snapshot() -> Dictionary:
 	return _run_state.snapshot()
 
 
+# Throws the current run away and starts a new one at the hub: a fresh
+# contract and offers, no zone progress or stats, noise at 0, knowledge back to
+# its starting level and the starter deck. Returns {ok: true}, or
+# {ok: false, error} with nothing changed.
+#
+# Allowed from the hub and the caught screen, where a run ends. Refused during
+# an encounter, because its screen would carry on against a run that no longer
+# exists. Credits and upgrades on PlayerStateGlobal are the player's, not the
+# run's, so they carry over.
+func start_new_run() -> Dictionary:
+	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	if not prepared.get("ok", false):
+		return prepared
+
+	var transition: Dictionary = _run_state.start_new_run()
+	if not transition.get("ok", false):
+		_dispose_screen(prepared["screen"])
+		return transition
+
+	_run_deck.reset_to_starter()
+	_reset_run_meters()
+	_replace_screen(prepared["screen"])
+	return transition
+
+
 func _prepare_screen(path: String) -> Dictionary:
 	if not _screen_host_is_ready():
 		return _failure("FlowCoordinator has not been bound to a valid ScreenHost.")
@@ -231,6 +286,19 @@ func _replace_screen(screen: Node) -> void:
 		noise_meter.set_resistance_percent(0)
 
 	_screen_host.add_child(screen)
+
+
+# Clears what the shared meters carried through the old run. Resistance goes
+# first because it would blunt the noise reduction, and shield goes too in case
+# the run ended partway through a turn with some still up.
+func _reset_run_meters() -> void:
+	var noise_meter: Node = get_node("/root/NoiseMeterGlobal")
+	noise_meter.set_resistance_percent(0)
+	noise_meter.clear_shield()
+	noise_meter.add_noise(-noise_meter.noise)
+
+	var knowledge_meter: Node = get_node("/root/KnowledgeMeterGlobal")
+	knowledge_meter.reset_knowledge()
 
 
 func _dispose_screen(screen: Node) -> void:

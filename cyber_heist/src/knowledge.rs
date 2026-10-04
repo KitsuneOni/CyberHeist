@@ -40,6 +40,12 @@ impl Knowledge {
         self.level = self.level.saturating_add(amount).clamp(0, self.max_level);
         self.level - before
     }
+
+    /// Back to the level a run starts on, for a new run that must not
+    /// inherit what the last one learned about its target.
+    pub fn reset(&mut self) {
+        *self = Self::new(self.max_level);
+    }
 }
 
 /// Godot-facing autoload wrapping [`Knowledge`].
@@ -89,6 +95,13 @@ impl KnowledgeMeter {
     #[func]
     pub fn add_knowledge(&mut self, amount: i32) -> i32 {
         self.state.add(amount)
+    }
+
+    /// Returns knowledge to its starting level. Called by
+    /// `FlowCoordinator.start_new_run`.
+    #[func]
+    pub fn reset_knowledge(&mut self) {
+        self.state.reset();
     }
 }
 

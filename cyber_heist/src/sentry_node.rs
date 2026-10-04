@@ -8,13 +8,8 @@ use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
 use crate::noise_meter::NoiseMeter;
-use crate::run_state_node::RunStateNode;
+use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
 use crate::sentry::Sentry;
-
-/// Where the coordinator keeps the run. Looked up the same way as the shared
-/// meter, and optional for the same reason: the combat scene stays runnable on
-/// its own, it just falls back to first-zone security when there is no run.
-const RUN_STATE_PATH: &str = "/root/FlowCoordinator/RunState";
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -71,7 +66,8 @@ impl INode for SentryNode {
 
 impl SentryNode {
     /// `(zone, is_boss)` for the encounter being played, or `None` when there
-    /// is no run behind this screen.
+    /// is no run behind this screen. The run is optional so the combat scene
+    /// stays runnable on its own, falling back to first-zone security.
     fn encounter_profile(&self) -> Option<(usize, bool)> {
         let run_state = self
             .base()

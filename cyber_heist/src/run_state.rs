@@ -12,6 +12,7 @@ use crate::contract_map::{
     EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
 use crate::contract_offer::{ContractOffer, generate_offers};
+use crate::run_stats::RunStats;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractPhase {
@@ -58,6 +59,18 @@ impl ActiveEncounter {
     }
 }
 
+/// Everything the end screen reports about a run, read in one go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunSummary {
+    pub stats: RunStats,
+    /// Encounters completed on the contract, out of the number on a route
+    /// through it.
+    pub encounters: ContractProgress,
+    /// Zones whose boss has been beaten.
+    pub zones_cleared: usize,
+    pub total_zones: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunState {
     phase: ContractPhase,
@@ -73,6 +86,9 @@ pub struct RunState {
     /// then on the run is committed to it and cannot swap to another offer,
     /// whether that encounter was completed or the player was caught.
     contract_started: bool,
+    /// What this run has achieved, for the end screen. Owned here so that
+    /// it starts and ends with the run.
+    stats: RunStats,
 }
 
 impl Default for RunState {
@@ -84,6 +100,7 @@ impl Default for RunState {
             contract_offers: Vec::new(),
             accepted_offer_index: None,
             contract_started: false,
+            stats: RunStats::default(),
         }
     }
 }
@@ -116,7 +133,33 @@ impl RunState {
             contract_offers,
             accepted_offer_index: None,
             contract_started: false,
+            stats: RunStats::default(),
         }
+    }
+
+    /// Throws this run away and starts a fresh one in its place: a new
+    /// default contract, new offers, nothing accepted, no zone progress and
+    /// no stats. It is exactly what `generated` builds, so nothing from the
+    /// old run can leak into the new one.
+    ///
+    /// Allowed from the hub and from the caught screen, which is where a run
+    /// ends. Refused while an encounter is active, because that encounter's
+    /// screen would carry on playing against a run that no longer exists. A
+    /// refusal leaves the run untouched.
+    ///
+    /// Only the run is reset here. The shared noise meter, knowledge and the
+    /// run's deck live outside it, so `FlowCoordinator.start_new_run` resets
+    /// those alongside this.
+    pub fn start_new_run(&mut self, rng: &mut impl Rng) -> Result<(), RunStateError> {
+        if self.phase == ContractPhase::EncounterActive {
+            return Err(RunStateError::InvalidTransition {
+                action: "start a new run",
+                phase: self.phase,
+            });
+        }
+
+        *self = Self::generated(rng);
+        Ok(())
     }
 
     pub fn phase(&self) -> ContractPhase {
@@ -220,14 +263,46 @@ impl RunState {
         Ok(selection)
     }
 
+    /// Completes the active encounter and returns to the hub. A fight
+    /// completed here is counted as a win; this is the only place that
+    /// happens, so a win cannot be recorded twice or for a lost fight.
     pub fn complete_encounter(&mut self) -> Result<(), RunStateError> {
         self.require_phase("complete encounter", ContractPhase::EncounterActive)?;
         self.contract_map
             .complete_current_encounter()
             .map_err(RunStateError::ContractMap)?;
+
+        if let Some(completed) = self.active_encounter.take() {
+            self.stats
+                .record_encounter_completed(completed.encounter_type());
+        }
         self.phase = ContractPhase::Hub;
-        self.active_encounter = None;
         Ok(())
+    }
+
+    /// Records a change the run made to the player's credits, gain or loss.
+    /// Only gains count as earned. Call this wherever credits are applied
+    /// (events today, combat and contract payouts later), once per change.
+    pub fn record_credit_change(&mut self, amount: i64) {
+        self.stats.record_credit_change(amount);
+    }
+
+    /// Records a card going into the run's deck. Call this wherever a card
+    /// is added, once per card.
+    pub fn record_card_added(&mut self) {
+        self.stats.record_card_added();
+    }
+
+    /// The run's stats together with how far through the contract it got,
+    /// for the end screen.
+    pub fn summary(&self) -> RunSummary {
+        let zones = self.zone_progress();
+        RunSummary {
+            stats: self.stats,
+            encounters: self.progress(),
+            zones_cleared: zones.unlocked_zones,
+            total_zones: zones.total_zones,
+        }
     }
 
     pub fn report_caught(&mut self) -> Result<(), RunStateError> {

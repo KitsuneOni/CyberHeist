@@ -10,6 +10,11 @@ use crate::encounter_text::{
 };
 use crate::run_state::{RunState, RunStateError};
 
+/// Where `FlowCoordinator` keeps the run. Other nodes that need the run look
+/// it up here, and treat it as optional so their scenes still run on their
+/// own without a coordinator behind them.
+pub(crate) const RUN_STATE_PATH: &str = "/root/FlowCoordinator/RunState";
+
 #[derive(GodotClass)]
 #[class(base=Node)]
 pub(crate) struct RunStateNode {
@@ -189,6 +194,48 @@ impl RunStateNode {
         let mut dictionary = offer_dictionary(index, offer);
         dictionary.set("ok", true);
         dictionary
+    }
+
+    /// What the run has achieved so far, for the end screen:
+    /// `{combats_won, credits_earned, cards_added, encounters_completed,
+    /// total_encounters, zones_cleared, total_zones}`.
+    #[func]
+    fn run_summary(&self) -> VarDictionary {
+        let summary = self.state.summary();
+        vdict! {
+            "combats_won" => summary.stats.combats_won() as i64,
+            "credits_earned" => summary.stats.credits_earned(),
+            "cards_added" => summary.stats.cards_added() as i64,
+            "encounters_completed" => summary.encounters.completed as i64,
+            "total_encounters" => summary.encounters.total as i64,
+            "zones_cleared" => summary.zones_cleared as i64,
+            "total_zones" => summary.total_zones as i64,
+        }
+    }
+
+    /// Records a change made to the player's credits, gain or loss; only a
+    /// gain counts as earned. Whatever applies credits calls this once per
+    /// change: `EventNode` directly, GDScript through
+    /// `FlowCoordinator.change_credits`.
+    #[func]
+    pub(crate) fn record_credit_change(&mut self, amount: i64) {
+        self.state.record_credit_change(amount);
+    }
+
+    /// Records a card going into the run's deck. Called by
+    /// `FlowCoordinator.add_card_to_deck` once the deck has accepted it.
+    #[func]
+    fn record_card_added(&mut self) {
+        self.state.record_card_added();
+    }
+
+    /// Replaces this run with a fresh one: new contract, new offers, no zone
+    /// progress and no stats. `{ok: true}`, or `{ok: false, error}` during an
+    /// encounter, which changes nothing. Noise, knowledge and the deck are
+    /// reset by `FlowCoordinator.start_new_run`, which calls this.
+    #[func]
+    fn start_new_run(&mut self) -> VarDictionary {
+        transition_result(self.state.start_new_run(&mut rand::rng()))
     }
 
     #[func]
