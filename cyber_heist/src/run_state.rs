@@ -221,6 +221,9 @@ impl fmt::Display for RunStateError {
 
 #[cfg(test)]
 mod tests {
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
     use super::*;
 
     fn active_combat() -> RunState {
@@ -380,5 +383,181 @@ mod tests {
             Err(RunStateError::InvalidTransition { .. })
         ));
         assert_eq!(state, before);
+    }
+
+    fn generated_run(seed: u64) -> RunState {
+        RunState::generated(&mut StdRng::seed_from_u64(seed))
+    }
+
+    /// Steps into whichever encounter the hub offers first.
+    fn enter_first_encounter(state: &mut RunState) {
+        let first = state.selectable_encounters()[0].id();
+        state
+            .select_encounter(first)
+            .expect("the hub offers its first encounter");
+    }
+
+    /// Acceptance scenario 1: starting a run puts three contracts on the
+    /// table, each with a name, a target, a reward and a number of zones.
+    #[test]
+    fn starting_a_new_run_offers_three_contracts() {
+        let state = generated_run(5);
+
+        let offers = state.contract_offers();
+        assert_eq!(offers.len(), 3);
+        for offer in offers {
+            assert!(!offer.name.is_empty());
+            assert!(!offer.target.is_empty());
+            assert!(offer.credit_reward > 0);
+            assert!(offer.shape.zone_count >= 1);
+        }
+        assert_eq!(
+            state.accepted_offer(),
+            None,
+            "nothing is accepted until the player chooses"
+        );
+    }
+
+    /// Acceptance scenario 2: accepting the second offer swaps the run onto
+    /// the contract that offer describes.
+    #[test]
+    fn accepting_the_second_offer_builds_the_map_from_its_settings() {
+        let mut state = generated_run(5);
+        let second = state.contract_offers()[1].clone();
+
+        state
+            .accept_contract_offer(1)
+            .expect("the second offer can be accepted");
+
+        assert_eq!(state.contract_map, second.build_map());
+        assert_eq!(state.zone_progress().total_zones, second.shape.zone_count);
+        assert_eq!(state.progress().total, second.encounter_count());
+        assert_eq!(state.accepted_offer_index(), Some(1));
+        assert_eq!(state.accepted_offer(), Some(&second));
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert!(
+            !state.selectable_encounters().is_empty(),
+            "the accepted contract is ready to play"
+        );
+    }
+
+    /// Until the selection screen exists, the hub has to keep working on the
+    /// contract a run is created with.
+    #[test]
+    fn a_generated_run_is_playable_before_any_offer_is_accepted() {
+        let state = generated_run(5);
+
+        assert_eq!(
+            state.zone_progress().total_zones,
+            ContractShape::default().zone_count
+        );
+        assert!(!state.selectable_encounters().is_empty());
+        assert_eq!(state.accepted_offer_index(), None);
+    }
+
+    /// Changing your mind is fine until the first encounter is entered.
+    #[test]
+    fn a_different_offer_can_be_accepted_before_the_contract_starts() {
+        let mut state = generated_run(9);
+        let third = state.contract_offers()[2].clone();
+
+        state.accept_contract_offer(0).expect("first offer");
+        state.accept_contract_offer(2).expect("third offer");
+
+        assert_eq!(state.contract_map, third.build_map());
+        assert_eq!(state.accepted_offer(), Some(&third));
+    }
+
+    #[test]
+    fn an_offer_index_past_the_end_is_rejected_without_mutation() {
+        let mut state = generated_run(5);
+        let before = state.clone();
+
+        for index in [3, usize::MAX] {
+            assert_eq!(
+                state.accept_contract_offer(index),
+                Err(RunStateError::UnknownContractOffer { index, offered: 3 })
+            );
+            assert_eq!(state, before, "a rejected index {index} changed the run");
+        }
+    }
+
+    /// The authored run the tests use is not offered any contracts, and says
+    /// so rather than accepting something that is not there.
+    #[test]
+    fn an_authored_run_has_no_offers_to_accept() {
+        let mut state = RunState::new();
+        let before = state.clone();
+
+        assert!(state.contract_offers().is_empty());
+        assert_eq!(
+            state.accept_contract_offer(0),
+            Err(RunStateError::UnknownContractOffer {
+                index: 0,
+                offered: 0
+            })
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn a_contract_cannot_be_accepted_during_an_encounter() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        let before = state.clone();
+
+        assert!(matches!(
+            state.accept_contract_offer(0),
+            Err(RunStateError::InvalidTransition { .. })
+        ));
+        assert_eq!(state, before);
+    }
+
+    /// Back at the hub after an encounter, the run is committed: the
+    /// contract it accepted stays, and so does the record of which one it was.
+    #[test]
+    fn a_contract_cannot_be_swapped_once_an_encounter_is_completed() {
+        let mut state = generated_run(5);
+        state.accept_contract_offer(1).expect("second offer");
+        enter_first_encounter(&mut state);
+        state.complete_encounter().expect("the encounter is active");
+        let before = state.clone();
+
+        assert_eq!(
+            state.accept_contract_offer(0),
+            Err(RunStateError::ContractAlreadyStarted)
+        );
+        assert_eq!(state, before);
+        assert_eq!(state.accepted_offer_index(), Some(1));
+    }
+
+    /// Getting caught does not complete anything, but the run has still
+    /// committed to a route on this contract.
+    #[test]
+    fn a_contract_cannot_be_swapped_after_being_caught_on_it() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        state.report_caught().expect("the encounter is active");
+        state.finish_caught().expect("the run was caught");
+        let before = state.clone();
+
+        assert_eq!(
+            state.accept_contract_offer(2),
+            Err(RunStateError::ContractAlreadyStarted)
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn offer_rejections_explain_themselves() {
+        let unknown = RunStateError::UnknownContractOffer {
+            index: 4,
+            offered: 3,
+        }
+        .to_string();
+        assert!(unknown.contains('4') && unknown.contains('3'), "{unknown}");
+
+        let started = RunStateError::ContractAlreadyStarted.to_string();
+        assert!(started.contains("under way"), "{started}");
     }
 }

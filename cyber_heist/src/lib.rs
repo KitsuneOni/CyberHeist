@@ -4,6 +4,7 @@ mod card_play;
 mod card_reward;
 mod card_text;
 mod contract_map;
+mod contract_offer;
 mod deck;
 mod encounter_text;
 mod events;
