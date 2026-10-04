@@ -91,6 +91,25 @@ impl PlayerState {
         self.upgrades.push(name);
     }
 
+    /// The upgrades earned on the current contract, in the order they were
+    /// gained.
+    #[func]
+    fn upgrades(&self) -> Array<GString> {
+        self.upgrades.iter().cloned().collect()
+    }
+
+    /// Drops the upgrades earned on the current contract and keeps the credit
+    /// balance.
+    ///
+    /// Upgrades only last for the contract they were earned on, while credits
+    /// are the player's balance between runs. `FlowCoordinator.start_new_run()`
+    /// calls this so a won contract's upgrades never leak into the next run;
+    /// being caught already loses them through `apply_penalty`.
+    #[func]
+    fn clear_upgrades(&mut self) {
+        self.upgrades.clear();
+    }
+
     #[func]
     fn money(&self) -> i64 {
         self.money

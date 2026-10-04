@@ -197,17 +197,21 @@ accepted, no zone progress and no stats. In Rust it is exactly what
 `RunState::generated` builds, so nothing from the old run can leak into it. The
 coordinator then resets what lives outside the Rust run state: the deck goes
 back to the starter deck, noise and shield go to 0, detection resistance is
-cleared and knowledge goes back to its starting level. Finally it shows the hub.
+cleared, knowledge goes back to its starting level and the contract's upgrades
+are dropped from `PlayerStateGlobal`. Finally it shows the hub.
 
 A new run can start from the hub or the caught screen, which is where a run
 ends. It is refused during an encounter, with nothing changed, because that
 encounter's screen would otherwise carry on playing against a run that no
 longer exists.
 
-**Credits and upgrades carry over.** They live on `PlayerStateGlobal`, which is
-the player's rather than the run's: the balance is what the shop and contract
-stories spend between runs. Only the run's own stats (`credits_earned`) start
-again from zero.
+**Credits carry over; upgrades do not.** The credit balance on
+`PlayerStateGlobal` is the player's rather than the run's: it is what the shop
+and contract stories spend between runs. Only the run's own stats
+(`credits_earned`) start again from zero. Upgrades are earned for one contract
+(see `EventEffect::upgrade`), so `start_new_run()` clears them with
+`PlayerStateGlobal.clear_upgrades()`. Being caught already loses them through
+the caught screen's penalty; this also covers a run that ends at the hub.
 
 Run the headless check with a built extension:
 

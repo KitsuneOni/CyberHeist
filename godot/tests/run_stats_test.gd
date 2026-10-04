@@ -3,7 +3,7 @@
 # they reach GDScript through FlowCoordinator in the shape the end screen will
 # read, that credits and cards gained through the coordinator are counted, and
 # that a new run also clears what lives outside the Rust run state: the shared
-# noise meter, knowledge and the run's deck.
+# noise meter, knowledge, the run's deck and the contract's upgrades.
 #
 # Run: godot --headless --path godot -s res://tests/run_stats_test.gd
 extends SceneTree
@@ -263,6 +263,28 @@ func _run() -> void:
 	_check(
 		_player_state.money() == money_at_end,
 		"credits are the player's balance and carry over to the new run"
+	)
+
+	# --- a run that ends at the hub drops its contract's upgrades ----------
+	# Being caught already loses upgrades through the caught screen's penalty,
+	# so this starts the next run from the hub to prove start_new_run() itself
+	# clears them while keeping the credit balance.
+	_player_state.add_upgrade("Lucky Charm")
+	_check(
+		_player_state.upgrades().size() == 1,
+		"the contract ends holding an upgrade"
+	)
+	var money_at_hub: int = _player_state.money()
+	var from_hub: Dictionary = _flow.start_new_run()
+	_check(from_hub.get("ok", false), "a new run starts from the hub: %s" % from_hub)
+	await _settle()
+	_check(
+		_player_state.upgrades().is_empty(),
+		"the new run does not inherit the old contract's upgrades"
+	)
+	_check(
+		_player_state.money() == money_at_hub,
+		"clearing upgrades leaves the credit balance alone"
 	)
 
 	_finish()

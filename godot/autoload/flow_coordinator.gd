@@ -228,13 +228,13 @@ func run_snapshot() -> Dictionary:
 
 # Throws the current run away and starts a new one at the hub: a fresh
 # contract and offers, no zone progress or stats, noise at 0, knowledge back to
-# its starting level and the starter deck. Returns {ok: true}, or
-# {ok: false, error} with nothing changed.
+# its starting level, the starter deck and no contract upgrades. Returns
+# {ok: true}, or {ok: false, error} with nothing changed.
 #
 # Allowed from the hub and the caught screen, where a run ends. Refused during
 # an encounter, because its screen would carry on against a run that no longer
-# exists. Credits and upgrades on PlayerStateGlobal are the player's, not the
-# run's, so they carry over.
+# exists. Credits on PlayerStateGlobal are the player's balance, not the run's,
+# so they carry over; upgrades are earned "for this contract", so they do not.
 func start_new_run() -> Dictionary:
 	var prepared := _prepare_screen(HUB_SCENE_PATH)
 	if not prepared.get("ok", false):
@@ -247,6 +247,8 @@ func start_new_run() -> Dictionary:
 
 	_run_deck.reset_to_starter()
 	_reset_run_meters()
+	var player_state: Node = get_node("/root/PlayerStateGlobal")
+	player_state.clear_upgrades()
 	_replace_screen(prepared["screen"])
 	return transition
 
