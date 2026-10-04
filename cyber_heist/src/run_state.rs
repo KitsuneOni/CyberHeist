@@ -642,4 +642,225 @@ mod tests {
         let started = RunStateError::ContractAlreadyStarted.to_string();
         assert!(started.contains("under way"), "{started}");
     }
+
+    // --- Run stats and new runs (story #121) -------------------------------
+
+    /// Enters and completes each node in turn, as a player walking the route.
+    fn play_route(state: &mut RunState, route: &[NodeId]) {
+        for node_id in route {
+            state
+                .select_encounter(*node_id)
+                .expect("the route is selectable");
+            state.complete_encounter().expect("the encounter is active");
+        }
+    }
+
+    /// One straight route of four fights with an event in the middle, closed
+    /// off by a boss: entry, combat, event, elite, combat, boss.
+    fn four_fight_run() -> RunState {
+        let mut state = RunState::new();
+        state.contract_map = ContractMap::new(
+            [
+                EncounterNode::new(0, EncounterType::Entry, vec![1]),
+                EncounterNode::new(1, EncounterType::Combat, vec![2]),
+                EncounterNode::new(2, EncounterType::Event, vec![3]),
+                EncounterNode::new(3, EncounterType::Elite, vec![4]),
+                EncounterNode::new(4, EncounterType::Combat, vec![5]),
+                EncounterNode::new(5, EncounterType::Boss, vec![]),
+            ],
+            0,
+        )
+        .unwrap();
+        state
+    }
+
+    /// Walks a generated contract until its first boss goes down, so the run
+    /// has zone progress to lose.
+    fn clear_first_zone(state: &mut RunState) {
+        // Bounded by the route length so a contract without a boss fails the
+        // test rather than hanging it.
+        for _ in 0..state.progress().total {
+            enter_first_encounter(state);
+            let was_boss = state.active_encounter().unwrap().is_boss();
+            state.complete_encounter().expect("the encounter is active");
+            if was_boss {
+                return;
+            }
+        }
+        panic!("the contract has no boss to clear");
+    }
+
+    /// Acceptance scenario 1: four fights won, 180 credits earned and three
+    /// cards added are what the run summary reports at the end.
+    #[test]
+    fn stats_are_tracked_during_a_run() {
+        let mut state = four_fight_run();
+
+        play_route(&mut state, &[1, 2]);
+        state.record_credit_change(120);
+        state.record_card_added();
+        // The event in the middle cost credits; that is not money earned.
+        state.record_credit_change(-80);
+        play_route(&mut state, &[3, 4]);
+        state.record_credit_change(60);
+        state.record_card_added();
+        state.record_card_added();
+        play_route(&mut state, &[5]);
+
+        let summary = state.summary();
+        assert_eq!(summary.stats.combats_won(), 4);
+        assert_eq!(summary.stats.credits_earned(), 180);
+        assert_eq!(summary.stats.cards_added(), 3);
+        assert_eq!(
+            summary.encounters,
+            ContractProgress {
+                completed: 5,
+                total: 5
+            }
+        );
+        assert_eq!(summary.zones_cleared, 1);
+        assert_eq!(summary.total_zones, 1);
+    }
+
+    #[test]
+    fn a_fresh_run_summary_is_empty() {
+        let summary = generated_run(5).summary();
+
+        assert_eq!(summary.stats, RunStats::default());
+        assert_eq!(summary.encounters.completed, 0);
+        assert_eq!(summary.zones_cleared, 0);
+        assert_eq!(summary.total_zones, ContractShape::default().zone_count);
+    }
+
+    /// The authored contract has a shop route and an event route; only the
+    /// fights along each are wins.
+    #[test]
+    fn events_and_shops_are_not_counted_as_wins() {
+        let mut shop_route = RunState::new();
+        play_route(&mut shop_route, &[1, 3, 5]);
+        assert_eq!(shop_route.summary().stats.combats_won(), 2);
+
+        let mut event_route = RunState::new();
+        play_route(&mut event_route, &[2, 4, 5]);
+        assert_eq!(event_route.summary().stats.combats_won(), 2);
+    }
+
+    /// Getting caught is losing the fight, so it is not a win; beating the
+    /// same encounter on the retry is.
+    #[test]
+    fn a_caught_encounter_is_not_counted_as_a_win() {
+        let mut state = active_combat();
+
+        state.report_caught().unwrap();
+        state.finish_caught().unwrap();
+        assert_eq!(state.summary().stats.combats_won(), 0);
+
+        play_route(&mut state, &[1]);
+        assert_eq!(state.summary().stats.combats_won(), 1);
+    }
+
+    #[test]
+    fn a_rejected_completion_is_not_counted_as_a_win() {
+        let mut state = RunState::new();
+
+        assert!(state.complete_encounter().is_err());
+
+        assert_eq!(state.summary().stats.combats_won(), 0);
+    }
+
+    /// Credits and cards can come in at any point of the run, not only from
+    /// the hub: an event pays out while its encounter is still active.
+    #[test]
+    fn credits_and_cards_are_recorded_in_any_phase() {
+        let mut state = active_combat();
+
+        state.record_credit_change(40);
+        state.record_card_added();
+        state.report_caught().unwrap();
+        state.record_credit_change(10);
+
+        let stats = state.summary().stats;
+        assert_eq!(stats.credits_earned(), 50);
+        assert_eq!(stats.cards_added(), 1);
+    }
+
+    /// Acceptance scenario 2: after a run with progress, stats, an accepted
+    /// contract and a cleared zone, a new run starts from nothing.
+    #[test]
+    fn starting_a_new_run_resets_stats_zone_progress_and_offers() {
+        let mut state = generated_run(5);
+        let old_offers = state.contract_offers().to_vec();
+        state.accept_contract_offer(1).expect("second offer");
+        clear_first_zone(&mut state);
+        state.record_credit_change(90);
+        state.record_card_added();
+        assert_eq!(
+            state.zone_progress().unlocked_zones,
+            1,
+            "the old run cleared a zone"
+        );
+
+        state
+            .start_new_run(&mut StdRng::seed_from_u64(77))
+            .expect("a new run can start from the hub");
+
+        assert_eq!(
+            state,
+            RunState::generated(&mut StdRng::seed_from_u64(77)),
+            "a new run is exactly a freshly generated one"
+        );
+        assert_eq!(state.summary().stats, RunStats::default());
+        assert_eq!(state.zone_progress().current_zone, 0);
+        assert_eq!(state.zone_progress().unlocked_zones, 0);
+        assert_eq!(state.progress().completed, 0);
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert_eq!(state.active_encounter(), None);
+        assert_ne!(
+            state.contract_offers(),
+            old_offers.as_slice(),
+            "a new run is offered new contracts"
+        );
+        assert_eq!(state.accepted_offer(), None);
+        state
+            .accept_contract_offer(0)
+            .expect("the new run has not started a contract yet");
+    }
+
+    /// The run ends on the caught screen as often as on the map, so the end
+    /// screen can start a new run from there.
+    #[test]
+    fn a_new_run_can_start_after_being_caught() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        state.report_caught().unwrap();
+
+        state
+            .start_new_run(&mut StdRng::seed_from_u64(3))
+            .expect("a new run can start from the caught screen");
+
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert_eq!(state.active_encounter(), None);
+    }
+
+    /// Abandoning a run part-way through a fight would leave its screen
+    /// playing against a run that no longer exists, so it is refused.
+    #[test]
+    fn a_new_run_cannot_start_during_an_encounter() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        state.record_credit_change(25);
+        let before = state.clone();
+
+        let result = state.start_new_run(&mut StdRng::seed_from_u64(3));
+
+        assert!(matches!(
+            result,
+            Err(RunStateError::InvalidTransition { .. })
+        ));
+        assert!(
+            result.unwrap_err().to_string().contains("start a new run"),
+            "the rejection says what was refused"
+        );
+        assert_eq!(state, before);
+    }
 }

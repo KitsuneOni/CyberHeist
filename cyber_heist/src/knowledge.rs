@@ -131,6 +131,18 @@ mod tests {
         assert_eq!(knowledge.level(), 0);
     }
 
+    /// A new run must not inherit what the last one learned about its target.
+    #[test]
+    fn reset_returns_to_the_starting_level() {
+        let mut knowledge = Knowledge::new(3);
+        knowledge.add(2);
+
+        knowledge.reset();
+
+        assert_eq!(knowledge, Knowledge::new(3));
+        assert_eq!(knowledge.level(), 1);
+    }
+
     #[test]
     fn a_zero_max_level_still_starts_at_zero_not_one() {
         let knowledge = Knowledge::new(0);

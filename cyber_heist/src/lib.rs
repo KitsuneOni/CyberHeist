@@ -15,6 +15,7 @@ mod run_deck;
 mod run_deck_node;
 mod run_state;
 mod run_state_node;
+mod run_stats;
 mod sentry;
 mod sentry_node;
 mod starter_deck;
