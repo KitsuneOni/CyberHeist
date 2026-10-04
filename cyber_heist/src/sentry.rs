@@ -122,8 +122,9 @@ const STANDARD_SCRIPT: [(&str, i32); 3] = [
 ];
 
 /// Bosses by zone. A contract longer than this list falls back to a numbered
-/// name, so adding zones cannot leave a boss nameless.
-const BOSS_NAMES: [&str; 3] = ["ICEBREAKER", "BLACK MONOLITH", "THE ARCHITECT"];
+/// name, so adding zones cannot leave a boss nameless. Contract offers read its
+/// length so they never send the player deeper than the bosses written here.
+pub(crate) const BOSS_NAMES: [&str; 3] = ["ICEBREAKER", "BLACK MONOLITH", "THE ARCHITECT"];
 
 /// Detection resistance a standard construct carries, by zone. Deeper zones
 /// push back harder on recovery, and the zone's boss then goes further still.

@@ -96,6 +96,57 @@ FlowCoordinator.zone_progress()
 `unlocked_zones` but leaves `current_zone` alone: the boss closes the zone it
 guards, so the player is still in it until they step into the next one.
 
+## Contract offers (story #120)
+
+A new run is offered a choice of **three** contracts (`OFFER_COUNT` in
+`cyber_heist/src/contract_offer.rs`). Each offer has a name, a target
+organisation, a credit reward and a shape: how many zones it has and how long
+each zone is. Offers in one set never share a name or a target, and no two run
+the same length, so the choice is always between a shorter, cheaper job and a
+longer one that pays more. The reward is 30 credits per encounter on a route
+through the contract plus 75 per boss. Zone counts are capped at the bosses
+that have been written in `sentry.rs`, currently three.
+
+Every offer carries a `map_seed`, so accepting the same offer always builds the
+same contract map. That keeps accepting deterministic for tests and for saving
+a run later.
+
+`RunState` owns the offers for the whole run and records which one was
+accepted. Accepting an offer by index replaces the run's contract map with the
+one that offer describes. It is rejected, without changing anything, for an
+index that is not on offer, outside the hub, or once any encounter on the
+current contract has been entered (completed or caught). Before then the
+player may change their mind and accept a different offer.
+
+**Until the contract selection screen lands, a run still starts on a playable
+default contract** (three zones of two columns), exactly as before. The hub
+and every headless test keep working without accepting anything. That default
+contract is not one of the offers, so `accepted_contract_offer()` reports
+`ok: false` for it and it has no credit reward to pay.
+
+```gdscript
+FlowCoordinator.contract_offers()
+# [{"index": 0, "name": "Glass Hammer", "target": "Kestrel Biotech",
+#   "credit_reward": 165, "zone_count": 1, "encounter_count": 3}, ...]
+
+FlowCoordinator.accept_contract_offer(1)
+# {"ok": true}, or {"ok": false, "error": "..."}
+
+FlowCoordinator.accepted_contract_offer()
+# the accepted offer's fields plus "ok": true, or {"ok": false}
+```
+
+Offers are listed shortest first. Accepting only changes run state; it does
+not navigate. The selection or details screen decides where to go next, and
+the hub reads the new map when it is next shown. The accepted offer's
+`credit_reward` is kept on the run for the victory payout to read.
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/contract_offer_test.gd
+```
+
 ## The sentry's turn
 
 Combat alternates a player turn and the sentry's turn. A sentry is the named
@@ -292,6 +343,9 @@ ordinary encounter progression still carries noise forward.
 ## Scene-facing API
 
 ```gdscript
+FlowCoordinator.contract_offers()
+FlowCoordinator.accept_contract_offer(index: int)
+FlowCoordinator.accepted_contract_offer()
 FlowCoordinator.selectable_encounters()
 FlowCoordinator.current_contract_node()
 FlowCoordinator.zone_progress()

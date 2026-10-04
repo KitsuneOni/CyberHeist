@@ -4,6 +4,7 @@ use godot::builtin::{VarDictionary, Variant};
 use godot::prelude::*;
 
 use crate::contract_map::{EncounterNode, EncounterSelection};
+use crate::contract_offer::ContractOffer;
 use crate::encounter_text::{
     all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
 };
@@ -148,6 +149,48 @@ impl RunStateNode {
         }
     }
 
+    /// The contracts this run can choose between, shortest first. Each is
+    /// `{index, name, target, credit_reward, zone_count, encounter_count}`,
+    /// where `index` is what `accept_contract_offer` takes.
+    #[func]
+    fn contract_offers(&self) -> Array<VarDictionary> {
+        let mut offers = Array::new();
+        for (index, offer) in self.state.contract_offers().iter().enumerate() {
+            offers.push(&offer_dictionary(index, offer));
+        }
+        offers
+    }
+
+    /// Takes on the offer at `index` and rebuilds the contract map from it.
+    /// `{ok: true}`, or `{ok: false, error}` for an index that is not on offer,
+    /// outside the hub, or once an encounter on the contract has been entered.
+    /// A rejection changes nothing.
+    #[func]
+    fn accept_contract_offer(&mut self, index: i64) -> VarDictionary {
+        let index = match usize::try_from(index) {
+            Ok(index) => index,
+            Err(_) => return transition_error("contract offer index is invalid"),
+        };
+        transition_result(self.state.accept_contract_offer(index))
+    }
+
+    /// The contract the run took on: the same fields as a `contract_offers`
+    /// entry plus `ok: true`. `{ok: false}` while the run is still on the
+    /// contract it started with.
+    #[func]
+    fn accepted_contract_offer(&self) -> VarDictionary {
+        let (Some(index), Some(offer)) = (
+            self.state.accepted_offer_index(),
+            self.state.accepted_offer(),
+        ) else {
+            return vdict! { "ok" => false };
+        };
+
+        let mut dictionary = offer_dictionary(index, offer);
+        dictionary.set("ok", true);
+        dictionary
+    }
+
     #[func]
     fn current_contract_node(&self) -> VarDictionary {
         encounter_dictionary(self.state.current_contract_node())
@@ -220,6 +263,18 @@ fn encounter_dictionary(node: &EncounterNode) -> VarDictionary {
     vdict! {
         "id" => i64::from(node.id()),
         "type" => node.encounter_type().as_str(),
+    }
+}
+
+/// One contract offer, as the selection and details screens read it.
+fn offer_dictionary(index: usize, offer: &ContractOffer) -> VarDictionary {
+    vdict! {
+        "index" => index as i64,
+        "name" => offer.name.as_str(),
+        "target" => offer.target.as_str(),
+        "credit_reward" => offer.credit_reward,
+        "zone_count" => offer.shape.zone_count as i64,
+        "encounter_count" => offer.encounter_count() as i64,
     }
 }
 

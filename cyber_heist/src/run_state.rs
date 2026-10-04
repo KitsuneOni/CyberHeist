@@ -11,6 +11,7 @@ use crate::contract_map::{
     ContractMap, ContractMapError, ContractProgress, ContractShape, EncounterNode,
     EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
+use crate::contract_offer::{ContractOffer, generate_offers};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractPhase {
@@ -62,6 +63,16 @@ pub struct RunState {
     phase: ContractPhase,
     active_encounter: Option<ActiveEncounter>,
     contract_map: ContractMap,
+    /// The contracts this run can choose between. Fixed for the whole run, so
+    /// an index into it stays meaningful. Empty for an authored run.
+    contract_offers: Vec<ContractOffer>,
+    /// Which of `contract_offers` the run took on. `None` means it is still
+    /// on the contract it was created with, which pays no contract reward.
+    accepted_offer_index: Option<usize>,
+    /// Whether an encounter on the current contract has been entered. From
+    /// then on the run is committed to it and cannot swap to another offer,
+    /// whether that encounter was completed or the player was caught.
+    contract_started: bool,
 }
 
 impl Default for RunState {
@@ -70,6 +81,9 @@ impl Default for RunState {
             phase: ContractPhase::Hub,
             active_encounter: None,
             contract_map: ContractMap::demo(),
+            contract_offers: Vec::new(),
+            accepted_offer_index: None,
+            contract_started: false,
         }
     }
 }
@@ -83,13 +97,25 @@ impl RunState {
     }
 
     /// A run on a freshly generated contract, so no two runs follow the same
-    /// route. `new` keeps the authored contract, which is what the tests run
-    /// against.
+    /// route, with a fresh set of contract offers to choose between. `new`
+    /// keeps the authored contract, which is what the tests run against.
+    ///
+    /// The run starts on a default-shaped contract that is playable straight
+    /// away, so the hub works before any offer is accepted. Accepting an offer
+    /// replaces that contract with the one the offer describes.
     pub fn generated(rng: &mut impl Rng) -> Self {
+        // The map is rolled before the offers, so a given rng still lays out
+        // the same default contract it did before offers existed.
+        let contract_map = ContractMap::generate(ContractShape::default(), rng);
+        let contract_offers = generate_offers(rng);
+
         Self {
             phase: ContractPhase::Hub,
             active_encounter: None,
-            contract_map: ContractMap::generate(ContractShape::default(), rng),
+            contract_map,
+            contract_offers,
+            accepted_offer_index: None,
+            contract_started: false,
         }
     }
 
@@ -99,6 +125,46 @@ impl RunState {
 
     pub fn active_encounter(&self) -> Option<&ActiveEncounter> {
         self.active_encounter.as_ref()
+    }
+
+    /// The contracts this run can choose between, shortest first.
+    pub fn contract_offers(&self) -> &[ContractOffer] {
+        &self.contract_offers
+    }
+
+    /// Position in `contract_offers` of the contract the run took on, if any.
+    pub fn accepted_offer_index(&self) -> Option<usize> {
+        self.accepted_offer_index
+    }
+
+    /// The contract the run took on, if any. Its `credit_reward` is what
+    /// finishing the contract pays.
+    pub fn accepted_offer(&self) -> Option<&ContractOffer> {
+        self.accepted_offer_index
+            .and_then(|index| self.contract_offers.get(index))
+    }
+
+    /// Takes on the offer at `index`, replacing the contract map with the one
+    /// it describes.
+    ///
+    /// Allowed only from the hub and only before any encounter on the current
+    /// contract has been entered; until then the player may change their mind
+    /// and accept a different offer. A rejection leaves the run untouched.
+    pub fn accept_contract_offer(&mut self, index: usize) -> Result<(), RunStateError> {
+        self.require_phase("accept a contract", ContractPhase::Hub)?;
+        if self.contract_started {
+            return Err(RunStateError::ContractAlreadyStarted);
+        }
+        let Some(offer) = self.contract_offers.get(index) else {
+            return Err(RunStateError::UnknownContractOffer {
+                index,
+                offered: self.contract_offers.len(),
+            });
+        };
+
+        self.contract_map = offer.build_map();
+        self.accepted_offer_index = Some(index);
+        Ok(())
     }
 
     pub fn current_contract_node(&self) -> &EncounterNode {
@@ -145,6 +211,7 @@ impl RunState {
             .map_err(RunStateError::ContractMap)?;
 
         self.phase = ContractPhase::EncounterActive;
+        self.contract_started = true;
         self.active_encounter = Some(ActiveEncounter {
             id: selection.node_id.to_string(),
             encounter_type: selection.encounter_type,
@@ -202,6 +269,14 @@ pub enum RunStateError {
         phase: ContractPhase,
     },
     ContractMap(ContractMapError),
+    /// No contract is on offer at the requested position.
+    UnknownContractOffer {
+        index: usize,
+        offered: usize,
+    },
+    /// An encounter on the current contract has already been entered, so the
+    /// run is committed to it.
+    ContractAlreadyStarted,
 }
 
 impl fmt::Display for RunStateError {
@@ -215,6 +290,13 @@ impl fmt::Display for RunStateError {
                 )
             }
             Self::ContractMap(error) => fmt::Display::fmt(error, formatter),
+            Self::UnknownContractOffer { index, offered } => write!(
+                formatter,
+                "contract offer {index} does not exist; {offered} contracts are on offer"
+            ),
+            Self::ContractAlreadyStarted => formatter.write_str(
+                "this contract is already under way, so a different one cannot be accepted",
+            ),
         }
     }
 }

@@ -69,6 +69,28 @@ func map_key() -> Dictionary:
 	return _run_state.map_key()
 
 
+# The contracts this run can choose between, shortest first. Each is a
+# dictionary of {index, name, target, credit_reward, zone_count, encounter_count}.
+func contract_offers() -> Array:
+	return _run_state.contract_offers()
+
+
+# Takes on the offer at `index` and rebuilds the contract map from it. Returns
+# {ok: true} or {ok: false, error}; a rejection changes nothing. Allowed only
+# from the hub before any encounter on the contract has been entered.
+#
+# This only changes run state. It does not navigate, so the selection or
+# details screen decides where to go next once it has the result.
+func accept_contract_offer(index: int) -> Dictionary:
+	return _run_state.accept_contract_offer(index)
+
+
+# The accepted offer's fields plus ok: true, or {ok: false} while the run is
+# still on the contract it started with.
+func accepted_contract_offer() -> Dictionary:
+	return _run_state.accepted_contract_offer()
+
+
 func select_encounter(node_id: int) -> Dictionary:
 	var option: Dictionary = _run_state.encounter_option(node_id)
 	if not option.get("ok", false):

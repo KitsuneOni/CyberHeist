@@ -4,15 +4,166 @@
 //! `run_state.rs` owns the offers for a run and builds the contract map from
 //! whichever one the player accepts; the selection screen only reads them.
 
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::{Rng, SeedableRng};
+
+use crate::contract_map::{ContractMap, ContractShape};
+use crate::sentry::BOSS_NAMES;
+
+/// How many contracts the selection screen puts in front of the player.
+pub const OFFER_COUNT: usize = 3;
+
+/// The shallowest and deepest contracts on offer, in zones. Every zone ends in
+/// a boss, so the deepest is capped at the bosses that have been written.
+const MIN_ZONE_COUNT: usize = 1;
+const MAX_ZONE_COUNT: usize = BOSS_NAMES.len();
+
+/// Columns of ordinary encounters a zone can have before its boss.
+const ZONE_LENGTHS: [usize; 2] = [2, 3];
+
+/// What each encounter on a route through the contract is worth, bosses
+/// included, plus the extra each boss is worth for being one. Together they
+/// make a longer contract pay more than a shorter one, which is what turns the
+/// selection into a trade between risk and reward.
+const CREDITS_PER_ENCOUNTER: i64 = 30;
+const CREDITS_PER_BOSS: i64 = 75;
+
+/// Job names. Each set of offers draws without repeats, so this needs at
+/// least `OFFER_COUNT` entries.
+const CONTRACT_NAMES: [&str; 10] = [
+    "Glass Hammer",
+    "Midnight Ledger",
+    "Silent Relay",
+    "Paper Ghost",
+    "Cold Open",
+    "Black Static",
+    "Neon Requiem",
+    "Low Orbit",
+    "Dead Drop",
+    "Iron Lullaby",
+];
+
+/// The organisations a job is aimed at. Drawn without repeats, like the names.
+const CONTRACT_TARGETS: [&str; 10] = [
+    "Halcyon Mutual Bank",
+    "Orbis Dynamics",
+    "Kestrel Biotech",
+    "Nightingale Telecom",
+    "Meridian Data Vault",
+    "Paragon Insurance Group",
+    "Apex Freight Logistics",
+    "Sable Defence Systems",
+    "Lumen Health Records",
+    "Vireo Casino Holdings",
+];
+
+/// One job the player can take on: what it is called, who it hits, what it
+/// pays and how the contract map is laid out if it is accepted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractOffer {
+    pub name: String,
+    /// The organisation being broken into.
+    pub target: String,
+    /// Credits paid for finishing the contract. Signed, like every other
+    /// credit amount in the game.
+    pub credit_reward: i64,
+    /// Zones and their length, which is what the map is generated from.
+    pub shape: ContractShape,
+    /// Seeds the map generator, so the same offer always lays out the same
+    /// contract however many times it is built.
+    pub map_seed: u64,
+}
+
+impl ContractOffer {
+    fn new(name: String, target: String, shape: ContractShape, map_seed: u64) -> Self {
+        Self {
+            name,
+            target,
+            credit_reward: credit_reward_for(shape),
+            shape,
+            map_seed,
+        }
+    }
+
+    /// Encounters on a route through the contract, bosses included.
+    pub fn encounter_count(&self) -> usize {
+        encounters_on_route(self.shape)
+    }
+
+    /// The contract map this offer describes. Deterministic: building the
+    /// same offer twice gives the same map.
+    pub fn build_map(&self) -> ContractMap {
+        let mut rng = StdRng::seed_from_u64(self.map_seed);
+        ContractMap::generate(self.shape, &mut rng)
+    }
+}
+
+/// Rolls the contracts a new run chooses between.
+///
+/// Every offer in a set has a different shape, and no two shapes on offer run
+/// the same length, so the offers always differ in how long they are and what
+/// they pay. They are listed shortest first, so the selection reads as a ladder
+/// from a quick job to a long haul. Names and targets are never repeated
+/// within a set.
+pub fn generate_offers(rng: &mut impl Rng) -> Vec<ContractOffer> {
+    let mut shapes = offerable_shapes();
+    shapes.shuffle(rng);
+    shapes.truncate(OFFER_COUNT);
+    shapes.sort_by_key(ContractShape::length);
+
+    let names = pick_distinct(&CONTRACT_NAMES, OFFER_COUNT, rng);
+    let targets = pick_distinct(&CONTRACT_TARGETS, OFFER_COUNT, rng);
+
+    let mut offers = Vec::with_capacity(OFFER_COUNT);
+    for ((shape, name), target) in shapes.into_iter().zip(names).zip(targets) {
+        offers.push(ContractOffer::new(name, target, shape, rng.random()));
+    }
+    offers
+}
+
+/// Every contract shape an offer can have: each supported zone count with each
+/// zone length. Route width is left at the default for all of them.
+fn offerable_shapes() -> Vec<ContractShape> {
+    let mut shapes = Vec::new();
+    for zone_count in MIN_ZONE_COUNT..=MAX_ZONE_COUNT {
+        for zone_length in ZONE_LENGTHS {
+            shapes.push(ContractShape {
+                zone_count,
+                zone_length,
+                ..ContractShape::default()
+            });
+        }
+    }
+    shapes
+}
+
+/// Encounters a player plays through on a contract of this shape: one per
+/// column after the entry, whichever branches they take.
+fn encounters_on_route(shape: ContractShape) -> usize {
+    shape.length() - 1
+}
+
+/// What finishing a contract of this shape pays.
+fn credit_reward_for(shape: ContractShape) -> i64 {
+    let encounters = encounters_on_route(shape) as i64;
+    let bosses = shape.zone_count as i64;
+    encounters * CREDITS_PER_ENCOUNTER + bosses * CREDITS_PER_BOSS
+}
+
+/// `count` different entries from `pool`, in random order.
+fn pick_distinct(pool: &[&str], count: usize, rng: &mut impl Rng) -> Vec<String> {
+    let mut shuffled = pool.to_vec();
+    shuffled.shuffle(rng);
+    shuffled.into_iter().take(count).map(String::from).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
-
     use super::*;
-    use crate::sentry::{BOSS_NAMES, Sentry};
+    use crate::sentry::Sentry;
 
     fn offers_for(seed: u64) -> Vec<ContractOffer> {
         generate_offers(&mut StdRng::seed_from_u64(seed))
