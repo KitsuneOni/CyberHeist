@@ -25,6 +25,10 @@ const REWARDING_ENCOUNTERS := ["combat", "elite", "boss"]
 @onready var _run_deck: Node = $RunDeck
 
 var _screen_host: Node
+# What the encounter just cleared paid out, {credits, guaranteed_rare}, kept
+# for the reward screen because completing the encounter clears it from run
+# state before that screen opens.
+var _pending_reward := {}
 
 
 func bind_screen_host(host: Node) -> void:
@@ -98,6 +102,7 @@ func complete_active_encounter() -> Dictionary:
 	var active = run_snapshot().get("active_encounter")
 	if typeof(active) == TYPE_DICTIONARY and active.get("type", "") in REWARDING_ENCOUNTERS:
 		next_scene = CARD_REWARD_SCENE_PATH
+	var reward: Dictionary = _run_state.active_encounter_reward()
 
 	var prepared := _prepare_screen(next_scene)
 	if not prepared.get("ok", false):
@@ -108,14 +113,29 @@ func complete_active_encounter() -> Dictionary:
 		_dispose_screen(prepared["screen"])
 		return transition
 
+	# Paid only once the encounter has actually completed, so a rejected
+	# transition pays nothing. Set before the reward screen is added, since
+	# that screen reads it in its _ready.
+	_pending_reward = {
+		"credits": int(reward.get("credits", 0)),
+		"guaranteed_rare": bool(reward.get("guaranteed_rare", false)),
+	}
+	PlayerStateGlobal.add_credits(_pending_reward["credits"])
 	_replace_screen(prepared["screen"])
 	return transition
 
 
 # Cards on offer after clearing an encounter. Each is a dictionary of
 # {id, name, type, rarity, cost_text, noise_text, description}.
+# An elite or boss offer always includes at least one Rare.
 func offer_card_reward(count: int) -> Array:
-	return _run_deck.offer_reward(count)
+	return _run_deck.offer_reward(count, _pending_reward.get("guaranteed_rare", false))
+
+
+# Credits the encounter just cleared paid out, for the reward screen to show.
+# They are already in PlayerStateGlobal by the time this is read.
+func pending_reward_credits() -> int:
+	return _pending_reward.get("credits", 0)
 
 
 # Adds a chosen reward to the run's deck. False for an id the card database
@@ -135,6 +155,7 @@ func finish_reward() -> Dictionary:
 	if not prepared.get("ok", false):
 		return prepared
 
+	_pending_reward = {}
 	_replace_screen(prepared["screen"])
 	return {"ok": true}
 
