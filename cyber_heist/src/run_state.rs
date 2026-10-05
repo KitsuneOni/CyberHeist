@@ -11,6 +11,8 @@ use crate::contract_map::{
     ContractMap, ContractMapError, ContractProgress, ContractShape, EncounterNode,
     EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
+use crate::contract_offer::{ContractOffer, generate_offers};
+use crate::run_stats::RunStats;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractPhase {
@@ -57,11 +59,36 @@ impl ActiveEncounter {
     }
 }
 
+/// Everything the end screen reports about a run, read in one go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunSummary {
+    pub stats: RunStats,
+    /// Encounters completed on the contract, out of the number on a route
+    /// through it.
+    pub encounters: ContractProgress,
+    /// Zones whose boss has been beaten.
+    pub zones_cleared: usize,
+    pub total_zones: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunState {
     phase: ContractPhase,
     active_encounter: Option<ActiveEncounter>,
     contract_map: ContractMap,
+    /// The contracts this run can choose between. Fixed for the whole run, so
+    /// an index into it stays meaningful. Empty for an authored run.
+    contract_offers: Vec<ContractOffer>,
+    /// Which of `contract_offers` the run took on. `None` means it is still
+    /// on the contract it was created with, which pays no contract reward.
+    accepted_offer_index: Option<usize>,
+    /// Whether an encounter on the current contract has been entered. From
+    /// then on the run is committed to it and cannot swap to another offer,
+    /// whether that encounter was completed or the player was caught.
+    contract_started: bool,
+    /// What this run has achieved, for the end screen. Owned here so that
+    /// it starts and ends with the run.
+    stats: RunStats,
 }
 
 impl Default for RunState {
@@ -70,6 +97,10 @@ impl Default for RunState {
             phase: ContractPhase::Hub,
             active_encounter: None,
             contract_map: ContractMap::demo(),
+            contract_offers: Vec::new(),
+            accepted_offer_index: None,
+            contract_started: false,
+            stats: RunStats::default(),
         }
     }
 }
@@ -83,14 +114,52 @@ impl RunState {
     }
 
     /// A run on a freshly generated contract, so no two runs follow the same
-    /// route. `new` keeps the authored contract, which is what the tests run
-    /// against.
+    /// route, with a fresh set of contract offers to choose between. `new`
+    /// keeps the authored contract, which is what the tests run against.
+    ///
+    /// The run starts on a default-shaped contract that is playable straight
+    /// away, so the hub works before any offer is accepted. Accepting an offer
+    /// replaces that contract with the one the offer describes.
     pub fn generated(rng: &mut impl Rng) -> Self {
+        // The map is rolled before the offers, so a given rng still lays out
+        // the same default contract it did before offers existed.
+        let contract_map = ContractMap::generate(ContractShape::default(), rng);
+        let contract_offers = generate_offers(rng);
+
         Self {
             phase: ContractPhase::Hub,
             active_encounter: None,
-            contract_map: ContractMap::generate(ContractShape::default(), rng),
+            contract_map,
+            contract_offers,
+            accepted_offer_index: None,
+            contract_started: false,
+            stats: RunStats::default(),
         }
+    }
+
+    /// Throws this run away and starts a fresh one in its place: a new
+    /// default contract, new offers, nothing accepted, no zone progress and
+    /// no stats. It is exactly what `generated` builds, so nothing from the
+    /// old run can leak into the new one.
+    ///
+    /// Allowed from the hub and from the caught screen, which is where a run
+    /// ends. Refused while an encounter is active, because that encounter's
+    /// screen would carry on playing against a run that no longer exists. A
+    /// refusal leaves the run untouched.
+    ///
+    /// Only the run is reset here. The shared noise meter, knowledge and the
+    /// run's deck live outside it, so `FlowCoordinator.start_new_run` resets
+    /// those alongside this.
+    pub fn start_new_run(&mut self, rng: &mut impl Rng) -> Result<(), RunStateError> {
+        if self.phase == ContractPhase::EncounterActive {
+            return Err(RunStateError::InvalidTransition {
+                action: "start a new run",
+                phase: self.phase,
+            });
+        }
+
+        *self = Self::generated(rng);
+        Ok(())
     }
 
     pub fn phase(&self) -> ContractPhase {
@@ -99,6 +168,46 @@ impl RunState {
 
     pub fn active_encounter(&self) -> Option<&ActiveEncounter> {
         self.active_encounter.as_ref()
+    }
+
+    /// The contracts this run can choose between, shortest first.
+    pub fn contract_offers(&self) -> &[ContractOffer] {
+        &self.contract_offers
+    }
+
+    /// Position in `contract_offers` of the contract the run took on, if any.
+    pub fn accepted_offer_index(&self) -> Option<usize> {
+        self.accepted_offer_index
+    }
+
+    /// The contract the run took on, if any. Its `credit_reward` is what
+    /// finishing the contract pays.
+    pub fn accepted_offer(&self) -> Option<&ContractOffer> {
+        self.accepted_offer_index
+            .and_then(|index| self.contract_offers.get(index))
+    }
+
+    /// Takes on the offer at `index`, replacing the contract map with the one
+    /// it describes.
+    ///
+    /// Allowed only from the hub and only before any encounter on the current
+    /// contract has been entered; until then the player may change their mind
+    /// and accept a different offer. A rejection leaves the run untouched.
+    pub fn accept_contract_offer(&mut self, index: usize) -> Result<(), RunStateError> {
+        self.require_phase("accept a contract", ContractPhase::Hub)?;
+        if self.contract_started {
+            return Err(RunStateError::ContractAlreadyStarted);
+        }
+        let Some(offer) = self.contract_offers.get(index) else {
+            return Err(RunStateError::UnknownContractOffer {
+                index,
+                offered: self.contract_offers.len(),
+            });
+        };
+
+        self.contract_map = offer.build_map();
+        self.accepted_offer_index = Some(index);
+        Ok(())
     }
 
     pub fn current_contract_node(&self) -> &EncounterNode {
@@ -145,6 +254,7 @@ impl RunState {
             .map_err(RunStateError::ContractMap)?;
 
         self.phase = ContractPhase::EncounterActive;
+        self.contract_started = true;
         self.active_encounter = Some(ActiveEncounter {
             id: selection.node_id.to_string(),
             encounter_type: selection.encounter_type,
@@ -153,14 +263,46 @@ impl RunState {
         Ok(selection)
     }
 
+    /// Completes the active encounter and returns to the hub. A fight
+    /// completed here is counted as a win; this is the only place that
+    /// happens, so a win cannot be recorded twice or for a lost fight.
     pub fn complete_encounter(&mut self) -> Result<(), RunStateError> {
         self.require_phase("complete encounter", ContractPhase::EncounterActive)?;
         self.contract_map
             .complete_current_encounter()
             .map_err(RunStateError::ContractMap)?;
+
+        if let Some(completed) = self.active_encounter.take() {
+            self.stats
+                .record_encounter_completed(completed.encounter_type());
+        }
         self.phase = ContractPhase::Hub;
-        self.active_encounter = None;
         Ok(())
+    }
+
+    /// Records a change the run made to the player's credits, gain or loss.
+    /// Only gains count as earned. Call this wherever credits are applied
+    /// (events today, combat and contract payouts later), once per change.
+    pub fn record_credit_change(&mut self, amount: i64) {
+        self.stats.record_credit_change(amount);
+    }
+
+    /// Records a card going into the run's deck. Call this wherever a card
+    /// is added, once per card.
+    pub fn record_card_added(&mut self) {
+        self.stats.record_card_added();
+    }
+
+    /// The run's stats together with how far through the contract it got,
+    /// for the end screen.
+    pub fn summary(&self) -> RunSummary {
+        let zones = self.zone_progress();
+        RunSummary {
+            stats: self.stats,
+            encounters: self.progress(),
+            zones_cleared: zones.unlocked_zones,
+            total_zones: zones.total_zones,
+        }
     }
 
     pub fn report_caught(&mut self) -> Result<(), RunStateError> {
@@ -202,6 +344,14 @@ pub enum RunStateError {
         phase: ContractPhase,
     },
     ContractMap(ContractMapError),
+    /// No contract is on offer at the requested position.
+    UnknownContractOffer {
+        index: usize,
+        offered: usize,
+    },
+    /// An encounter on the current contract has already been entered, so the
+    /// run is committed to it.
+    ContractAlreadyStarted,
 }
 
 impl fmt::Display for RunStateError {
@@ -215,12 +365,22 @@ impl fmt::Display for RunStateError {
                 )
             }
             Self::ContractMap(error) => fmt::Display::fmt(error, formatter),
+            Self::UnknownContractOffer { index, offered } => write!(
+                formatter,
+                "contract offer {index} does not exist; {offered} contracts are on offer"
+            ),
+            Self::ContractAlreadyStarted => formatter.write_str(
+                "this contract is already under way, so a different one cannot be accepted",
+            ),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
     use super::*;
 
     fn active_combat() -> RunState {
@@ -379,6 +539,403 @@ mod tests {
             result,
             Err(RunStateError::InvalidTransition { .. })
         ));
+        assert_eq!(state, before);
+    }
+
+    fn generated_run(seed: u64) -> RunState {
+        RunState::generated(&mut StdRng::seed_from_u64(seed))
+    }
+
+    /// Steps into whichever encounter the hub offers first.
+    fn enter_first_encounter(state: &mut RunState) {
+        let first = state.selectable_encounters()[0].id();
+        state
+            .select_encounter(first)
+            .expect("the hub offers its first encounter");
+    }
+
+    /// Acceptance scenario 1: starting a run puts three contracts on the
+    /// table, each with a name, a target, a reward and a number of zones.
+    #[test]
+    fn starting_a_new_run_offers_three_contracts() {
+        let state = generated_run(5);
+
+        let offers = state.contract_offers();
+        assert_eq!(offers.len(), 3);
+        for offer in offers {
+            assert!(!offer.name.is_empty());
+            assert!(!offer.target.is_empty());
+            assert!(offer.credit_reward > 0);
+            assert!(offer.shape.zone_count >= 1);
+        }
+        assert_eq!(
+            state.accepted_offer(),
+            None,
+            "nothing is accepted until the player chooses"
+        );
+    }
+
+    /// Acceptance scenario 2: accepting the second offer swaps the run onto
+    /// the contract that offer describes.
+    #[test]
+    fn accepting_the_second_offer_builds_the_map_from_its_settings() {
+        let mut state = generated_run(5);
+        let second = state.contract_offers()[1].clone();
+
+        state
+            .accept_contract_offer(1)
+            .expect("the second offer can be accepted");
+
+        assert_eq!(state.contract_map, second.build_map());
+        assert_eq!(state.zone_progress().total_zones, second.shape.zone_count);
+        assert_eq!(state.progress().total, second.encounter_count());
+        assert_eq!(state.accepted_offer_index(), Some(1));
+        assert_eq!(state.accepted_offer(), Some(&second));
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert!(
+            !state.selectable_encounters().is_empty(),
+            "the accepted contract is ready to play"
+        );
+    }
+
+    /// Until the selection screen exists, the hub has to keep working on the
+    /// contract a run is created with.
+    #[test]
+    fn a_generated_run_is_playable_before_any_offer_is_accepted() {
+        let state = generated_run(5);
+
+        assert_eq!(
+            state.zone_progress().total_zones,
+            ContractShape::default().zone_count
+        );
+        assert!(!state.selectable_encounters().is_empty());
+        assert_eq!(state.accepted_offer_index(), None);
+    }
+
+    /// Changing your mind is fine until the first encounter is entered.
+    #[test]
+    fn a_different_offer_can_be_accepted_before_the_contract_starts() {
+        let mut state = generated_run(9);
+        let third = state.contract_offers()[2].clone();
+
+        state.accept_contract_offer(0).expect("first offer");
+        state.accept_contract_offer(2).expect("third offer");
+
+        assert_eq!(state.contract_map, third.build_map());
+        assert_eq!(state.accepted_offer(), Some(&third));
+    }
+
+    #[test]
+    fn an_offer_index_past_the_end_is_rejected_without_mutation() {
+        let mut state = generated_run(5);
+        let before = state.clone();
+
+        for index in [3, usize::MAX] {
+            assert_eq!(
+                state.accept_contract_offer(index),
+                Err(RunStateError::UnknownContractOffer { index, offered: 3 })
+            );
+            assert_eq!(state, before, "a rejected index {index} changed the run");
+        }
+    }
+
+    /// The authored run the tests use is not offered any contracts, and says
+    /// so rather than accepting something that is not there.
+    #[test]
+    fn an_authored_run_has_no_offers_to_accept() {
+        let mut state = RunState::new();
+        let before = state.clone();
+
+        assert!(state.contract_offers().is_empty());
+        assert_eq!(
+            state.accept_contract_offer(0),
+            Err(RunStateError::UnknownContractOffer {
+                index: 0,
+                offered: 0
+            })
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn a_contract_cannot_be_accepted_during_an_encounter() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        let before = state.clone();
+
+        assert!(matches!(
+            state.accept_contract_offer(0),
+            Err(RunStateError::InvalidTransition { .. })
+        ));
+        assert_eq!(state, before);
+    }
+
+    /// Back at the hub after an encounter, the run is committed: the
+    /// contract it accepted stays, and so does the record of which one it was.
+    #[test]
+    fn a_contract_cannot_be_swapped_once_an_encounter_is_completed() {
+        let mut state = generated_run(5);
+        state.accept_contract_offer(1).expect("second offer");
+        enter_first_encounter(&mut state);
+        state.complete_encounter().expect("the encounter is active");
+        let before = state.clone();
+
+        assert_eq!(
+            state.accept_contract_offer(0),
+            Err(RunStateError::ContractAlreadyStarted)
+        );
+        assert_eq!(state, before);
+        assert_eq!(state.accepted_offer_index(), Some(1));
+    }
+
+    /// Getting caught does not complete anything, but the run has still
+    /// committed to a route on this contract.
+    #[test]
+    fn a_contract_cannot_be_swapped_after_being_caught_on_it() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        state.report_caught().expect("the encounter is active");
+        state.finish_caught().expect("the run was caught");
+        let before = state.clone();
+
+        assert_eq!(
+            state.accept_contract_offer(2),
+            Err(RunStateError::ContractAlreadyStarted)
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn offer_rejections_explain_themselves() {
+        let unknown = RunStateError::UnknownContractOffer {
+            index: 4,
+            offered: 3,
+        }
+        .to_string();
+        assert!(unknown.contains('4') && unknown.contains('3'), "{unknown}");
+
+        let started = RunStateError::ContractAlreadyStarted.to_string();
+        assert!(started.contains("under way"), "{started}");
+    }
+
+    // --- Run stats and new runs (story #121) -------------------------------
+
+    /// Enters and completes each node in turn, as a player walking the route.
+    fn play_route(state: &mut RunState, route: &[NodeId]) {
+        for node_id in route {
+            state
+                .select_encounter(*node_id)
+                .expect("the route is selectable");
+            state.complete_encounter().expect("the encounter is active");
+        }
+    }
+
+    /// One straight route of four fights with an event in the middle, closed
+    /// off by a boss: entry, combat, event, elite, combat, boss.
+    fn four_fight_run() -> RunState {
+        let mut state = RunState::new();
+        state.contract_map = ContractMap::new(
+            [
+                EncounterNode::new(0, EncounterType::Entry, vec![1]),
+                EncounterNode::new(1, EncounterType::Combat, vec![2]),
+                EncounterNode::new(2, EncounterType::Event, vec![3]),
+                EncounterNode::new(3, EncounterType::Elite, vec![4]),
+                EncounterNode::new(4, EncounterType::Combat, vec![5]),
+                EncounterNode::new(5, EncounterType::Boss, vec![]),
+            ],
+            0,
+        )
+        .unwrap();
+        state
+    }
+
+    /// Walks a generated contract until its first boss goes down, so the run
+    /// has zone progress to lose.
+    fn clear_first_zone(state: &mut RunState) {
+        // Bounded by the route length so a contract without a boss fails the
+        // test rather than hanging it.
+        for _ in 0..state.progress().total {
+            enter_first_encounter(state);
+            let was_boss = state.active_encounter().unwrap().is_boss();
+            state.complete_encounter().expect("the encounter is active");
+            if was_boss {
+                return;
+            }
+        }
+        panic!("the contract has no boss to clear");
+    }
+
+    /// Acceptance scenario 1: four fights won, 180 credits earned and three
+    /// cards added are what the run summary reports at the end.
+    #[test]
+    fn stats_are_tracked_during_a_run() {
+        let mut state = four_fight_run();
+
+        play_route(&mut state, &[1, 2]);
+        state.record_credit_change(120);
+        state.record_card_added();
+        // The event in the middle cost credits; that is not money earned.
+        state.record_credit_change(-80);
+        play_route(&mut state, &[3, 4]);
+        state.record_credit_change(60);
+        state.record_card_added();
+        state.record_card_added();
+        play_route(&mut state, &[5]);
+
+        let summary = state.summary();
+        assert_eq!(summary.stats.combats_won(), 4);
+        assert_eq!(summary.stats.credits_earned(), 180);
+        assert_eq!(summary.stats.cards_added(), 3);
+        assert_eq!(
+            summary.encounters,
+            ContractProgress {
+                completed: 5,
+                total: 5
+            }
+        );
+        assert_eq!(summary.zones_cleared, 1);
+        assert_eq!(summary.total_zones, 1);
+    }
+
+    #[test]
+    fn a_fresh_run_summary_is_empty() {
+        let summary = generated_run(5).summary();
+
+        assert_eq!(summary.stats, RunStats::default());
+        assert_eq!(summary.encounters.completed, 0);
+        assert_eq!(summary.zones_cleared, 0);
+        assert_eq!(summary.total_zones, ContractShape::default().zone_count);
+    }
+
+    /// The authored contract has a shop route and an event route; only the
+    /// fights along each are wins.
+    #[test]
+    fn events_and_shops_are_not_counted_as_wins() {
+        let mut shop_route = RunState::new();
+        play_route(&mut shop_route, &[1, 3, 5]);
+        assert_eq!(shop_route.summary().stats.combats_won(), 2);
+
+        let mut event_route = RunState::new();
+        play_route(&mut event_route, &[2, 4, 5]);
+        assert_eq!(event_route.summary().stats.combats_won(), 2);
+    }
+
+    /// Getting caught is losing the fight, so it is not a win; beating the
+    /// same encounter on the retry is.
+    #[test]
+    fn a_caught_encounter_is_not_counted_as_a_win() {
+        let mut state = active_combat();
+
+        state.report_caught().unwrap();
+        state.finish_caught().unwrap();
+        assert_eq!(state.summary().stats.combats_won(), 0);
+
+        play_route(&mut state, &[1]);
+        assert_eq!(state.summary().stats.combats_won(), 1);
+    }
+
+    #[test]
+    fn a_rejected_completion_is_not_counted_as_a_win() {
+        let mut state = RunState::new();
+
+        assert!(state.complete_encounter().is_err());
+
+        assert_eq!(state.summary().stats.combats_won(), 0);
+    }
+
+    /// Credits and cards can come in at any point of the run, not only from
+    /// the hub: an event pays out while its encounter is still active.
+    #[test]
+    fn credits_and_cards_are_recorded_in_any_phase() {
+        let mut state = active_combat();
+
+        state.record_credit_change(40);
+        state.record_card_added();
+        state.report_caught().unwrap();
+        state.record_credit_change(10);
+
+        let stats = state.summary().stats;
+        assert_eq!(stats.credits_earned(), 50);
+        assert_eq!(stats.cards_added(), 1);
+    }
+
+    /// Acceptance scenario 2: after a run with progress, stats, an accepted
+    /// contract and a cleared zone, a new run starts from nothing.
+    #[test]
+    fn starting_a_new_run_resets_stats_zone_progress_and_offers() {
+        let mut state = generated_run(5);
+        let old_offers = state.contract_offers().to_vec();
+        state.accept_contract_offer(1).expect("second offer");
+        clear_first_zone(&mut state);
+        state.record_credit_change(90);
+        state.record_card_added();
+        assert_eq!(
+            state.zone_progress().unlocked_zones,
+            1,
+            "the old run cleared a zone"
+        );
+
+        state
+            .start_new_run(&mut StdRng::seed_from_u64(77))
+            .expect("a new run can start from the hub");
+
+        assert_eq!(
+            state,
+            RunState::generated(&mut StdRng::seed_from_u64(77)),
+            "a new run is exactly a freshly generated one"
+        );
+        assert_eq!(state.summary().stats, RunStats::default());
+        assert_eq!(state.zone_progress().current_zone, 0);
+        assert_eq!(state.zone_progress().unlocked_zones, 0);
+        assert_eq!(state.progress().completed, 0);
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert_eq!(state.active_encounter(), None);
+        assert_ne!(
+            state.contract_offers(),
+            old_offers.as_slice(),
+            "a new run is offered new contracts"
+        );
+        assert_eq!(state.accepted_offer(), None);
+        state
+            .accept_contract_offer(0)
+            .expect("the new run has not started a contract yet");
+    }
+
+    /// The run ends on the caught screen as often as on the map, so the end
+    /// screen can start a new run from there.
+    #[test]
+    fn a_new_run_can_start_after_being_caught() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        state.report_caught().unwrap();
+
+        state
+            .start_new_run(&mut StdRng::seed_from_u64(3))
+            .expect("a new run can start from the caught screen");
+
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert_eq!(state.active_encounter(), None);
+    }
+
+    /// Abandoning a run part-way through a fight would leave its screen
+    /// playing against a run that no longer exists, so it is refused.
+    #[test]
+    fn a_new_run_cannot_start_during_an_encounter() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        state.record_credit_change(25);
+        let before = state.clone();
+
+        let result = state.start_new_run(&mut StdRng::seed_from_u64(3));
+
+        assert!(matches!(
+            result,
+            Err(RunStateError::InvalidTransition { .. })
+        ));
+        assert!(
+            result.unwrap_err().to_string().contains("start a new run"),
+            "the rejection says what was refused"
+        );
         assert_eq!(state, before);
     }
 }

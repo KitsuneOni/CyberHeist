@@ -4,6 +4,7 @@ mod card_play;
 mod card_reward;
 mod card_text;
 mod contract_map;
+mod contract_offer;
 mod deck;
 mod encounter_text;
 mod events;
@@ -14,6 +15,7 @@ mod run_deck;
 mod run_deck_node;
 mod run_state;
 mod run_state_node;
+mod run_stats;
 mod sentry;
 mod sentry_node;
 mod starter_deck;
@@ -87,6 +89,25 @@ impl PlayerState {
     #[func]
     fn add_upgrade(&mut self, name: GString) {
         self.upgrades.push(name);
+    }
+
+    /// The upgrades earned on the current contract, in the order they were
+    /// gained.
+    #[func]
+    fn upgrades(&self) -> Array<GString> {
+        self.upgrades.iter().cloned().collect()
+    }
+
+    /// Drops the upgrades earned on the current contract and keeps the credit
+    /// balance.
+    ///
+    /// Upgrades only last for the contract they were earned on, while credits
+    /// are the player's balance between runs. `FlowCoordinator.start_new_run()`
+    /// calls this so a won contract's upgrades never leak into the next run;
+    /// being caught already loses them through `apply_penalty`.
+    #[func]
+    fn clear_upgrades(&mut self) {
+        self.upgrades.clear();
     }
 
     #[func]
