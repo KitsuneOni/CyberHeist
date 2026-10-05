@@ -110,5 +110,12 @@ jobs:
       - name: Run headless zone boss encounter test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/boss_encounter_test.gd
 
+      # Rolls contracts until the first zone offers an elite, then fights it.
+      # Covers what the Rust tests cannot see: that an elite node loads combat
+      # against the elite construct, its Reinforce landing on screen, and the
+      # better payout and rare card waiting after it.
+      - name: Run headless elite encounter test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/elite_encounter_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh

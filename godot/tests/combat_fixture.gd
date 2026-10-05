@@ -3,7 +3,7 @@ extends RefCounted
 
 # Generated contracts do not guarantee a combat option (even in column one).
 # Keep the actual Rust lifecycle and coordinator, but mount combat content for
-# the chosen node when it would otherwise load an event/shop/elite scene.
+# the chosen node when it would otherwise load an event or shop scene.
 # This tests combat, not random graph generation or the scene registry.
 static func enter(flow: Node) -> Dictionary:
 	var options: Array = flow.selectable_encounters()
