@@ -55,6 +55,8 @@ pub enum Keyword {
     Draw(i32),
     MaxEnergyBoost(u32),
     CorruptingBoost(u32),
+    ResolveAtEndOfTurn,
+    EnergyTax(u32),
     Exhaust,
     Flip,
 }

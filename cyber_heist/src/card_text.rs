@@ -86,6 +86,8 @@ pub fn keyword_label(keyword: &Keyword) -> String {
         Keyword::Draw(amount) => format!("Draw {amount}"),
         Keyword::MaxEnergyBoost(amount) => format!("Max Energy +{amount}"),
         Keyword::CorruptingBoost(amount) => format!("Corrupting Boost {amount}"),
+        Keyword::ResolveAtEndOfTurn => "Resolve at End of Turn".to_string(),
+        Keyword::EnergyTax(amount) => format!("Energy Tax {amount}"),
         Keyword::Exhaust => "Exhaust".to_string(),
         Keyword::Flip => "Flip".to_string(),
     }
@@ -126,12 +128,18 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
         Keyword::CorruptingBoost(amount) => format!(
             "For the rest of this turn, every Corrupting effect you apply is {amount} stronger."
         ),
+        Keyword::EnergyTax(amount) => format!(
+            "While this card is in your hand, every other card you play costs {amount} extra energy."
+        ),
         Keyword::Exhaust => {
             "Once played, this card leaves the encounter instead of going to the discard pile."
                 .to_string()
         }
         Keyword::Flip => {
             "Turns the card to its alternate face for the rest of the encounter.".to_string()
+        }
+        Keyword::ResolveAtEndOfTurn => {
+            "Playing this card spends its cost and does nothing else - otherwise all card effects will fire at end of turn.".to_string()
         }
     }
 }

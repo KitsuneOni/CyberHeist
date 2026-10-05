@@ -4,6 +4,7 @@ mod card_play;
 mod card_reward;
 mod card_text;
 mod contract_map;
+mod contract_offer;
 mod deck;
 mod encounter_reward;
 mod encounter_text;
@@ -15,6 +16,7 @@ mod run_deck;
 mod run_deck_node;
 mod run_state;
 mod run_state_node;
+mod run_stats;
 mod sentry;
 mod sentry_node;
 mod starter_deck;
@@ -88,6 +90,25 @@ impl PlayerState {
     #[func]
     fn add_upgrade(&mut self, name: GString) {
         self.upgrades.push(name);
+    }
+
+    /// The upgrades earned on the current contract, in the order they were
+    /// gained.
+    #[func]
+    fn upgrades(&self) -> Array<GString> {
+        self.upgrades.iter().cloned().collect()
+    }
+
+    /// Drops the upgrades earned on the current contract and keeps the credit
+    /// balance.
+    ///
+    /// Upgrades only last for the contract they were earned on, while credits
+    /// are the player's balance between runs. `FlowCoordinator.start_new_run()`
+    /// calls this so a won contract's upgrades never leak into the next run;
+    /// being caught already loses them through `apply_penalty`.
+    #[func]
+    fn clear_upgrades(&mut self) {
+        self.upgrades.clear();
     }
 
     #[func]
@@ -276,6 +297,7 @@ impl DrawPhase {
                     "max_energy_gained" => played.max_energy_gained,
                     "corruption_added" => played.corruption_added,
                     "corruption_boost_added" => played.corruption_boost_added,
+                    "energy_tax_paid" => played.energy_tax_paid,
                 }
             }
             Err(error) => {
@@ -333,7 +355,15 @@ impl DrawPhase {
 
     #[func]
     fn hand_costs(&self) -> PackedInt32Array {
-        self.hand.iter().map(|c| c.cost as i32).collect()
+        let nosie = self.current_noise();
+        self.hand
+            .iter()
+            .enumerate()
+            .map(|(index, card)| {
+                let tax = card_play::hand_energy_tax(&self.hand, index, nosie);
+                card.cost as i32 + tax
+            })
+            .collect()
     }
 
     #[func]
@@ -345,11 +375,6 @@ impl DrawPhase {
     #[signal]
     fn security_phase(finished_turn: i32);
 
-    /// Ends the player's turn: every card still in hand goes to the discard
-    /// pile (however many there are — a `Draw` play earlier this turn may
-    /// have grown the hand past `hand_size`, and all of it still goes to
-    /// discard here), the security system gets its phase, then the next turn
-    /// begins with refreshed energy and a freshly drawn hand.
     #[func]
     fn end_turn(&mut self) -> PackedStringArray {
         if !self.base().is_inside_tree()
@@ -359,6 +384,23 @@ impl DrawPhase {
             return self.hand_names();
         }
         let finished_turn = self.turn_number;
+
+        {
+            let mut meter = self.noise_meter().clone();
+            let mut sentry_node = self.sentry_node().clone();
+            let mut knowledge_meter = self.knowledge_meter().clone();
+            let mut rng = rand::rng();
+            card_play::resolve_end_of_turn_effects(
+                &mut self.hand,
+                &mut self.deck,
+                &mut self.energy,
+                &mut self.max_energy,
+                meter.bind_mut().level_mut(),
+                sentry_node.bind_mut().sentry_mut(),
+                knowledge_meter.bind_mut().level_mut(),
+                &mut rng,
+            );
+        }
 
         let remaining_hand = std::mem::take(&mut self.hand);
         self.deck.discard(remaining_hand);
