@@ -19,11 +19,20 @@ pub fn load_card_database() -> HashMap<String, CardData> {
     parse_cards(&text)
 }
 
+pub fn load_cursed_card_database() -> HashMap<String, CardData> {
+    let path = "res://data/cursed_cards.ron";
+    let file = FileAccess::open(path, godot::classes::file_access::ModeFlags::READ)
+        .expect("Failed to open cursed_cards.ron");
+    let text = file.get_as_text().to_string();
+    parse_cards(&text)
+}
+
 #[derive(GodotClass)]
 #[class(base=Node)]
 pub struct CardDatabase {
     base: Base<Node>,
     cards: HashMap<String, CardData>,
+    cursed_cards: HashMap<String, CardData>,
 }
 
 #[godot_api]
@@ -32,18 +41,21 @@ impl INode for CardDatabase {
         Self {
             base,
             cards: HashMap::new(),
+            cursed_cards: HashMap::new(),
         }
     }
 
     fn ready(&mut self) {
         self.cards = load_card_database();
         godot_print!("Loaded {} cards", self.cards.len());
+        self.cursed_cards = load_cursed_card_database();
+        godot_print!("Loaded {} cursed cards", self.cursed_cards.len());
     }
 }
 
 impl CardDatabase {
     pub fn get(&self, id: &str) -> Option<&CardData> {
-        self.cards.get(id)
+        self.cards.get(id).or_else(|| self.cursed_cards.get(id))
     }
 
     // Kept for callers that want the whole pool, e.g. card rewards.

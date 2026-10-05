@@ -275,6 +275,7 @@ impl DrawPhase {
                     "max_energy_gained" => played.max_energy_gained,
                     "corruption_added" => played.corruption_added,
                     "corruption_boost_added" => played.corruption_boost_added,
+                    "energy_tax_paid" => played.energy_tax_paid,
                 }
             }
             Err(error) => {
@@ -332,7 +333,15 @@ impl DrawPhase {
 
     #[func]
     fn hand_costs(&self) -> PackedInt32Array {
-        self.hand.iter().map(|c| c.cost as i32).collect()
+        let nosie = self.current_noise();
+        self.hand
+            .iter()
+            .enumerate()
+            .map(|(index, card)| {
+                let tax = card_play::hand_energy_tax(&self.hand, index, nosie);
+                card.cost as i32 + tax
+            })
+            .collect()
     }
 
     #[func]
@@ -344,11 +353,6 @@ impl DrawPhase {
     #[signal]
     fn security_phase(finished_turn: i32);
 
-    /// Ends the player's turn: every card still in hand goes to the discard
-    /// pile (however many there are — a `Draw` play earlier this turn may
-    /// have grown the hand past `hand_size`, and all of it still goes to
-    /// discard here), the security system gets its phase, then the next turn
-    /// begins with refreshed energy and a freshly drawn hand.
     #[func]
     fn end_turn(&mut self) -> PackedStringArray {
         if !self.base().is_inside_tree()
@@ -358,6 +362,23 @@ impl DrawPhase {
             return self.hand_names();
         }
         let finished_turn = self.turn_number;
+
+        {
+            let mut meter = self.noise_meter().clone();
+            let mut sentry_node = self.sentry_node().clone();
+            let mut knowledge_meter = self.knowledge_meter().clone();
+            let mut rng = rand::rng();
+            card_play::resolve_end_of_turn_effects(
+                &mut self.hand,
+                &mut self.deck,
+                &mut self.energy,
+                &mut self.max_energy,
+                meter.bind_mut().level_mut(),
+                sentry_node.bind_mut().sentry_mut(),
+                knowledge_meter.bind_mut().level_mut(),
+                &mut rng,
+            );
+        }
 
         let remaining_hand = std::mem::take(&mut self.hand);
         self.deck.discard(remaining_hand);

@@ -221,6 +221,7 @@ func _on_play_button_pressed() -> void:
 		var max_energy_gained: int = result.get("max_energy_gained", 0)
 		var corruption_added: int = result.get("corruption_added", 0)
 		var corruption_boost_added: int = result.get("corruption_boost_added", 0)
+		var energy_tax_paid: int = result.get("energy_tax_paid", 0)
 
 		var message: String = (
 			"%s played. Noise change: %+d."
@@ -241,6 +242,8 @@ func _on_play_button_pressed() -> void:
 			message += " Max energy +%d!" % max_energy_gained
 		if corruption_added > 0:
 			message += " Corruption +%d." % corruption_added
+		if energy_tax_paid > 0:
+			message += " (+%d energy tax)" % energy_tax_paid
 		if corruption_boost_added > 0:
 			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
 		status_label.text = message
