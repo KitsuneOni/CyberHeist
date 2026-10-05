@@ -223,11 +223,16 @@ func _run() -> void:
 
 	# --- scenario 2: beating it pays better ---------------------------------
 	var credits_before: int = _player.money()
+	var stats_before := int(_flow.run_summary().get("credits_earned", -1))
 	sentry.take_damage(sentry.health())
 	_press_end_turn()
 	_check(_flow.run_snapshot().phase == "hub", "defeating the elite completes the encounter")
 
 	var earned: int = _player.money() - credits_before
+	_check(
+		int(_flow.run_summary().get("credits_earned", -1)) == stats_before + earned,
+		"the elite's payout counts as credits earned in the run's stats"
+	)
 	_check(
 		earned > _standard_combat_credits,
 		"the elite pays more than a standard combat (%d > %d)" % [earned, _standard_combat_credits]

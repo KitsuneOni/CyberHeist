@@ -151,6 +151,11 @@ func _run() -> void:
 		_finish()
 		return
 
+	# Fights pay out through change_credits as they are completed, so what they
+	# earned is already counted; the changes below are measured on top of it.
+	var earned_from_fights := int(_flow.run_summary().get("credits_earned", -1))
+	_check(earned_from_fights > 0, "the fights won paid credits into the run's stats")
+
 	var money_before: int = _player_state.money()
 	_flow.change_credits(120)
 	_flow.change_credits(-80)
@@ -177,7 +182,7 @@ func _run() -> void:
 		"every fight completed is a win (expected %d, got %s)" % [fights_won, summary]
 	)
 	_check(
-		int(summary.get("credits_earned", -1)) == 180,
+		int(summary.get("credits_earned", -1)) == earned_from_fights + 180,
 		"only credit gains count as earned (got %s)" % summary
 	)
 	_check(

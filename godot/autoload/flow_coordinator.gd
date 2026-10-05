@@ -147,7 +147,9 @@ func complete_active_encounter() -> Dictionary:
 		"credits": int(reward.get("credits", 0)),
 		"guaranteed_rare": bool(reward.get("guaranteed_rare", false)),
 	}
-	PlayerStateGlobal.add_credits(_pending_reward["credits"])
+	# Through change_credits rather than straight onto PlayerStateGlobal, so
+	# the payout also counts as credits earned in the run's stats.
+	change_credits(_pending_reward["credits"])
 	_replace_screen(prepared["screen"])
 	return transition
 
@@ -274,6 +276,9 @@ func start_new_run() -> Dictionary:
 
 	_run_deck.reset_to_starter()
 	_reset_run_meters()
+	# The reward screen sits at the hub phase, so a new run can start from it.
+	# Its payout belongs to the old run and must not reach the next one.
+	_pending_reward = {}
 	var player_state: Node = get_node("/root/PlayerStateGlobal")
 	player_state.clear_upgrades()
 	_replace_screen(prepared["screen"])
