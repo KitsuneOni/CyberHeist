@@ -175,7 +175,7 @@ CyberHeist/
 │   │   ├── main.tscn               # permanent bootstrap and ScreenHost
 │   │   ├── contract_hub.tscn       # temporary route-choice test harness
 │   │   ├── combat.tscn             # draw-card combat entered from a choice
-│   │   └── placeholder_encounter.tscn # event/shop/elite placeholder
+│   │   └── placeholder_encounter.tscn # shop placeholder
 │   └── assets/                     # art and audio, empty for now
 ├── docs/
 │   ├── game-flow.md                # lifecycle and scene integration

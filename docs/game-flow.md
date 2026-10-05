@@ -37,9 +37,9 @@ success. `FlowCoordinator.run_snapshot()` returns:
 ```
 
 Supported lifecycle encounter types are `combat`, `event`, `shop`, `elite`
-and `boss`. Combat and boss share the combat gameplay scene; the other types
-currently use a shared placeholder scene until their separate stories are
-implemented.
+and `boss`. Combat, elite and boss share the combat gameplay scene, and events
+have their own. Shops still use a shared placeholder scene until their story
+is implemented.
 
 ## Contract route selection
 
@@ -134,7 +134,8 @@ any of the rules. Leaving it blank keeps the construct chosen for the encounter.
 
 `SentryNode` builds its sentry on `ready` from the run, not from the scene: it
 asks `RunStateNode.active_encounter_profile()` for the active encounter's zone
-and whether it is that zone's boss, then calls `Sentry::for_encounter`. With no
+and whether it is an elite or that zone's boss (`is_elite`, `is_boss`), then
+calls `Sentry::for_encounter` with the matching `SecurityTier`. With no
 run behind the screen — a combat scene opened on its own — it falls back to
 first-zone security, the same way `DrawPhase` falls back to the starter deck.
 
@@ -144,7 +145,8 @@ around it rather than against a fixed bar:
 
 - every one of its actions is louder than the loudest standard action in that
   zone,
-- it resists detection 30 points harder than standard security there, and
+- it resists detection 30 points harder than standard security there,
+- it has 80 integrity, against standard security's 40, and
 - it carries an ability no standard construct has.
 
 That ability is **Grid Lockdown**: noise plus energy taken off the player's
@@ -154,6 +156,42 @@ lands, so ending the turn into it is a decision rather than a surprise.
 screen applies it through `DrawPhase.drain_energy()` after `end_turn()` has
 refreshed the pool — so it bites into the turn it opens, and cards the player
 can no longer afford come up disabled rather than failing when clicked.
+
+### Elite encounters
+
+An elite node is a fight the player chooses to take on for a better payout
+(Trello card E1). It sits between the two other tiers, so it is measured
+against the same zone's standard security:
+
+| | Standard | Elite | Boss |
+| --- | --- | --- | --- |
+| Integrity | 40 | 60 | 80 |
+| Resistance | +10 per zone | standard + 15 | standard + 30 |
+| Ability | none | Reinforce | Grid Lockdown |
+| Credits (zone 1, +per zone) | 25 (+15) | 2x combat | 3x combat |
+| Card reward | any 3 | at least one Rare | at least one Rare |
+
+The elites are BASTION, HYDRA and CERBERUS, in zone order. Their script is the
+zone's standard one, renamed and one point louder per action, followed by
+**Reinforce**: one point of noise, plus 8 integrity restored to the construct
+(4 more per zone deeper). It is announced with the intent as `+8 integrity`, so
+a player can try to finish the elite before it lands. Because it acts on the
+construct itself, `SentryNode` applies it and reports the clamped amount
+regained as `integrity_restored` in the turn outcome. There is nothing for the
+combat screen to apply, unlike a lockdown; it only says so.
+
+Payouts live in `cyber_heist/src/encounter_reward.rs`. `FlowCoordinator`
+reads `RunStateNode.active_encounter_reward()` before completing an encounter
+(completing clears it), and adds the credits to `PlayerStateGlobal` only once
+the transition succeeds. The card reward screen then reads the guarantee
+through `offer_card_reward()` and shows the payout with
+`pending_reward_credits()`. Events and shops settle their own credits, so they
+pay nothing here.
+
+`card_reward::offer_with_guarantee` builds a guaranteed offer. It picks one
+card of the guaranteed rarity or better first, fills the rest from everything
+else so the offer stays distinct, and shuffles where the guaranteed card lands.
+A pool with no such card falls back to an ordinary offer.
 
 ### Detection resistance
 
@@ -263,6 +301,20 @@ loads the boss construct, that its resistance reaches the shared meter and
 blunts a real VPN play, that its lockdown takes energy off the turn it opens,
 and that beating it turns the next zone's nodes from sealed into ones the hub
 offers. It also checks the resistance does not outlive the encounter.
+
+For the elite slice, run:
+
+```sh
+godot --headless --path godot -s res://tests/elite_encounter_test.gd
+```
+
+Generated contracts do not guarantee an elite, so it rolls fresh contracts
+until a first-zone route offers one, clearing a standard combat on the way to
+measure its payout. It checks that the elite node loads combat against BASTION
+with 60 integrity, an ability and its resistance on the shared meter. It then
+checks that Reinforce is announced, restores integrity and is reported on
+screen, and that beating it pays more than that standard combat and offers a
+Rare.
 
 For cross-component sharing and the authored social threshold (50), run:
 
