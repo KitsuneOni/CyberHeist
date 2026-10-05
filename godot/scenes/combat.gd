@@ -82,6 +82,9 @@ func _on_end_turn_button_pressed() -> void:
 		)
 		if drained > 0:
 			message += " Lockdown cost you %d energy this turn." % drained
+		var restored: int = turn.get("integrity_restored", 0)
+		if restored > 0:
+			message += " Reinforce restored %d integrity." % restored
 		var corruption_damage: int = turn.get("corruption_damage", 0)
 		if corruption_damage > 0:
 			message += " Corruption dealt %d damage." % corruption_damage

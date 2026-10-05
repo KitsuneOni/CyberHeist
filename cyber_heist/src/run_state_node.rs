@@ -139,11 +139,13 @@ impl RunStateNode {
                 "ok" => true,
                 "zone" => encounter.zone() as i64,
                 "is_boss" => encounter.is_boss(),
+                "is_elite" => encounter.is_elite(),
             },
             None => vdict! {
                 "ok" => false,
                 "zone" => 0_i64,
                 "is_boss" => false,
+                "is_elite" => false,
             },
         }
     }

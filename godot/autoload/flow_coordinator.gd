@@ -10,9 +10,10 @@ const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
 	"shop": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
-	"elite": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
-	# A boss is a combat encounter; what makes it one is the construct behind
-	# it, which SentryNode builds from the run rather than from the scene.
+	# Elites and bosses are combat encounters; what makes them one is the
+	# construct behind them, which SentryNode builds from the run rather than
+	# from the scene.
+	"elite": COMBAT_SCENE_PATH,
 	"boss": COMBAT_SCENE_PATH,
 }
 
