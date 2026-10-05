@@ -116,6 +116,11 @@ func complete_active_encounter() -> Dictionary:
 	# Paid only once the encounter has actually completed, so a rejected
 	# transition pays nothing. Set before the reward screen is added, since
 	# that screen reads it in its _ready.
+	#
+	# This does not check that the construct was beaten. The combat screen's
+	# Complete Encounter button is a testing shortcut that comes through here
+	# too, so for now skipping a fight pays the same as winning it. See
+	# _on_complete_encounter_pressed in combat.gd.
 	_pending_reward = {
 		"credits": int(reward.get("credits", 0)),
 		"guaranteed_rare": bool(reward.get("guaranteed_rare", false)),
