@@ -34,7 +34,9 @@ pub struct WeakSide {
     pub keywords: Vec<Keyword>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
+/// Ordered from most to least common, so a reward can ask for a rarity "or
+/// better" with a plain comparison.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rarity {
     Common,
     Uncommon,

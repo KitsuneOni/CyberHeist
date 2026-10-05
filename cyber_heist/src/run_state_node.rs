@@ -5,6 +5,7 @@ use godot::prelude::*;
 
 use crate::contract_map::{EncounterNode, EncounterSelection};
 use crate::contract_offer::ContractOffer;
+use crate::encounter_reward;
 use crate::encounter_text::{
     all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
 };
@@ -145,11 +146,33 @@ impl RunStateNode {
                 "ok" => true,
                 "zone" => encounter.zone() as i64,
                 "is_boss" => encounter.is_boss(),
+                "is_elite" => encounter.is_elite(),
             },
             None => vdict! {
                 "ok" => false,
                 "zone" => 0_i64,
                 "is_boss" => false,
+                "is_elite" => false,
+            },
+        }
+    }
+
+    /// What clearing the active encounter pays: `{ok, credits,
+    /// guaranteed_rare}`. Read by `FlowCoordinator` before it completes the
+    /// encounter, since completing clears it. With nothing active it pays
+    /// nothing.
+    #[func]
+    fn active_encounter_reward(&self) -> VarDictionary {
+        match self.state.active_encounter() {
+            Some(encounter) => vdict! {
+                "ok" => true,
+                "credits" => encounter_reward::credits_for(encounter.encounter_type(), encounter.zone()),
+                "guaranteed_rare" => encounter_reward::guaranteed_rarity(encounter.encounter_type()).is_some(),
+            },
+            None => vdict! {
+                "ok" => false,
+                "credits" => 0_i64,
+                "guaranteed_rare" => false,
             },
         }
     }

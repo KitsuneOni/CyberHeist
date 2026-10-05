@@ -82,6 +82,9 @@ func _on_end_turn_button_pressed() -> void:
 		)
 		if drained > 0:
 			message += " Lockdown cost you %d energy this turn." % drained
+		var restored: int = turn.get("integrity_restored", 0)
+		if restored > 0:
+			message += " Reinforce restored %d integrity." % restored
 		var corruption_damage: int = turn.get("corruption_damage", 0)
 		if corruption_damage > 0:
 			message += " Corruption dealt %d damage." % corruption_damage
@@ -108,6 +111,12 @@ func _report_detected() -> void:
 		push_error("Could not report detection: %s" % result.get("error", "unknown error"))
 
 
+# Testing aid, not a gameplay feature: the Complete Encounter button skips the
+# fight without beating the construct, so a playtest can get past a node
+# quickly. It goes through the same completion as a real win, which means it
+# also collects that encounter's full payout, including an elite or boss's
+# credits and guaranteed Rare. Remove the button, or stop it paying out,
+# before this is treated as a real build.
 func _on_complete_encounter_pressed() -> void:
 	if not _can_act():
 		return

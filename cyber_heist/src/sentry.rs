@@ -31,14 +31,27 @@ pub enum SentryAbility {
     /// Takes energy off the player's next turn. The turn they had planned is
     /// spent before they get to it, rather than merely being noisier.
     DrainEnergy(i32),
+    /// Restores the construct's own integrity. An elite comes back from the
+    /// damage the player has done, so a fight dragged out costs them.
+    RestoreIntegrity(i32),
 }
 
 impl SentryAbility {
     /// Energy this ability takes, or zero when it takes none.
     pub fn energy_drain(self) -> i32 {
         match self {
-            Self::None => 0,
             Self::DrainEnergy(amount) => amount.max(0),
+            Self::None | Self::RestoreIntegrity(_) => 0,
+        }
+    }
+
+    /// Integrity this ability restores to the construct, or zero when it
+    /// restores none. A negative amount restores nothing rather than dealing
+    /// damage.
+    pub fn integrity_restored(self) -> i32 {
+        match self {
+            Self::RestoreIntegrity(amount) => amount.max(0),
+            Self::None | Self::DrainEnergy(_) => 0,
         }
     }
 
@@ -52,8 +65,20 @@ impl SentryAbility {
         match self {
             Self::None => String::new(),
             Self::DrainEnergy(amount) => format!("-{} energy", amount.max(0)),
+            Self::RestoreIntegrity(amount) => format!("+{} integrity", amount.max(0)),
         }
     }
+}
+
+/// How hard the security guarding an encounter is, from the ordinary
+/// construct on most nodes up to the boss closing a zone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecurityTier {
+    Standard,
+    /// Guards an elite node: tougher than standard security, with an ability
+    /// of its own, and a better payout for beating it.
+    Elite,
+    Boss,
 }
 
 /// One action a sentry can take on its turn.
@@ -137,6 +162,31 @@ const BOSS_RESISTANCE_BONUS: i32 = 30;
 /// action clears that bar, so a boss turn is always worse than a normal one.
 const BOSS_NOISE_BONUS: i32 = 2;
 
+/// Integrity by tier. Standard security is 40, so an elite is a longer fight
+/// than an ordinary node and the boss closing the zone is longer again.
+const STANDARD_HEALTH: i32 = 40;
+const ELITE_HEALTH: i32 = 60;
+const BOSS_HEALTH: i32 = 80;
+
+/// Elites by zone, falling back to a numbered name the same way bosses do.
+const ELITE_NAMES: [&str; 3] = ["BASTION", "HYDRA", "CERBERUS"];
+
+/// What an elite adds to the resistance of the standard security around it.
+/// Half the boss's bonus, so an elite sits between the two.
+const ELITE_RESISTANCE_BONUS: i32 = 15;
+
+/// What an elite adds to each standard action it runs.
+const ELITE_NOISE_BONUS: i32 = 1;
+
+/// The actions an elite runs on top of the standard ones, renamed so the
+/// player can tell at a glance they are not facing ordinary security.
+const ELITE_SCRIPT: [&str; 3] = ["Deep Scan", "Hardened Trace", "Counter Probe"];
+
+/// Integrity an elite's Reinforce restores in the first zone, and how much
+/// more it restores for every zone deeper.
+const ELITE_REINFORCE_BASE: i32 = 8;
+const ELITE_REINFORCE_PER_ZONE: i32 = 4;
+
 impl Sentry {
     /// Builds a sentry with `script` as its action queue, at a default
     /// health of 50/50. Use `with_health` to set a different amount.
@@ -168,8 +218,40 @@ impl Sentry {
             .map(|(name, noise)| SentryAction::new(name, noise * step))
             .collect();
 
-        let mut sentry = Self::new(&format!("WARDEN-{}", 7 + 2 * zone), script).with_health(40);
+        let mut sentry =
+            Self::new(&format!("WARDEN-{}", 7 + 2 * zone), script).with_health(STANDARD_HEALTH);
         sentry.detection_resistance = Self::standard_resistance(zone);
+        sentry
+    }
+
+    /// The construct guarding an elite node in `zone`.
+    ///
+    /// The zone's standard script run a little louder, then a Reinforce that
+    /// restores some of the integrity the player has knocked off it. More
+    /// integrity than standard security to start with, and harder to recover
+    /// against, but short of the boss on both counts.
+    pub fn elite_for_zone(zone: usize) -> Self {
+        let step = Self::zone_step(zone);
+        let mut script: Vec<SentryAction> = STANDARD_SCRIPT
+            .iter()
+            .zip(ELITE_SCRIPT)
+            .map(|((_, noise), name)| SentryAction::new(name, noise * step + ELITE_NOISE_BONUS))
+            .collect();
+        let reinforce = ELITE_REINFORCE_BASE
+            .saturating_add(ELITE_REINFORCE_PER_ZONE.saturating_mul(step.saturating_sub(1)));
+        script.push(SentryAction::with_ability(
+            "Reinforce",
+            ELITE_NOISE_BONUS,
+            SentryAbility::RestoreIntegrity(reinforce),
+        ));
+
+        let name = ELITE_NAMES
+            .get(zone)
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| format!("SENTINEL-{}", zone + 1));
+
+        let mut sentry = Self::new(&name, script).with_health(ELITE_HEALTH);
+        sentry.detection_resistance = Self::standard_resistance(zone) + ELITE_RESISTANCE_BONUS;
         sentry
     }
 
@@ -194,17 +276,17 @@ impl Sentry {
             .map(|name| name.to_string())
             .unwrap_or_else(|| format!("OVERSEER-{}", zone + 1));
 
-        let mut sentry = Self::new(&name, script);
+        let mut sentry = Self::new(&name, script).with_health(BOSS_HEALTH);
         sentry.detection_resistance = Self::standard_resistance(zone) + BOSS_RESISTANCE_BONUS;
         sentry
     }
 
     /// The construct for an encounter, whichever kind it is.
-    pub fn for_encounter(zone: usize, is_boss: bool) -> Self {
-        if is_boss {
-            Self::boss_for_zone(zone)
-        } else {
-            Self::standard_for_zone(zone)
+    pub fn for_encounter(zone: usize, tier: SecurityTier) -> Self {
+        match tier {
+            SecurityTier::Standard => Self::standard_for_zone(zone),
+            SecurityTier::Elite => Self::elite_for_zone(zone),
+            SecurityTier::Boss => Self::boss_for_zone(zone),
         }
     }
 
@@ -298,6 +380,18 @@ impl Sentry {
         let before = self.health;
         self.health = self.health.saturating_sub(amount).clamp(0, self.max_health);
         before - self.health
+    }
+
+    /// Restores integrity, clamped at `max_health`. Returns how much was
+    /// actually regained, which is nothing at full health and nothing for a
+    /// negative amount — the same clamped-delta contract as `take_damage`.
+    pub fn restore_integrity(&mut self, amount: i32) -> i32 {
+        let before = self.health;
+        self.health = self
+            .health
+            .saturating_add(amount.max(0))
+            .clamp(0, self.max_health);
+        self.health - before
     }
 
     pub fn add_corruption(&mut self, amount: i32) -> i32 {
@@ -581,17 +675,162 @@ mod tests {
     }
 
     #[test]
-    fn for_encounter_fields_the_boss_only_when_the_encounter_is_one() {
+    fn for_encounter_fields_the_construct_for_each_tier() {
         for zone in 0..3 {
             assert_eq!(
-                Sentry::for_encounter(zone, false),
+                Sentry::for_encounter(zone, SecurityTier::Standard),
                 Sentry::standard_for_zone(zone)
             );
             assert_eq!(
-                Sentry::for_encounter(zone, true),
+                Sentry::for_encounter(zone, SecurityTier::Elite),
+                Sentry::elite_for_zone(zone)
+            );
+            assert_eq!(
+                Sentry::for_encounter(zone, SecurityTier::Boss),
                 Sentry::boss_for_zone(zone)
             );
         }
+    }
+
+    /// Elite card scenario 1: an elite's integrity pool is higher than the
+    /// standard construct's in the same zone. The boss stays the longest fight.
+    #[test]
+    fn an_elite_has_more_integrity_than_standard_and_less_than_the_boss() {
+        for zone in 0..4 {
+            let standard = Sentry::standard_for_zone(zone);
+            let elite = Sentry::elite_for_zone(zone);
+            let boss = Sentry::boss_for_zone(zone);
+
+            assert!(
+                elite.max_health() > standard.max_health(),
+                "zone {zone}: elite {} against standard {}",
+                elite.max_health(),
+                standard.max_health()
+            );
+            assert!(
+                boss.max_health() > elite.max_health(),
+                "zone {zone}: boss {} against elite {}",
+                boss.max_health(),
+                elite.max_health()
+            );
+            assert_eq!(elite.health(), elite.max_health(), "starts at full");
+        }
+    }
+
+    /// Elite card scenario 1, against zone 1 exactly as the card words it.
+    #[test]
+    fn the_first_zone_elite_beats_warden_7() {
+        let elite = Sentry::elite_for_zone(0);
+        assert_eq!(elite.name(), "BASTION");
+        assert_eq!(elite.max_health(), 60);
+        assert!(elite.max_health() > Sentry::warden_7().max_health());
+        assert!(elite.has_ability());
+        assert!(!Sentry::warden_7().has_ability());
+    }
+
+    /// Elite card scenario 1: an ability standard constructs do not have.
+    /// Reinforce is the elite's alone; the boss has its lockdown instead.
+    #[test]
+    fn only_an_elite_reinforces() {
+        for zone in 0..4 {
+            let abilities: Vec<SentryAbility> = Sentry::elite_for_zone(zone)
+                .script
+                .iter()
+                .map(|action| action.ability)
+                .filter(|ability| !ability.is_none())
+                .collect();
+            assert_eq!(
+                abilities,
+                vec![SentryAbility::RestoreIntegrity(8 + 4 * zone as i32)],
+                "zone {zone}: one Reinforce, restoring more the deeper the zone"
+            );
+
+            for other in [Sentry::standard_for_zone(zone), Sentry::boss_for_zone(zone)] {
+                assert!(
+                    other
+                        .script
+                        .iter()
+                        .all(|action| action.ability.integrity_restored() == 0),
+                    "zone {zone}: {} should not reinforce",
+                    other.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_elite_resists_detection_between_standard_and_boss() {
+        for zone in 0..4 {
+            let standard = Sentry::standard_for_zone(zone).detection_resistance();
+            let elite = Sentry::elite_for_zone(zone).detection_resistance();
+            let boss = Sentry::boss_for_zone(zone).detection_resistance();
+
+            assert!(
+                standard < elite && elite < boss,
+                "zone {zone}: {standard} < {elite} < {boss}"
+            );
+        }
+    }
+
+    /// An elite is something the player has not met on an ordinary node, so
+    /// none of its actions share a name with the standard script.
+    #[test]
+    fn an_elite_script_shares_no_action_with_the_standard_one() {
+        for zone in 0..4 {
+            let standard = Sentry::standard_for_zone(zone);
+            for action in &Sentry::elite_for_zone(zone).script {
+                assert!(
+                    standard
+                        .script
+                        .iter()
+                        .all(|other| other.name != action.name),
+                    "zone {zone}: {} is not an elite-only action",
+                    action.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_zone_past_the_authored_names_still_has_a_named_elite() {
+        let elite = Sentry::elite_for_zone(ELITE_NAMES.len());
+        assert!(!elite.name().is_empty());
+        assert!(elite.has_ability());
+    }
+
+    #[test]
+    fn reinforce_is_announced_with_the_intent() {
+        let reinforce = SentryAbility::RestoreIntegrity(8);
+        assert_eq!(reinforce.describe(), "+8 integrity");
+        assert_eq!(reinforce.integrity_restored(), 8);
+        assert_eq!(reinforce.energy_drain(), 0, "reinforcing costs no energy");
+        assert_eq!(SentryAbility::DrainEnergy(2).integrity_restored(), 0);
+        assert_eq!(
+            SentryAbility::RestoreIntegrity(-5).integrity_restored(),
+            0,
+            "a nonsense restore does no damage"
+        );
+    }
+
+    #[test]
+    fn restoring_integrity_clamps_at_max_and_reports_what_was_regained() {
+        let mut elite = Sentry::elite_for_zone(0);
+        assert_eq!(elite.restore_integrity(8), 0, "nothing to regain at full");
+
+        elite.take_damage(5);
+        assert_eq!(elite.restore_integrity(8), 5, "clamped, not the full 8");
+        assert_eq!(elite.health(), elite.max_health());
+
+        elite.take_damage(20);
+        assert_eq!(elite.restore_integrity(8), 8);
+        assert_eq!(elite.health(), elite.max_health() - 12);
+
+        assert_eq!(
+            elite.restore_integrity(-30),
+            0,
+            "a negative restore deals nothing"
+        );
+        assert_eq!(elite.health(), elite.max_health() - 12);
     }
 
     /// Deeper zones field harder security, so a boss is measured against the

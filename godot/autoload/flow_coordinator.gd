@@ -10,9 +10,10 @@ const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
 	"shop": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
-	"elite": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
-	# A boss is a combat encounter; what makes it one is the construct behind
-	# it, which SentryNode builds from the run rather than from the scene.
+	# Elites and bosses are combat encounters; what makes them one is the
+	# construct behind them, which SentryNode builds from the run rather than
+	# from the scene.
+	"elite": COMBAT_SCENE_PATH,
 	"boss": COMBAT_SCENE_PATH,
 }
 
@@ -24,6 +25,10 @@ const REWARDING_ENCOUNTERS := ["combat", "elite", "boss"]
 @onready var _run_deck: Node = $RunDeck
 
 var _screen_host: Node
+# What the encounter just cleared paid out, {credits, guaranteed_rare}, kept
+# for the reward screen because completing the encounter clears it from run
+# state before that screen opens.
+var _pending_reward := {}
 
 
 func bind_screen_host(host: Node) -> void:
@@ -119,6 +124,7 @@ func complete_active_encounter() -> Dictionary:
 	var active = run_snapshot().get("active_encounter")
 	if typeof(active) == TYPE_DICTIONARY and active.get("type", "") in REWARDING_ENCOUNTERS:
 		next_scene = CARD_REWARD_SCENE_PATH
+	var reward: Dictionary = _run_state.active_encounter_reward()
 
 	var prepared := _prepare_screen(next_scene)
 	if not prepared.get("ok", false):
@@ -129,14 +135,36 @@ func complete_active_encounter() -> Dictionary:
 		_dispose_screen(prepared["screen"])
 		return transition
 
+	# Paid only once the encounter has actually completed, so a rejected
+	# transition pays nothing. Set before the reward screen is added, since
+	# that screen reads it in its _ready.
+	#
+	# This does not check that the construct was beaten. The combat screen's
+	# Complete Encounter button is a testing shortcut that comes through here
+	# too, so for now skipping a fight pays the same as winning it. See
+	# _on_complete_encounter_pressed in combat.gd.
+	_pending_reward = {
+		"credits": int(reward.get("credits", 0)),
+		"guaranteed_rare": bool(reward.get("guaranteed_rare", false)),
+	}
+	# Through change_credits rather than straight onto PlayerStateGlobal, so
+	# the payout also counts as credits earned in the run's stats.
+	change_credits(_pending_reward["credits"])
 	_replace_screen(prepared["screen"])
 	return transition
 
 
 # Cards on offer after clearing an encounter. Each is a dictionary of
 # {id, name, type, rarity, cost_text, noise_text, description}.
+# An elite or boss offer always includes at least one Rare.
 func offer_card_reward(count: int) -> Array:
-	return _run_deck.offer_reward(count)
+	return _run_deck.offer_reward(count, _pending_reward.get("guaranteed_rare", false))
+
+
+# Credits the encounter just cleared paid out, for the reward screen to show.
+# They are already in PlayerStateGlobal by the time this is read.
+func pending_reward_credits() -> int:
+	return _pending_reward.get("credits", 0)
 
 
 # Adds a chosen reward to the run's deck. False for an id the card database
@@ -186,6 +214,7 @@ func finish_reward() -> Dictionary:
 	if not prepared.get("ok", false):
 		return prepared
 
+	_pending_reward = {}
 	_replace_screen(prepared["screen"])
 	return {"ok": true}
 
@@ -247,6 +276,9 @@ func start_new_run() -> Dictionary:
 
 	_run_deck.reset_to_starter()
 	_reset_run_meters()
+	# The reward screen sits at the hub phase, so a new run can start from it.
+	# Its payout belongs to the old run and must not reach the next one.
+	_pending_reward = {}
 	var player_state: Node = get_node("/root/PlayerStateGlobal")
 	player_state.clear_upgrades()
 	_replace_screen(prepared["screen"])

@@ -9,7 +9,7 @@ use godot::prelude::*;
 
 use crate::noise_meter::NoiseMeter;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
-use crate::sentry::Sentry;
+use crate::sentry::{SecurityTier, Sentry};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -42,9 +42,9 @@ impl INode for SentryNode {
 
         // Which construct is on the other side of this encounter is decided by
         // where the player has got to on the contract, not by the scene: a
-        // zone's boss is a harder build of the security around it.
+        // zone's elites and boss are harder builds of the security around them.
         self.sentry = match self.encounter_profile() {
-            Some((zone, is_boss)) => Sentry::for_encounter(zone, is_boss),
+            Some((zone, tier)) => Sentry::for_encounter(zone, tier),
             None => Sentry::warden_7(),
         };
 
@@ -65,10 +65,10 @@ impl INode for SentryNode {
 }
 
 impl SentryNode {
-    /// `(zone, is_boss)` for the encounter being played, or `None` when there
-    /// is no run behind this screen. The run is optional so the combat scene
+    /// `(zone, tier)` for the encounter being played, or `None` when there is
+    /// no run behind this screen. The run is optional so the combat scene
     /// stays runnable on its own, falling back to first-zone security.
-    fn encounter_profile(&self) -> Option<(usize, bool)> {
+    fn encounter_profile(&self) -> Option<(usize, SecurityTier)> {
         let run_state = self
             .base()
             .try_get_node_as::<RunStateNode>(RUN_STATE_PATH)?;
@@ -78,7 +78,14 @@ impl SentryNode {
         }
 
         let zone = usize::try_from(profile.at("zone").to::<i64>()).unwrap_or(0);
-        Some((zone, profile.at("is_boss").booleanize()))
+        let tier = if profile.at("is_boss").booleanize() {
+            SecurityTier::Boss
+        } else if profile.at("is_elite").booleanize() {
+            SecurityTier::Elite
+        } else {
+            SecurityTier::Standard
+        };
+        Some((zone, tier))
     }
 
     fn noise_meter(&self) -> Gd<NoiseMeter> {
@@ -217,7 +224,9 @@ impl SentryNode {
     }
 
     /// Takes the sentry's turn and reports what it did:
-    /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed}`.
+    /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed,
+    /// energy_drain, ability, integrity_restored, corruption_damage,
+    /// corruption, defeated}`.
     ///
     /// `ok` is false when nothing is queued, the meter is already full or the
     /// screen is detached. In those cases neither intent nor noise changes.
@@ -244,6 +253,11 @@ impl SentryNode {
                 let noise = meter.bind().get_noise();
                 let max_noise = meter.bind().get_max_noise();
                 let run_failed = meter.bind().is_at_cap();
+                // An elite's Reinforce lands on the construct itself, so unlike
+                // a lockdown there is nothing for the combat screen to apply.
+                let integrity_restored = self
+                    .sentry
+                    .restore_integrity(action.ability.integrity_restored());
 
                 vdict! {
                     "ok" => true,
@@ -257,6 +271,8 @@ impl SentryNode {
                     // since the player's energy belongs to DrawPhase.
                     "energy_drain" => action.ability.energy_drain(),
                     "ability" => action.ability.describe().as_str(),
+                    // The actual amount regained, clamped at max integrity.
+                    "integrity_restored" => integrity_restored,
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
                     "defeated" => self.sentry.is_defeated(),
@@ -277,6 +293,7 @@ impl SentryNode {
                     "run_failed" => run_failed,
                     "energy_drain" => 0,
                     "ability" => "",
+                    "integrity_restored" => 0,
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
                     "defeated" => self.sentry.is_defeated(),

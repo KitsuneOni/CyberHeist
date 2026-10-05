@@ -31,7 +31,5 @@ func _description_for(encounter_type: String) -> String:
 			return "An unexpected opportunity appears inside the target network."
 		"shop":
 			return "Spend credits on equipment before continuing the contract."
-		"elite":
-			return "A high-risk security encounter guards the end of the route."
 		_:
 			return "The selected encounter has loaded."

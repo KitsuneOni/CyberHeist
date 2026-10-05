@@ -57,6 +57,12 @@ impl ActiveEncounter {
     pub fn is_boss(&self) -> bool {
         self.encounter_type.is_boss()
     }
+
+    /// Whether this is an elite node, guarded by tougher security than the
+    /// combat around it.
+    pub fn is_elite(&self) -> bool {
+        self.encounter_type == EncounterType::Elite
+    }
 }
 
 /// Everything the end screen reports about a run, read in one go.

@@ -7,6 +7,7 @@
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
+use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
 use crate::card_reward;
 use crate::card_text;
@@ -109,8 +110,11 @@ impl RunDeckNode {
     /// A reward offer of up to `count` distinct cards drawn from the whole
     /// card pool, each with what the player needs to choose between them:
     /// `{id, name, type, rarity, cost_text, noise_text, description}`.
+    ///
+    /// `guaranteed_rare` makes sure at least one of them is Rare or better,
+    /// which is what clearing an elite or boss earns.
     #[func]
-    fn offer_reward(&self, count: i32) -> Array<VarDictionary> {
+    fn offer_reward(&self, count: i32, guaranteed_rare: bool) -> Array<VarDictionary> {
         let mut offered: Array<VarDictionary> = Array::new();
 
         let Some(db) = self.card_database() else {
@@ -119,9 +123,13 @@ impl RunDeckNode {
         };
         let db = db.bind();
 
-        let pool: Vec<String> = db.all().map(|card| card.id.clone()).collect();
+        let pool: Vec<(String, Rarity)> = db
+            .all()
+            .map(|card| (card.id.clone(), card.rarity))
+            .collect();
         let count = count.max(0) as usize;
-        let ids = card_reward::offer_from_pool(&pool, count, &mut rand::rng());
+        let guaranteed = guaranteed_rare.then_some(Rarity::Rare);
+        let ids = card_reward::offer_with_guarantee(&pool, count, guaranteed, &mut rand::rng());
 
         for id in ids {
             let Some(card) = db.get(&id) else {
