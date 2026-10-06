@@ -166,7 +166,11 @@ const BOSS_NOISE_BONUS: i32 = 2;
 /// than an ordinary node and the boss closing the zone is longer again.
 const STANDARD_HEALTH: i32 = 40;
 const ELITE_HEALTH: i32 = 60;
-const BOSS_HEALTH: i32 = 80;
+
+/// Integrity of the first zone's boss, and how much more each boss deeper in
+/// the contract has than the one before it.
+const BOSS_HEALTH_BASE: i32 = 80;
+const BOSS_HEALTH_PER_ZONE: i32 = 20;
 
 /// Elites by zone, falling back to a numbered name the same way bosses do.
 const ELITE_NAMES: [&str; 3] = ["BASTION", "HYDRA", "CERBERUS"];
@@ -258,7 +262,8 @@ impl Sentry {
     /// The boss closing `zone`.
     ///
     /// Louder than every standard action in the same zone, harder to recover
-    /// against, and carrying a lockdown that no standard construct has.
+    /// against, and carrying a lockdown that no standard construct has. Each
+    /// boss also has more integrity than the one closing the zone before.
     pub fn boss_for_zone(zone: usize) -> Self {
         let floor = Self::loudest_standard_noise(zone) + BOSS_NOISE_BONUS;
         let script = vec![
@@ -276,7 +281,10 @@ impl Sentry {
             .map(|name| name.to_string())
             .unwrap_or_else(|| format!("OVERSEER-{}", zone + 1));
 
-        let mut sentry = Self::new(&name, script).with_health(BOSS_HEALTH);
+        let health = BOSS_HEALTH_BASE.saturating_add(
+            BOSS_HEALTH_PER_ZONE.saturating_mul(Self::zone_step(zone).saturating_sub(1)),
+        );
+        let mut sentry = Self::new(&name, script).with_health(health);
         sentry.detection_resistance = Self::standard_resistance(zone) + BOSS_RESISTANCE_BONUS;
         sentry
     }
