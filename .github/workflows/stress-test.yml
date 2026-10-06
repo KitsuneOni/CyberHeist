@@ -106,9 +106,15 @@ jobs:
       # Walks a generated contract to its first boss, fights it, and follows
       # the zone unlock back onto the map. Covers what the Rust tests cannot
       # see: which construct a boss node actually loads, its resistance
-      # reaching the shared meter, and its lockdown taking the player's energy.
+      # reaching the shared meter, and its Purge clearing corruption.
       - name: Run headless zone boss encounter test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/boss_encounter_test.gd
+
+      # Walks to the zone-2 and zone-3 bosses: BLACK MONOLITH's Firewall
+      # blocking plain damage but not penetrating, and THE ARCHITECT's Grid
+      # Lockdown taking energy off the turn it opens.
+      - name: Run headless boss signature test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/boss_signature_test.gd
 
       # Checks the contract offers reach GDScript in the shape the selection
       # screen reads, and that accepting one really rebuilds the hub's map.

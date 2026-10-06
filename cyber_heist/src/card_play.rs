@@ -507,6 +507,34 @@ mod tests {
         assert_eq!(combat.sentry.health(), combat.sentry.max_health() - 6);
     }
 
+    /// Boss card E2b: BLACK MONOLITH's firewall soaks up a plain Strike, and
+    /// the card reports what was blocked as well as what got through.
+    #[test]
+    fn a_firewall_blocks_plain_damage_before_it_reaches_integrity() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.sentry.raise_firewall(4);
+        let health_before = combat.sentry.health();
+
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_blocked, 4);
+        assert_eq!(played.damage_dealt, 2);
+        assert_eq!(combat.sentry.health(), health_before - 2);
+        assert_eq!(combat.sentry.firewall(), 0);
+    }
+
+    /// Penetrating damage is what goes "straight through the target's block",
+    /// so it is the answer to a firewall.
+    #[test]
+    fn penetrating_damage_goes_straight_through_a_firewall() {
+        let mut combat = Combat::with_card("trojan", 0);
+        combat.sentry.raise_firewall(12);
+
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_blocked, 0);
+        assert_eq!(played.damage_dealt, 6);
+        assert_eq!(combat.sentry.firewall(), 12, "the firewall is untouched");
+    }
+
     #[test]
     fn a_flipped_card_deals_its_weak_side_damage() {
         let mut combat = Combat::with_card("nigerian_king", 49);

@@ -626,17 +626,12 @@ mod tests {
             let boss = Sentry::boss_for_zone(zone);
             assert!(boss.has_ability(), "zone {zone}: the boss needs an ability");
 
-            let abilities: Vec<SentryAbility> = boss
+            let abilities = boss
                 .script
                 .iter()
-                .map(|action| action.ability)
-                .filter(|ability| !ability.is_none())
-                .collect();
-            assert_eq!(
-                abilities,
-                vec![SentryAbility::DrainEnergy(1 + zone as i32)],
-                "zone {zone}: the lockdown takes energy, and deeper zones take more"
-            );
+                .filter(|action| !action.ability.is_none())
+                .count();
+            assert_eq!(abilities, 1, "zone {zone}: one signature ability per boss");
         }
     }
 
@@ -664,15 +659,12 @@ mod tests {
 
     #[test]
     fn a_drained_turn_is_announced_with_the_intent() {
-        let boss = Sentry::boss_for_zone(0);
-        let lockdown = boss
-            .script
-            .iter()
-            .find(|action| !action.ability.is_none())
-            .expect("the boss has a lockdown");
+        let boss = Sentry::boss_for_zone(2);
+        let lockdown = signature(&boss);
 
-        assert_eq!(lockdown.ability.energy_drain(), 1);
-        assert_eq!(lockdown.ability.describe(), "-1 energy");
+        assert_eq!(lockdown.name, "Grid Lockdown");
+        assert_eq!(lockdown.ability.energy_drain(), 3);
+        assert_eq!(lockdown.ability.describe(), "-3 energy");
         assert_eq!(SentryAbility::None.energy_drain(), 0);
         assert_eq!(SentryAbility::None.describe(), "");
         assert_eq!(
@@ -913,6 +905,172 @@ mod tests {
     #[test]
     fn the_first_zone_boss_keeps_its_integrity() {
         assert_eq!(Sentry::boss_for_zone(0).max_health(), 80);
+    }
+
+    /// The one action in a boss's script that does more than make noise.
+    fn signature(boss: &Sentry) -> &SentryAction {
+        boss.script
+            .iter()
+            .find(|action| !action.ability.is_none())
+            .expect("every boss has a signature ability")
+    }
+
+    /// Boss card E2b: each authored boss has its own signature ability.
+    /// ICEBREAKER purges corruption, BLACK MONOLITH raises a firewall and THE
+    /// ARCHITECT keeps the Grid Lockdown, so no two bosses ask the same thing
+    /// of the player's deck.
+    #[test]
+    fn each_authored_boss_has_its_own_signature_ability() {
+        let signatures: Vec<(String, SentryAbility)> = (0..BOSS_NAMES.len())
+            .map(|zone| {
+                let boss = Sentry::boss_for_zone(zone);
+                let action = signature(&boss);
+                (action.name.clone(), action.ability)
+            })
+            .collect();
+
+        assert_eq!(
+            signatures,
+            vec![
+                ("Purge".to_string(), SentryAbility::Purge),
+                (
+                    "Firewall".to_string(),
+                    SentryAbility::Firewall(FIREWALL_BLOCK)
+                ),
+                ("Grid Lockdown".to_string(), SentryAbility::DrainEnergy(3)),
+            ]
+        );
+    }
+
+    /// A contract deeper than the authored bosses falls back to the lockdown,
+    /// so a numbered boss still has something to announce.
+    #[test]
+    fn a_boss_past_the_authored_ones_falls_back_to_the_lockdown() {
+        let zone = BOSS_NAMES.len();
+        let boss = Sentry::boss_for_zone(zone);
+        let lockdown = signature(&boss);
+        assert_eq!(lockdown.name, "Grid Lockdown");
+        assert_eq!(
+            lockdown.ability,
+            SentryAbility::DrainEnergy(1 + zone as i32)
+        );
+    }
+
+    /// Boss card E2b: what a signature ability does is shown with the intent,
+    /// before the player ends the turn into it.
+    #[test]
+    fn signature_abilities_say_what_they_do_on_the_intent() {
+        assert_eq!(SentryAbility::Purge.describe(), "clears corruption");
+        assert_eq!(SentryAbility::Firewall(12).describe(), "blocks 12 damage");
+        assert_eq!(
+            SentryAbility::Firewall(-4).describe(),
+            "blocks 0 damage",
+            "a nonsense firewall blocks nothing rather than going negative"
+        );
+    }
+
+    /// Only Purge purges and only Firewall blocks, so the node can apply every
+    /// ability the same way without matching on which one it is.
+    #[test]
+    fn each_ability_reports_only_its_own_effect() {
+        assert!(SentryAbility::Purge.purges_corruption());
+        assert_eq!(SentryAbility::Purge.firewall_raised(), 0);
+        assert_eq!(SentryAbility::Purge.energy_drain(), 0);
+
+        assert_eq!(SentryAbility::Firewall(12).firewall_raised(), 12);
+        assert_eq!(SentryAbility::Firewall(-3).firewall_raised(), 0);
+        assert!(!SentryAbility::Firewall(12).purges_corruption());
+        assert_eq!(SentryAbility::Firewall(12).integrity_restored(), 0);
+
+        for other in [
+            SentryAbility::None,
+            SentryAbility::DrainEnergy(2),
+            SentryAbility::RestoreIntegrity(8),
+        ] {
+            assert!(!other.purges_corruption(), "{other:?}");
+            assert_eq!(other.firewall_raised(), 0, "{other:?}");
+        }
+    }
+
+    /// Purge wipes every point of corruption on the construct and reports how
+    /// much went, so a corruption deck has to land its damage before it does.
+    #[test]
+    fn purge_clears_all_corruption_and_reports_how_much() {
+        let mut boss = Sentry::boss_for_zone(0);
+        boss.add_corruption(5);
+
+        assert_eq!(boss.purge_corruption(), 5);
+        assert_eq!(boss.corruption(), 0);
+        assert_eq!(boss.purge_corruption(), 0, "nothing left to purge");
+    }
+
+    /// A firewall soaks up plain damage before integrity, and reports what it
+    /// blocked separately from what got through.
+    #[test]
+    fn a_firewall_absorbs_blockable_damage_until_it_runs_out() {
+        let mut boss = Sentry::boss_for_zone(1);
+        assert_eq!(boss.firewall(), 0, "no firewall until the ability runs");
+        assert_eq!(boss.raise_firewall(12), 12);
+
+        assert_eq!(
+            boss.take_blockable_damage(8),
+            BlockedDamage {
+                blocked: 8,
+                dealt: 0
+            }
+        );
+        assert_eq!(boss.health(), boss.max_health());
+        assert_eq!(boss.firewall(), 4);
+
+        assert_eq!(
+            boss.take_blockable_damage(10),
+            BlockedDamage {
+                blocked: 4,
+                dealt: 6
+            }
+        );
+        assert_eq!(boss.health(), boss.max_health() - 6);
+        assert_eq!(boss.firewall(), 0);
+    }
+
+    /// Penetrating damage and corruption go through `take_damage`, which a
+    /// firewall does not stand in front of.
+    #[test]
+    fn unblockable_damage_ignores_the_firewall() {
+        let mut boss = Sentry::boss_for_zone(1);
+        boss.raise_firewall(12);
+
+        assert_eq!(boss.take_damage(6), 6);
+        assert_eq!(boss.firewall(), 12, "untouched");
+
+        boss.add_corruption(3);
+        assert_eq!(boss.resolve_corruption_tick(), 3);
+        assert_eq!(boss.firewall(), 12);
+    }
+
+    /// The firewall covers one player turn: it comes down when the boss's next
+    /// turn starts, and raising it never stacks or goes negative.
+    #[test]
+    fn a_firewall_comes_down_and_does_not_stack() {
+        let mut boss = Sentry::boss_for_zone(1);
+        boss.raise_firewall(12);
+        assert_eq!(boss.raise_firewall(12), 12, "raised again, not doubled");
+        assert_eq!(
+            boss.raise_firewall(-5),
+            12,
+            "a negative amount changes nothing"
+        );
+
+        assert_eq!(boss.drop_firewall(), 12);
+        assert_eq!(boss.firewall(), 0);
+        assert_eq!(boss.drop_firewall(), 0);
+        assert_eq!(
+            boss.take_blockable_damage(5),
+            BlockedDamage {
+                blocked: 0,
+                dealt: 5
+            }
+        );
     }
 
     #[test]
