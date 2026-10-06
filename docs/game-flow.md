@@ -272,15 +272,36 @@ around it rather than against a fixed bar:
 - it has more integrity than standard security's 40, starting at 80 for
   ICEBREAKER and rising 20 per zone (BLACK MONOLITH 100, THE ARCHITECT 120),
   so every boss is a longer fight than the one before it, and
-- it carries an ability no standard construct has.
+- it carries a signature ability no standard construct has.
 
-That ability is **Grid Lockdown**: noise plus energy taken off the player's
-next turn, one point per zone deep. It is announced with the intent before it
-lands, so ending the turn into it is a decision rather than a surprise.
-`SentryNode` reports it in the turn outcome as `energy_drain`, and the combat
-screen applies it through `DrawPhase.drain_energy()` after `end_turn()` has
-refreshed the pool — so it bites into the turn it opens, and cards the player
-can no longer afford come up disabled rather than failing when clicked.
+Each boss's signature is its second action, announced with the intent before
+it lands, so ending the turn into it is a decision rather than a surprise.
+They each ask something different of the deck (Trello #100, E2b):
+
+| Zone | Boss | Signature | What it does |
+| --- | --- | --- | --- |
+| 1 | ICEBREAKER | **Purge** | clears all corruption on it |
+| 2 | BLACK MONOLITH | **Firewall** | blocks the next 12 plain damage |
+| 3+ | THE ARCHITECT | **Grid Lockdown** | takes energy off the next turn, one per zone deep (3 here) |
+
+**Purge** runs after that turn's corruption tick, so it clears what would have
+ticked next. A corruption deck has to land its damage before the Purge comes
+round. `SentryNode` reports the amount cleared as `corruption_purged`.
+
+**Firewall** goes up on the boss's turn and covers the player's next turn
+only: `SentryNode` drops it before anything else when the boss's following
+turn starts. It absorbs a card's plain Damage and wears down by what it
+blocked. Penetrating damage and corruption go straight through it, which is
+what the Penetrating card text has always said ("straight through the
+target's block"). `play_card` reports what it soaked up as `damage_blocked`,
+the turn outcome reports the firewall raised as `firewall`, and the health
+line shows `[Firewall N]` while one is up.
+
+**Grid Lockdown** is reported in the turn outcome as `energy_drain`, and the
+combat screen applies it through `DrawPhase.drain_energy()` after `end_turn()`
+has refreshed the pool — so it bites into the turn it opens, and cards the
+player can no longer afford come up disabled rather than failing when clicked.
+Bosses past the authored three keep the lockdown.
 
 ### Elite encounters
 
@@ -292,7 +313,7 @@ against the same zone's standard security:
 | --- | --- | --- | --- |
 | Integrity | 40 | 60 | 80 (+20 per zone) |
 | Resistance | +10 per zone | standard + 15 | standard + 30 |
-| Ability | none | Reinforce | Grid Lockdown |
+| Ability | none | Reinforce | its own signature (see above) |
 | Credits (zone 1, +per zone) | 25 (+15) | 2x combat | 3x combat |
 | Card reward | any 3 | at least one Rare | at least one Rare |
 
