@@ -269,7 +269,9 @@ around it rather than against a fixed bar:
 - every one of its actions is louder than the loudest standard action in that
   zone,
 - it resists detection 30 points harder than standard security there,
-- it has 80 integrity, against standard security's 40, and
+- it has more integrity than standard security's 40, starting at 80 for
+  ICEBREAKER and rising 20 per zone (BLACK MONOLITH 100, THE ARCHITECT 120),
+  so every boss is a longer fight than the one before it, and
 - it carries an ability no standard construct has.
 
 That ability is **Grid Lockdown**: noise plus energy taken off the player's
@@ -288,7 +290,7 @@ against the same zone's standard security:
 
 | | Standard | Elite | Boss |
 | --- | --- | --- | --- |
-| Integrity | 40 | 60 | 80 |
+| Integrity | 40 | 60 | 80 (+20 per zone) |
 | Resistance | +10 per zone | standard + 15 | standard + 30 |
 | Ability | none | Reinforce | Grid Lockdown |
 | Credits (zone 1, +per zone) | 25 (+15) | 2x combat | 3x combat |
