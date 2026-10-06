@@ -223,6 +223,13 @@ impl SentryNode {
         self.sentry.corruption_boost()
     }
 
+    /// Which phase the construct is fighting in: 1, or 2 once THE ARCHITECT
+    /// has escalated below half integrity.
+    #[func]
+    fn phase(&self) -> u32 {
+        self.sentry.phase()
+    }
+
     /// Plain damage BLACK MONOLITH's firewall will still absorb this turn, or
     /// zero when none is up.
     #[func]
@@ -233,7 +240,12 @@ impl SentryNode {
     /// Takes the sentry's turn and reports what it did:
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed,
     /// energy_drain, ability, integrity_restored, corruption_purged, firewall,
-    /// corruption_damage, corruption, defeated}`.
+    /// corruption_damage, corruption, phase, escalated, defeated}`.
+    ///
+    /// `escalated` is true when the corruption tick took the construct into
+    /// its second phase. It spends that turn escalating, so `ok` is false and
+    /// no action runs: the one it had announced belonged to the old set, and
+    /// the new set's first action has not been shown to the player yet.
     ///
     /// `ok` is false when nothing is queued, the meter is already full or the
     /// screen is detached. In those cases neither intent nor noise changes.
@@ -245,13 +257,16 @@ impl SentryNode {
         // so it comes down before anything else in the construct's turn.
         self.sentry.drop_firewall();
 
+        let phase_before = self.sentry.phase();
         let corruption_damage = self.sentry.resolve_corruption_tick();
         let corruption = self.sentry.corruption();
+        let escalated = self.sentry.phase() != phase_before;
 
         let action = if self.base().is_inside_tree()
             && !self.base().is_queued_for_deletion()
             && !meter.bind().is_at_cap()
             && !self.sentry.is_defeated()
+            && !escalated
         {
             self.sentry.perform_queued_action()
         } else {
@@ -298,6 +313,8 @@ impl SentryNode {
                     "firewall" => firewall,
                     "corruption_damage" => corruption_damage,
                     "corruption" => self.sentry.corruption(),
+                    "phase" => self.sentry.phase(),
+                    "escalated" => false,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }
@@ -321,6 +338,8 @@ impl SentryNode {
                     "firewall" => 0,
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
+                    "phase" => self.sentry.phase(),
+                    "escalated" => escalated,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }

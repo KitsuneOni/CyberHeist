@@ -169,6 +169,11 @@ pub struct Sentry {
     /// Plain damage still to be absorbed before integrity, raised by a
     /// Firewall and dropped when the construct's next turn starts.
     firewall: i32,
+    /// 1, or 2 once the construct has escalated.
+    phase: u32,
+    /// The action set it switches to below half integrity. Empty for every
+    /// construct but THE ARCHITECT, which is what "has no second phase" means.
+    second_phase: Vec<SentryAction>,
 }
 
 /// The actions every standard construct works through, before the zone's
@@ -209,6 +214,10 @@ const BOSS_HEALTH_PER_ZONE: i32 = 20;
 /// Plain damage BLACK MONOLITH's Firewall absorbs: two Strikes' worth.
 const FIREWALL_BLOCK: i32 = 12;
 
+/// THE ARCHITECT's zone. It closes the longest contract on offer, so it is
+/// the final boss, and the only one with a second phase.
+const ARCHITECT_ZONE: usize = 2;
+
 /// Elites by zone, falling back to a numbered name the same way bosses do.
 const ELITE_NAMES: [&str; 3] = ["BASTION", "HYDRA", "CERBERUS"];
 
@@ -245,6 +254,8 @@ impl Sentry {
             corruption: 0,
             corruption_boost: 0,
             firewall: 0,
+            phase: 1,
+            second_phase: Vec::new(),
         }
     }
 
@@ -321,7 +332,29 @@ impl Sentry {
         );
         let mut sentry = Self::new(&name, script).with_health(health);
         sentry.detection_resistance = Self::standard_resistance(zone) + BOSS_RESISTANCE_BONUS;
+        if zone == ARCHITECT_ZONE {
+            sentry.second_phase = Self::architect_second_phase(zone, floor);
+        }
         sentry
+    }
+
+    /// What THE ARCHITECT switches to below half integrity: every other
+    /// boss's signature in turn, so the player has to answer all of them at
+    /// once, and a lockdown louder than its first.
+    fn architect_second_phase(zone: usize, floor: i32) -> Vec<SentryAction> {
+        vec![
+            SentryAction::with_ability("Rewrite Protocol", floor + 1, SentryAbility::Purge),
+            SentryAction::with_ability(
+                "Fortify Core",
+                floor + 1,
+                SentryAbility::Firewall(FIREWALL_BLOCK),
+            ),
+            SentryAction::with_ability(
+                "Total Lockdown",
+                floor + 3,
+                SentryAbility::DrainEnergy(Self::zone_step(zone)),
+            ),
+        ]
     }
 
     /// The ability that sets the boss closing `zone` apart, so each boss asks
@@ -438,10 +471,42 @@ impl Sentry {
     ///
     /// A negative `amount` would heal the sentry, clamped at `max_health`;
     /// nothing currently does this, but the clamp makes it safe either way.
+    ///
+    /// Every source of damage comes through here, so this is also where a
+    /// construct with a second phase escalates once it is below half.
     pub fn take_damage(&mut self, amount: i32) -> i32 {
         let before = self.health;
         self.health = self.health.saturating_sub(amount).clamp(0, self.max_health);
+        self.escalate_if_below_half();
         before - self.health
+    }
+
+    /// Which phase the construct is fighting in: 1, or 2 once it has
+    /// escalated.
+    pub fn phase(&self) -> u32 {
+        self.phase
+    }
+
+    /// Whether this construct switches to a new action set below half, or
+    /// already has.
+    #[cfg(test)]
+    pub fn has_second_phase(&self) -> bool {
+        self.phase == 2 || !self.second_phase.is_empty()
+    }
+
+    /// Switches to the second action set, from its first action, the first
+    /// time integrity is below half. A defeated construct does not escalate:
+    /// the fight is over, not entering a new phase.
+    fn escalate_if_below_half(&mut self) {
+        if self.phase == 1
+            && !self.second_phase.is_empty()
+            && !self.is_defeated()
+            && self.health.saturating_mul(2) < self.max_health
+        {
+            self.script = std::mem::take(&mut self.second_phase);
+            self.next_index = 0;
+            self.phase = 2;
+        }
     }
 
     /// Applies damage a firewall can stand in front of, such as a card's plain
