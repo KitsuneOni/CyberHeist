@@ -303,6 +303,35 @@ has refreshed the pool — so it bites into the turn it opens, and cards the
 player can no longer afford come up disabled rather than failing when clicked.
 Bosses past the authored three keep the lockdown.
 
+### THE ARCHITECT's second phase
+
+THE ARCHITECT closes the longest contract on offer, so it is the final boss,
+and it is the only construct with a second phase (Trello #100, E2c). The
+first time its integrity drops **below** half (under 60 of 120; exactly 60 is
+still phase 1), it switches to a new action set, starting from its first
+action:
+
+| Action | Noise | Ability |
+| --- | --- | --- |
+| Rewrite Protocol | 12 | Purge |
+| Fortify Core | 12 | Firewall 12 |
+| Total Lockdown | 14 | -3 energy |
+
+The check is in `Sentry::take_damage`, so a card, penetrating damage or a
+corruption tick can all set it off. It happens once: healing back above half
+does not undo it, and a blow that takes it straight to zero ends the fight
+rather than starting a phase.
+
+From then on the intent reads `THE ARCHITECT [PHASE 2] will: ...`, and the
+status line says once that it escalated. `SentryNode.phase()` exposes the
+phase, and the turn outcome carries `phase` and `escalated`.
+
+If the corruption tick at the start of its own turn is what takes it below
+half, it spends that turn escalating: no action runs, `ok` is false and
+`escalated` is true. The action it had announced belonged to the old set, and
+the new set's first action has not been shown yet, so running either would
+spring something on the player they never saw coming.
+
 ### Elite encounters
 
 An elite node is a fight the player chooses to take on for a better payout
