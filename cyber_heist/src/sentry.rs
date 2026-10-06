@@ -34,6 +34,13 @@ pub enum SentryAbility {
     /// Restores the construct's own integrity. An elite comes back from the
     /// damage the player has done, so a fight dragged out costs them.
     RestoreIntegrity(i32),
+    /// Wipes every point of corruption off the construct. ICEBREAKER's
+    /// signature: a corruption deck has to cash its stacks in before it lands.
+    Purge,
+    /// Raises a firewall that absorbs this much plain damage during the
+    /// player's next turn. BLACK MONOLITH's signature: penetrating damage and
+    /// corruption go straight through it.
+    Firewall(i32),
 }
 
 impl SentryAbility {
@@ -41,7 +48,7 @@ impl SentryAbility {
     pub fn energy_drain(self) -> i32 {
         match self {
             Self::DrainEnergy(amount) => amount.max(0),
-            Self::None | Self::RestoreIntegrity(_) => 0,
+            Self::None | Self::RestoreIntegrity(_) | Self::Purge | Self::Firewall(_) => 0,
         }
     }
 
@@ -51,7 +58,21 @@ impl SentryAbility {
     pub fn integrity_restored(self) -> i32 {
         match self {
             Self::RestoreIntegrity(amount) => amount.max(0),
-            Self::None | Self::DrainEnergy(_) => 0,
+            Self::None | Self::DrainEnergy(_) | Self::Purge | Self::Firewall(_) => 0,
+        }
+    }
+
+    /// Whether this ability wipes the construct's corruption.
+    pub fn purges_corruption(self) -> bool {
+        matches!(self, Self::Purge)
+    }
+
+    /// Damage the firewall this ability raises will absorb, or zero when it
+    /// raises none. A negative amount raises nothing.
+    pub fn firewall_raised(self) -> i32 {
+        match self {
+            Self::Firewall(amount) => amount.max(0),
+            Self::None | Self::DrainEnergy(_) | Self::RestoreIntegrity(_) | Self::Purge => 0,
         }
     }
 
@@ -66,6 +87,8 @@ impl SentryAbility {
             Self::None => String::new(),
             Self::DrainEnergy(amount) => format!("-{} energy", amount.max(0)),
             Self::RestoreIntegrity(amount) => format!("+{} integrity", amount.max(0)),
+            Self::Purge => "clears corruption".to_string(),
+            Self::Firewall(amount) => format!("blocks {} damage", amount.max(0)),
         }
     }
 }
@@ -79,6 +102,14 @@ pub enum SecurityTier {
     /// of its own, and a better payout for beating it.
     Elite,
     Boss,
+}
+
+/// What a hit that a firewall can stand in front of actually did: how much the
+/// firewall absorbed, and how much integrity was lost behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockedDamage {
+    pub blocked: i32,
+    pub dealt: i32,
 }
 
 /// One action a sentry can take on its turn.
@@ -135,6 +166,9 @@ pub struct Sentry {
     max_health: i32,
     corruption: i32,
     corruption_boost: i32,
+    /// Plain damage still to be absorbed before integrity, raised by a
+    /// Firewall and dropped when the construct's next turn starts.
+    firewall: i32,
 }
 
 /// The actions every standard construct works through, before the zone's
@@ -172,6 +206,9 @@ const ELITE_HEALTH: i32 = 60;
 const BOSS_HEALTH_BASE: i32 = 80;
 const BOSS_HEALTH_PER_ZONE: i32 = 20;
 
+/// Plain damage BLACK MONOLITH's Firewall absorbs: two Strikes' worth.
+const FIREWALL_BLOCK: i32 = 12;
+
 /// Elites by zone, falling back to a numbered name the same way bosses do.
 const ELITE_NAMES: [&str; 3] = ["BASTION", "HYDRA", "CERBERUS"];
 
@@ -207,6 +244,7 @@ impl Sentry {
             max_health: 50,
             corruption: 0,
             corruption_boost: 0,
+            firewall: 0,
         }
     }
 
@@ -262,17 +300,14 @@ impl Sentry {
     /// The boss closing `zone`.
     ///
     /// Louder than every standard action in the same zone, harder to recover
-    /// against, and carrying a lockdown that no standard construct has. Each
-    /// boss also has more integrity than the one closing the zone before.
+    /// against, and carrying a signature ability that no standard construct
+    /// has. Each boss also has more integrity than the one closing the zone
+    /// before.
     pub fn boss_for_zone(zone: usize) -> Self {
         let floor = Self::loudest_standard_noise(zone) + BOSS_NOISE_BONUS;
         let script = vec![
             SentryAction::new("Trace Lock", floor),
-            SentryAction::with_ability(
-                "Grid Lockdown",
-                floor + 2,
-                SentryAbility::DrainEnergy(1 + zone as i32),
-            ),
+            Self::boss_signature(zone, floor + 2),
             SentryAction::new("Full Spectrum Sweep", floor + 1),
         ];
 
@@ -287,6 +322,25 @@ impl Sentry {
         let mut sentry = Self::new(&name, script).with_health(health);
         sentry.detection_resistance = Self::standard_resistance(zone) + BOSS_RESISTANCE_BONUS;
         sentry
+    }
+
+    /// The ability that sets the boss closing `zone` apart, so each boss asks
+    /// something different of the player's deck. Bosses past the authored
+    /// ones keep the Grid Lockdown, one more energy per zone deep.
+    fn boss_signature(zone: usize, noise: i32) -> SentryAction {
+        match zone {
+            0 => SentryAction::with_ability("Purge", noise, SentryAbility::Purge),
+            1 => SentryAction::with_ability(
+                "Firewall",
+                noise,
+                SentryAbility::Firewall(FIREWALL_BLOCK),
+            ),
+            _ => SentryAction::with_ability(
+                "Grid Lockdown",
+                noise,
+                SentryAbility::DrainEnergy(Self::zone_step(zone)),
+            ),
+        }
     }
 
     /// The construct for an encounter, whichever kind it is.
@@ -388,6 +442,44 @@ impl Sentry {
         let before = self.health;
         self.health = self.health.saturating_sub(amount).clamp(0, self.max_health);
         before - self.health
+    }
+
+    /// Applies damage a firewall can stand in front of, such as a card's plain
+    /// Damage. The firewall absorbs what it can and wears down by that much;
+    /// the rest goes through `take_damage`. Penetrating damage and corruption
+    /// call `take_damage` directly, so a firewall never sees them.
+    pub fn take_blockable_damage(&mut self, amount: i32) -> BlockedDamage {
+        let blocked = amount.clamp(0, self.firewall);
+        self.firewall -= blocked;
+        BlockedDamage {
+            blocked,
+            dealt: self.take_damage(amount - blocked),
+        }
+    }
+
+    /// Damage the firewall will still absorb this turn.
+    pub fn firewall(&self) -> i32 {
+        self.firewall
+    }
+
+    /// Raises the firewall to `amount`, never lowering one already up, so a
+    /// second Firewall refreshes it rather than stacking. Returns the firewall
+    /// now standing.
+    pub fn raise_firewall(&mut self, amount: i32) -> i32 {
+        self.firewall = self.firewall.max(amount);
+        self.firewall
+    }
+
+    /// Takes the firewall down at the start of the construct's turn, so it
+    /// only ever covers the player turn after it went up. Returns what was
+    /// still standing.
+    pub fn drop_firewall(&mut self) -> i32 {
+        std::mem::take(&mut self.firewall)
+    }
+
+    /// Wipes all corruption off the construct and returns how much went.
+    pub fn purge_corruption(&mut self) -> i32 {
+        std::mem::take(&mut self.corruption)
     }
 
     /// Restores integrity, clamped at `max_health`. Returns how much was

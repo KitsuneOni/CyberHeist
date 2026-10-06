@@ -291,6 +291,7 @@ impl DrawPhase {
                     "name" => played.name.as_str(),
                     "noise_change" => played.noise_change,
                     "damage_dealt" => played.damage_dealt,
+                    "damage_blocked" => played.damage_blocked,
                     "shield_added" => played.shield_added,
                     "cards_drawn" => played.cards_drawn,
                     "knowledge_change" => played.knowledge_change,
