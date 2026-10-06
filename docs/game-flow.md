@@ -439,6 +439,18 @@ checks that Reinforce is announced, restores integrity and is reported on
 screen, and that beating it pays more than that standard combat and offers a
 Rare.
 
+For credits from combat (#114), run:
+
+```sh
+godot --headless --path godot -s res://tests/combat_credits_test.gd
+```
+
+It fills the meter during a first-zone standard combat and checks that being
+caught pays nothing: only the fine comes off, credits earned and wins are
+unchanged, and nothing is paid when leaving the caught screen. It then retries
+and wins the same fight to check that it pays 25 credits, counts them in the
+run's stats and shows them on the reward screen.
+
 For cross-component sharing and the authored social threshold (50), run:
 
 ```sh

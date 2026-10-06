@@ -128,5 +128,10 @@ jobs:
       - name: Run headless elite encounter test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/elite_encounter_test.gd
 
+      # Gets caught in a real standard combat and checks it paid nothing, then
+      # retries and wins the same fight to check it pays.
+      - name: Run headless combat credits test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/combat_credits_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh
