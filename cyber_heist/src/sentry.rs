@@ -862,6 +862,51 @@ mod tests {
         assert!(boss.has_ability());
     }
 
+    /// Boss card E2a: a three-zone contract meets three different bosses, in
+    /// zone order, and none of them is a numbered fallback.
+    #[test]
+    fn each_zone_of_a_three_zone_contract_has_its_own_named_boss() {
+        let names: Vec<String> = (0..3)
+            .map(|zone| Sentry::boss_for_zone(zone).name().to_string())
+            .collect();
+
+        assert_eq!(names, BOSS_NAMES);
+        for (i, name) in names.iter().enumerate() {
+            assert!(
+                !names[i + 1..].contains(name),
+                "{name} guards more than one zone"
+            );
+        }
+    }
+
+    /// Boss card E2a: each zone's boss has more integrity than the last, so a
+    /// deeper boss is a longer fight as well as a louder one. Checked past the
+    /// authored names too, so a longer contract keeps climbing.
+    #[test]
+    fn each_zone_boss_has_more_integrity_than_the_last() {
+        for zone in 1..5 {
+            let boss = Sentry::boss_for_zone(zone);
+            let previous = Sentry::boss_for_zone(zone - 1);
+            assert!(
+                boss.max_health() > previous.max_health(),
+                "zone {}: {} has {} integrity against {}'s {}",
+                zone + 1,
+                boss.name(),
+                boss.max_health(),
+                previous.name(),
+                previous.max_health()
+            );
+            assert_eq!(boss.health(), boss.max_health(), "starts at full");
+        }
+    }
+
+    /// The first boss keeps the 80 integrity it shipped with in E1, so the
+    /// climb starts from the balance the team has already played.
+    #[test]
+    fn the_first_zone_boss_keeps_its_integrity() {
+        assert_eq!(Sentry::boss_for_zone(0).max_health(), 80);
+    }
+
     #[test]
     fn a_renamed_sentry_reports_the_new_name() {
         let mut sentry = Sentry::warden_7();
