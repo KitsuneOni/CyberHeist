@@ -111,8 +111,9 @@ jobs:
         run: ~/godot-bin/godot --headless --path godot -s res://tests/boss_encounter_test.gd
 
       # Walks to the zone-2 and zone-3 bosses: BLACK MONOLITH's Firewall
-      # blocking plain damage but not penetrating, and THE ARCHITECT's Grid
-      # Lockdown taking energy off the turn it opens.
+      # blocking plain damage but not penetrating, THE ARCHITECT's Grid
+      # Lockdown taking energy off the turn it opens, and its second phase
+      # below half integrity.
       - name: Run headless boss signature test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/boss_signature_test.gd
 

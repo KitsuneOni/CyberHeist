@@ -1165,6 +1165,131 @@ mod tests {
         );
     }
 
+    fn action_names(actions: &[SentryAction]) -> Vec<&str> {
+        actions.iter().map(|action| action.name.as_str()).collect()
+    }
+
+    /// Boss card E2c: only the final boss escalates. The earlier bosses fight
+    /// the same way all the way down.
+    #[test]
+    fn only_the_architect_has_a_second_phase() {
+        for zone in 0..BOSS_NAMES.len() {
+            let mut boss = Sentry::boss_for_zone(zone);
+            assert_eq!(boss.phase(), 1, "zone {zone}: every boss starts in phase 1");
+            assert_eq!(boss.has_second_phase(), zone == 2, "zone {zone}");
+
+            boss.take_damage(boss.max_health() / 2 + 1);
+            assert_eq!(boss.phase(), if zone == 2 { 2 } else { 1 }, "zone {zone}");
+        }
+        assert!(!Sentry::standard_for_zone(2).has_second_phase());
+        assert!(!Sentry::elite_for_zone(2).has_second_phase());
+    }
+
+    /// Boss card E2c: THE ARCHITECT switches once its integrity drops below
+    /// half, and not a point before. Exactly half is still phase 1.
+    #[test]
+    fn the_architect_escalates_once_below_half_integrity() {
+        let mut architect = Sentry::boss_for_zone(2);
+        assert_eq!(architect.max_health(), 120);
+
+        architect.take_damage(60);
+        assert_eq!(architect.health(), 60);
+        assert_eq!(architect.phase(), 1, "exactly half is not below half");
+
+        architect.take_damage(1);
+        assert_eq!(architect.phase(), 2);
+        assert_eq!(
+            architect.queued_action().map(|action| action.name.as_str()),
+            Some("Rewrite Protocol"),
+            "the new action set starts from its first action"
+        );
+    }
+
+    /// Boss card E2c: the second phase is a new action set, sharing nothing
+    /// with the first, and it carries every other boss's signature: Purge,
+    /// Firewall and a harder lockdown.
+    #[test]
+    fn the_second_phase_is_a_new_action_set() {
+        let mut architect = Sentry::boss_for_zone(2);
+        let first_phase = architect.script.clone();
+        architect.take_damage(61);
+
+        assert_eq!(
+            action_names(&architect.script),
+            vec!["Rewrite Protocol", "Fortify Core", "Total Lockdown"]
+        );
+        for name in action_names(&architect.script) {
+            assert!(
+                !action_names(&first_phase).contains(&name),
+                "{name} is already in phase 1"
+            );
+        }
+        let abilities: Vec<SentryAbility> = architect
+            .script
+            .iter()
+            .map(|action| action.ability)
+            .collect();
+        assert_eq!(
+            abilities,
+            vec![
+                SentryAbility::Purge,
+                SentryAbility::Firewall(FIREWALL_BLOCK),
+                SentryAbility::DrainEnergy(3),
+            ]
+        );
+
+        // Still louder than anything standard security does in its zone.
+        for action in &architect.script {
+            assert!(
+                action.noise > Sentry::loudest_standard_noise(2),
+                "{}",
+                action.name
+            );
+        }
+    }
+
+    /// Corruption ticking it below half escalates it too, since every source
+    /// of damage goes through the same check.
+    #[test]
+    fn a_corruption_tick_can_escalate_the_architect() {
+        let mut architect = Sentry::boss_for_zone(2);
+        architect.take_damage(58);
+        architect.add_corruption(4);
+
+        assert_eq!(architect.resolve_corruption_tick(), 4);
+        assert_eq!(architect.health(), 58);
+        assert_eq!(architect.phase(), 2);
+    }
+
+    /// The escalation happens once. Reinforcing above half does not put it
+    /// back, and later damage does not restart the new action set.
+    #[test]
+    fn the_second_phase_holds_once_reached() {
+        let mut architect = Sentry::boss_for_zone(2);
+        architect.take_damage(61);
+        architect.perform_queued_action();
+
+        architect.restore_integrity(50);
+        assert_eq!(architect.phase(), 2);
+
+        architect.take_damage(10);
+        assert_eq!(
+            architect.queued_action().map(|action| action.name.as_str()),
+            Some("Fortify Core"),
+            "the cycle carries on where it was"
+        );
+    }
+
+    /// A blow that takes it straight to zero ends the fight rather than
+    /// starting a phase it will never act in.
+    #[test]
+    fn a_killing_blow_does_not_escalate() {
+        let mut architect = Sentry::boss_for_zone(2);
+        architect.take_damage(architect.max_health());
+        assert!(architect.is_defeated());
+        assert_eq!(architect.phase(), 1);
+    }
+
     #[test]
     fn a_renamed_sentry_reports_the_new_name() {
         let mut sentry = Sentry::warden_7();

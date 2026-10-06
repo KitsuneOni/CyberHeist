@@ -4,8 +4,9 @@
 # construct with more integrity than the last, BLACK MONOLITH's Firewall is
 # announced, soaks up a plain Strike while Trojan goes straight through, and
 # comes down when its next turn starts, and THE ARCHITECT's Grid Lockdown takes
-# energy off the turn it opens. The zone-1 boss and its Purge are covered by
-# boss_encounter_test.gd.
+# energy off the turn it opens, then (E2c) switches to a second phase once its
+# integrity drops below half, whether a card or a corruption tick takes it
+# there. The zone-1 boss and its Purge are covered by boss_encounter_test.gd.
 #
 # Run: godot --headless --path godot -s res://tests/boss_signature_test.gd
 extends SceneTree
@@ -17,6 +18,8 @@ const TROJAN_DAMAGE := 6
 var _flow: Node
 var _combat: Node
 var _noise_meter: Node
+# The boss node most recently walked into, so a lost fight can be retried.
+var _boss_id := -1
 var _failures: Array[String] = []
 
 
@@ -75,6 +78,7 @@ func _advance_to_boss(zone: int) -> bool:
 		await process_frame
 		await process_frame
 		if type == "boss" and bosses_passed == zone:
+			_boss_id = int(chosen.id)
 			_combat = _screen()
 			return _combat != null and _combat.has_node("Sentry")
 
@@ -150,6 +154,8 @@ func _run() -> void:
 	# Fixture: Trojan is the penetrating card the Firewall cannot stop. It is
 	# added up front, since a fight deals from the run deck it started with.
 	_check(_flow.take_card_reward("trojan"), "the fixture deck includes Trojan")
+	# Malware gives THE ARCHITECT corruption to tick it into its second phase.
+	_check(_flow.take_card_reward("malware"), "the fixture deck includes Malware")
 
 	# --- zone 2: BLACK MONOLITH --------------------------------------------
 	_check(await _advance_to_boss(1), "the run reaches the zone-2 boss")
@@ -273,6 +279,86 @@ func _run() -> void:
 	_check(
 		_combat.draw_phase.energy == max_energy,
 		"lockdown lasts one turn, not the rest of the encounter"
+	)
+
+	# --- E2c: a card takes THE ARCHITECT below half --------------------------
+	_check(_combat.sentry.phase() == 1, "THE ARCHITECT is still in phase 1")
+	_check(
+		not _combat.intent_label.text.contains("PHASE"),
+		"a phase-1 intent does not mention phases (got '%s')" % _combat.intent_label.text
+	)
+	_combat.sentry.take_damage(_combat.sentry.health() - (60 + STRIKE_DAMAGE / 2))
+	_check(_combat.sentry.phase() == 1, "just above half is still phase 1")
+	_draw_whole_deck()
+	_check(_play("Strike"), "Strike is in the full-deck hand")
+	_check(
+		_combat.sentry.phase() == 2,
+		"a Strike that takes it below half starts phase 2 (%d / 120)" % _combat.sentry.health()
+	)
+	_check(
+		_combat.intent_label.text.contains("[PHASE 2]")
+		and _combat.intent_label.text.contains("Rewrite Protocol")
+		and _combat.intent_label.text.contains("clears corruption"),
+		"the intent announces phase 2 and its first action (got '%s')" % _combat.intent_label.text
+	)
+	_check(
+		_combat.status_label.text.contains("THE ARCHITECT escalates to phase 2"),
+		"and the screen says it escalated (got '%s')" % _combat.status_label.text
+	)
+	_press_end_turn()
+	_check(
+		_combat.status_label.text.contains("ran Rewrite Protocol"),
+		"the announced phase-2 action is the one that runs (got '%s')" % _combat.status_label.text
+	)
+	_check(
+		_combat.intent_label.text.contains("Fortify Core"),
+		"and the new set carries on (got '%s')" % _combat.intent_label.text
+	)
+
+	# --- E2c: a corruption tick takes it below half on its own turn ----------
+	_noise_meter.add_noise(_noise_meter.max_noise - 1 - _noise_meter.noise)
+	_press_end_turn()
+	_check(_flow.run_snapshot().phase == "caught", "a turn at the cap enters caught")
+	_flow.finish_caught()
+	var retried: Dictionary = _flow.select_encounter(_boss_id)
+	_check(retried.get("ok", false), "THE ARCHITECT can be retried")
+	await process_frame
+	await process_frame
+	_combat = _screen()
+	if _combat == null or not _combat.has_node("Sentry"):
+		_finish()
+		return
+	_check(_combat.sentry.phase() == 1, "a retried ARCHITECT starts back in phase 1")
+
+	# Malware deals 8 and leaves 4 corruption: 70 -> 62, then the tick takes 4.
+	_combat.sentry.take_damage(_combat.sentry.health() - 70)
+	_draw_whole_deck()
+	_check(_play("Malware"), "Malware is in the full-deck hand")
+	_check(_combat.sentry.phase() == 1, "Malware alone leaves it above half")
+	var noise_before: int = _noise_meter.noise
+	var announced: String = _combat.sentry.queued_action_name()
+	_press_end_turn()
+	_check(
+		_combat.sentry.phase() == 2,
+		"the corruption tick starts phase 2 (%d / 120)" % _combat.sentry.health()
+	)
+	_check(
+		_noise_meter.noise == noise_before,
+		"it spends that turn escalating rather than springing an unannounced action"
+	)
+	_check(
+		not _combat.status_label.text.contains("ran %s" % announced),
+		"so the phase-1 action it had announced does not run either"
+	)
+	_check(
+		_combat.status_label.text.contains("THE ARCHITECT escalates to phase 2"),
+		"the screen says it escalated (got '%s')" % _combat.status_label.text
+	)
+	_check(
+		_combat.intent_label.text.contains("[PHASE 2]")
+		and _combat.intent_label.text.contains("Rewrite Protocol"),
+		"and the intent shows phase 2 before the player's next turn (got '%s')"
+		% _combat.intent_label.text
 	)
 
 	_finish()
