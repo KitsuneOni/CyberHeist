@@ -1,0 +1,5 @@
+# main_menu_test.gd before the main menu existed (2026-10-07)
+  ok    FlowCoordinator autoload is present
+  FAIL  the game opens on the main menu
+main menu test: FAILED (1)
+  - the game opens on the main menu
