@@ -34,6 +34,13 @@ pub enum SentryAbility {
     /// Restores the construct's own integrity. An elite comes back from the
     /// damage the player has done, so a fight dragged out costs them.
     RestoreIntegrity(i32),
+    /// Wipes every point of corruption off the construct. ICEBREAKER's
+    /// signature: a corruption deck has to cash its stacks in before it lands.
+    Purge,
+    /// Raises a firewall that absorbs this much plain damage during the
+    /// player's next turn. BLACK MONOLITH's signature: penetrating damage and
+    /// corruption go straight through it.
+    Firewall(i32),
 }
 
 impl SentryAbility {
@@ -41,7 +48,7 @@ impl SentryAbility {
     pub fn energy_drain(self) -> i32 {
         match self {
             Self::DrainEnergy(amount) => amount.max(0),
-            Self::None | Self::RestoreIntegrity(_) => 0,
+            Self::None | Self::RestoreIntegrity(_) | Self::Purge | Self::Firewall(_) => 0,
         }
     }
 
@@ -51,7 +58,21 @@ impl SentryAbility {
     pub fn integrity_restored(self) -> i32 {
         match self {
             Self::RestoreIntegrity(amount) => amount.max(0),
-            Self::None | Self::DrainEnergy(_) => 0,
+            Self::None | Self::DrainEnergy(_) | Self::Purge | Self::Firewall(_) => 0,
+        }
+    }
+
+    /// Whether this ability wipes the construct's corruption.
+    pub fn purges_corruption(self) -> bool {
+        matches!(self, Self::Purge)
+    }
+
+    /// Damage the firewall this ability raises will absorb, or zero when it
+    /// raises none. A negative amount raises nothing.
+    pub fn firewall_raised(self) -> i32 {
+        match self {
+            Self::Firewall(amount) => amount.max(0),
+            Self::None | Self::DrainEnergy(_) | Self::RestoreIntegrity(_) | Self::Purge => 0,
         }
     }
 
@@ -66,6 +87,8 @@ impl SentryAbility {
             Self::None => String::new(),
             Self::DrainEnergy(amount) => format!("-{} energy", amount.max(0)),
             Self::RestoreIntegrity(amount) => format!("+{} integrity", amount.max(0)),
+            Self::Purge => "clears corruption".to_string(),
+            Self::Firewall(amount) => format!("blocks {} damage", amount.max(0)),
         }
     }
 }
@@ -79,6 +102,14 @@ pub enum SecurityTier {
     /// of its own, and a better payout for beating it.
     Elite,
     Boss,
+}
+
+/// What a hit that a firewall can stand in front of actually did: how much the
+/// firewall absorbed, and how much integrity was lost behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockedDamage {
+    pub blocked: i32,
+    pub dealt: i32,
 }
 
 /// One action a sentry can take on its turn.
@@ -135,6 +166,14 @@ pub struct Sentry {
     max_health: i32,
     corruption: i32,
     corruption_boost: i32,
+    /// Plain damage still to be absorbed before integrity, raised by a
+    /// Firewall and dropped when the construct's next turn starts.
+    firewall: i32,
+    /// 1, or 2 once the construct has escalated.
+    phase: u32,
+    /// The action set it switches to below half integrity. Empty for every
+    /// construct but THE ARCHITECT, which is what "has no second phase" means.
+    second_phase: Vec<SentryAction>,
 }
 
 /// The actions every standard construct works through, before the zone's
@@ -166,7 +205,18 @@ const BOSS_NOISE_BONUS: i32 = 2;
 /// than an ordinary node and the boss closing the zone is longer again.
 const STANDARD_HEALTH: i32 = 40;
 const ELITE_HEALTH: i32 = 60;
-const BOSS_HEALTH: i32 = 80;
+
+/// Integrity of the first zone's boss, and how much more each boss deeper in
+/// the contract has than the one before it.
+const BOSS_HEALTH_BASE: i32 = 80;
+const BOSS_HEALTH_PER_ZONE: i32 = 20;
+
+/// Plain damage BLACK MONOLITH's Firewall absorbs: two Strikes' worth.
+const FIREWALL_BLOCK: i32 = 12;
+
+/// THE ARCHITECT's zone. It closes the longest contract on offer, so it is
+/// the final boss, and the only one with a second phase.
+const ARCHITECT_ZONE: usize = 2;
 
 /// Elites by zone, falling back to a numbered name the same way bosses do.
 const ELITE_NAMES: [&str; 3] = ["BASTION", "HYDRA", "CERBERUS"];
@@ -203,6 +253,9 @@ impl Sentry {
             max_health: 50,
             corruption: 0,
             corruption_boost: 0,
+            firewall: 0,
+            phase: 1,
+            second_phase: Vec::new(),
         }
     }
 
@@ -258,16 +311,14 @@ impl Sentry {
     /// The boss closing `zone`.
     ///
     /// Louder than every standard action in the same zone, harder to recover
-    /// against, and carrying a lockdown that no standard construct has.
+    /// against, and carrying a signature ability that no standard construct
+    /// has. Each boss also has more integrity than the one closing the zone
+    /// before.
     pub fn boss_for_zone(zone: usize) -> Self {
         let floor = Self::loudest_standard_noise(zone) + BOSS_NOISE_BONUS;
         let script = vec![
             SentryAction::new("Trace Lock", floor),
-            SentryAction::with_ability(
-                "Grid Lockdown",
-                floor + 2,
-                SentryAbility::DrainEnergy(1 + zone as i32),
-            ),
+            Self::boss_signature(zone, floor + 2),
             SentryAction::new("Full Spectrum Sweep", floor + 1),
         ];
 
@@ -276,9 +327,53 @@ impl Sentry {
             .map(|name| name.to_string())
             .unwrap_or_else(|| format!("OVERSEER-{}", zone + 1));
 
-        let mut sentry = Self::new(&name, script).with_health(BOSS_HEALTH);
+        let health = BOSS_HEALTH_BASE.saturating_add(
+            BOSS_HEALTH_PER_ZONE.saturating_mul(Self::zone_step(zone).saturating_sub(1)),
+        );
+        let mut sentry = Self::new(&name, script).with_health(health);
         sentry.detection_resistance = Self::standard_resistance(zone) + BOSS_RESISTANCE_BONUS;
+        if zone == ARCHITECT_ZONE {
+            sentry.second_phase = Self::architect_second_phase(zone, floor);
+        }
         sentry
+    }
+
+    /// What THE ARCHITECT switches to below half integrity: every other
+    /// boss's signature in turn, so the player has to answer all of them at
+    /// once, and a lockdown louder than its first.
+    fn architect_second_phase(zone: usize, floor: i32) -> Vec<SentryAction> {
+        vec![
+            SentryAction::with_ability("Rewrite Protocol", floor + 1, SentryAbility::Purge),
+            SentryAction::with_ability(
+                "Fortify Core",
+                floor + 1,
+                SentryAbility::Firewall(FIREWALL_BLOCK),
+            ),
+            SentryAction::with_ability(
+                "Total Lockdown",
+                floor + 3,
+                SentryAbility::DrainEnergy(Self::zone_step(zone)),
+            ),
+        ]
+    }
+
+    /// The ability that sets the boss closing `zone` apart, so each boss asks
+    /// something different of the player's deck. Bosses past the authored
+    /// ones keep the Grid Lockdown, one more energy per zone deep.
+    fn boss_signature(zone: usize, noise: i32) -> SentryAction {
+        match zone {
+            0 => SentryAction::with_ability("Purge", noise, SentryAbility::Purge),
+            1 => SentryAction::with_ability(
+                "Firewall",
+                noise,
+                SentryAbility::Firewall(FIREWALL_BLOCK),
+            ),
+            _ => SentryAction::with_ability(
+                "Grid Lockdown",
+                noise,
+                SentryAbility::DrainEnergy(Self::zone_step(zone)),
+            ),
+        }
     }
 
     /// The construct for an encounter, whichever kind it is.
@@ -376,10 +471,80 @@ impl Sentry {
     ///
     /// A negative `amount` would heal the sentry, clamped at `max_health`;
     /// nothing currently does this, but the clamp makes it safe either way.
+    ///
+    /// Every source of damage comes through here, so this is also where a
+    /// construct with a second phase escalates once it is below half.
     pub fn take_damage(&mut self, amount: i32) -> i32 {
         let before = self.health;
         self.health = self.health.saturating_sub(amount).clamp(0, self.max_health);
+        self.escalate_if_below_half();
         before - self.health
+    }
+
+    /// Which phase the construct is fighting in: 1, or 2 once it has
+    /// escalated.
+    pub fn phase(&self) -> u32 {
+        self.phase
+    }
+
+    /// Whether this construct switches to a new action set below half, or
+    /// already has.
+    #[cfg(test)]
+    pub fn has_second_phase(&self) -> bool {
+        self.phase == 2 || !self.second_phase.is_empty()
+    }
+
+    /// Switches to the second action set, from its first action, the first
+    /// time integrity is below half. A defeated construct does not escalate:
+    /// the fight is over, not entering a new phase.
+    fn escalate_if_below_half(&mut self) {
+        if self.phase == 1
+            && !self.second_phase.is_empty()
+            && !self.is_defeated()
+            && self.health.saturating_mul(2) < self.max_health
+        {
+            self.script = std::mem::take(&mut self.second_phase);
+            self.next_index = 0;
+            self.phase = 2;
+        }
+    }
+
+    /// Applies damage a firewall can stand in front of, such as a card's plain
+    /// Damage. The firewall absorbs what it can and wears down by that much;
+    /// the rest goes through `take_damage`. Penetrating damage and corruption
+    /// call `take_damage` directly, so a firewall never sees them.
+    pub fn take_blockable_damage(&mut self, amount: i32) -> BlockedDamage {
+        let blocked = amount.clamp(0, self.firewall);
+        self.firewall -= blocked;
+        BlockedDamage {
+            blocked,
+            dealt: self.take_damage(amount - blocked),
+        }
+    }
+
+    /// Damage the firewall will still absorb this turn.
+    pub fn firewall(&self) -> i32 {
+        self.firewall
+    }
+
+    /// Raises the firewall to `amount`, never lowering one already up, so a
+    /// second Firewall refreshes it rather than stacking. Returns the firewall
+    /// now standing.
+    pub fn raise_firewall(&mut self, amount: i32) -> i32 {
+        self.firewall = self.firewall.max(amount);
+        self.firewall
+    }
+
+    /// Takes the firewall down at the start of the construct's turn, so it
+    /// only ever covers the player turn after it went up. Returns what was
+    /// still standing.
+    pub fn drop_firewall(&mut self) -> i32 {
+        std::mem::take(&mut self.firewall)
+    }
+
+    /// Wipes all corruption off the construct and returns how much went.
+    pub fn purge_corruption(&mut self) -> i32 {
+        std::mem::take(&mut self.corruption)
     }
 
     /// Restores integrity, clamped at `max_health`. Returns how much was
@@ -618,17 +783,12 @@ mod tests {
             let boss = Sentry::boss_for_zone(zone);
             assert!(boss.has_ability(), "zone {zone}: the boss needs an ability");
 
-            let abilities: Vec<SentryAbility> = boss
+            let abilities = boss
                 .script
                 .iter()
-                .map(|action| action.ability)
-                .filter(|ability| !ability.is_none())
-                .collect();
-            assert_eq!(
-                abilities,
-                vec![SentryAbility::DrainEnergy(1 + zone as i32)],
-                "zone {zone}: the lockdown takes energy, and deeper zones take more"
-            );
+                .filter(|action| !action.ability.is_none())
+                .count();
+            assert_eq!(abilities, 1, "zone {zone}: one signature ability per boss");
         }
     }
 
@@ -656,15 +816,12 @@ mod tests {
 
     #[test]
     fn a_drained_turn_is_announced_with_the_intent() {
-        let boss = Sentry::boss_for_zone(0);
-        let lockdown = boss
-            .script
-            .iter()
-            .find(|action| !action.ability.is_none())
-            .expect("the boss has a lockdown");
+        let boss = Sentry::boss_for_zone(2);
+        let lockdown = signature(&boss);
 
-        assert_eq!(lockdown.ability.energy_drain(), 1);
-        assert_eq!(lockdown.ability.describe(), "-1 energy");
+        assert_eq!(lockdown.name, "Grid Lockdown");
+        assert_eq!(lockdown.ability.energy_drain(), 3);
+        assert_eq!(lockdown.ability.describe(), "-3 energy");
         assert_eq!(SentryAbility::None.energy_drain(), 0);
         assert_eq!(SentryAbility::None.describe(), "");
         assert_eq!(
@@ -860,6 +1017,342 @@ mod tests {
         let boss = Sentry::boss_for_zone(BOSS_NAMES.len());
         assert!(!boss.name().is_empty());
         assert!(boss.has_ability());
+    }
+
+    /// Boss card E2a: a three-zone contract meets three different bosses, in
+    /// zone order, and none of them is a numbered fallback.
+    #[test]
+    fn each_zone_of_a_three_zone_contract_has_its_own_named_boss() {
+        let names: Vec<String> = (0..3)
+            .map(|zone| Sentry::boss_for_zone(zone).name().to_string())
+            .collect();
+
+        assert_eq!(names, BOSS_NAMES);
+        for (i, name) in names.iter().enumerate() {
+            assert!(
+                !names[i + 1..].contains(name),
+                "{name} guards more than one zone"
+            );
+        }
+    }
+
+    /// Boss card E2a: each zone's boss has more integrity than the last, so a
+    /// deeper boss is a longer fight as well as a louder one. Checked past the
+    /// authored names too, so a longer contract keeps climbing.
+    #[test]
+    fn each_zone_boss_has_more_integrity_than_the_last() {
+        for zone in 1..5 {
+            let boss = Sentry::boss_for_zone(zone);
+            let previous = Sentry::boss_for_zone(zone - 1);
+            assert!(
+                boss.max_health() > previous.max_health(),
+                "zone {}: {} has {} integrity against {}'s {}",
+                zone + 1,
+                boss.name(),
+                boss.max_health(),
+                previous.name(),
+                previous.max_health()
+            );
+            assert_eq!(boss.health(), boss.max_health(), "starts at full");
+        }
+    }
+
+    /// The first boss keeps the 80 integrity it shipped with in E1, so the
+    /// climb starts from the balance the team has already played.
+    #[test]
+    fn the_first_zone_boss_keeps_its_integrity() {
+        assert_eq!(Sentry::boss_for_zone(0).max_health(), 80);
+    }
+
+    /// The one action in a boss's script that does more than make noise.
+    fn signature(boss: &Sentry) -> &SentryAction {
+        boss.script
+            .iter()
+            .find(|action| !action.ability.is_none())
+            .expect("every boss has a signature ability")
+    }
+
+    /// Boss card E2b: each authored boss has its own signature ability.
+    /// ICEBREAKER purges corruption, BLACK MONOLITH raises a firewall and THE
+    /// ARCHITECT keeps the Grid Lockdown, so no two bosses ask the same thing
+    /// of the player's deck.
+    #[test]
+    fn each_authored_boss_has_its_own_signature_ability() {
+        let signatures: Vec<(String, SentryAbility)> = (0..BOSS_NAMES.len())
+            .map(|zone| {
+                let boss = Sentry::boss_for_zone(zone);
+                let action = signature(&boss);
+                (action.name.clone(), action.ability)
+            })
+            .collect();
+
+        assert_eq!(
+            signatures,
+            vec![
+                ("Purge".to_string(), SentryAbility::Purge),
+                (
+                    "Firewall".to_string(),
+                    SentryAbility::Firewall(FIREWALL_BLOCK)
+                ),
+                ("Grid Lockdown".to_string(), SentryAbility::DrainEnergy(3)),
+            ]
+        );
+    }
+
+    /// A contract deeper than the authored bosses falls back to the lockdown,
+    /// so a numbered boss still has something to announce.
+    #[test]
+    fn a_boss_past_the_authored_ones_falls_back_to_the_lockdown() {
+        let zone = BOSS_NAMES.len();
+        let boss = Sentry::boss_for_zone(zone);
+        let lockdown = signature(&boss);
+        assert_eq!(lockdown.name, "Grid Lockdown");
+        assert_eq!(
+            lockdown.ability,
+            SentryAbility::DrainEnergy(1 + zone as i32)
+        );
+    }
+
+    /// Boss card E2b: what a signature ability does is shown with the intent,
+    /// before the player ends the turn into it.
+    #[test]
+    fn signature_abilities_say_what_they_do_on_the_intent() {
+        assert_eq!(SentryAbility::Purge.describe(), "clears corruption");
+        assert_eq!(SentryAbility::Firewall(12).describe(), "blocks 12 damage");
+        assert_eq!(
+            SentryAbility::Firewall(-4).describe(),
+            "blocks 0 damage",
+            "a nonsense firewall blocks nothing rather than going negative"
+        );
+    }
+
+    /// Only Purge purges and only Firewall blocks, so the node can apply every
+    /// ability the same way without matching on which one it is.
+    #[test]
+    fn each_ability_reports_only_its_own_effect() {
+        assert!(SentryAbility::Purge.purges_corruption());
+        assert_eq!(SentryAbility::Purge.firewall_raised(), 0);
+        assert_eq!(SentryAbility::Purge.energy_drain(), 0);
+
+        assert_eq!(SentryAbility::Firewall(12).firewall_raised(), 12);
+        assert_eq!(SentryAbility::Firewall(-3).firewall_raised(), 0);
+        assert!(!SentryAbility::Firewall(12).purges_corruption());
+        assert_eq!(SentryAbility::Firewall(12).integrity_restored(), 0);
+
+        for other in [
+            SentryAbility::None,
+            SentryAbility::DrainEnergy(2),
+            SentryAbility::RestoreIntegrity(8),
+        ] {
+            assert!(!other.purges_corruption(), "{other:?}");
+            assert_eq!(other.firewall_raised(), 0, "{other:?}");
+        }
+    }
+
+    /// Purge wipes every point of corruption on the construct and reports how
+    /// much went, so a corruption deck has to land its damage before it does.
+    #[test]
+    fn purge_clears_all_corruption_and_reports_how_much() {
+        let mut boss = Sentry::boss_for_zone(0);
+        boss.add_corruption(5);
+
+        assert_eq!(boss.purge_corruption(), 5);
+        assert_eq!(boss.corruption(), 0);
+        assert_eq!(boss.purge_corruption(), 0, "nothing left to purge");
+    }
+
+    /// A firewall soaks up plain damage before integrity, and reports what it
+    /// blocked separately from what got through.
+    #[test]
+    fn a_firewall_absorbs_blockable_damage_until_it_runs_out() {
+        let mut boss = Sentry::boss_for_zone(1);
+        assert_eq!(boss.firewall(), 0, "no firewall until the ability runs");
+        assert_eq!(boss.raise_firewall(12), 12);
+
+        assert_eq!(
+            boss.take_blockable_damage(8),
+            BlockedDamage {
+                blocked: 8,
+                dealt: 0
+            }
+        );
+        assert_eq!(boss.health(), boss.max_health());
+        assert_eq!(boss.firewall(), 4);
+
+        assert_eq!(
+            boss.take_blockable_damage(10),
+            BlockedDamage {
+                blocked: 4,
+                dealt: 6
+            }
+        );
+        assert_eq!(boss.health(), boss.max_health() - 6);
+        assert_eq!(boss.firewall(), 0);
+    }
+
+    /// Penetrating damage and corruption go through `take_damage`, which a
+    /// firewall does not stand in front of.
+    #[test]
+    fn unblockable_damage_ignores_the_firewall() {
+        let mut boss = Sentry::boss_for_zone(1);
+        boss.raise_firewall(12);
+
+        assert_eq!(boss.take_damage(6), 6);
+        assert_eq!(boss.firewall(), 12, "untouched");
+
+        boss.add_corruption(3);
+        assert_eq!(boss.resolve_corruption_tick(), 3);
+        assert_eq!(boss.firewall(), 12);
+    }
+
+    /// The firewall covers one player turn: it comes down when the boss's next
+    /// turn starts, and raising it never stacks or goes negative.
+    #[test]
+    fn a_firewall_comes_down_and_does_not_stack() {
+        let mut boss = Sentry::boss_for_zone(1);
+        boss.raise_firewall(12);
+        assert_eq!(boss.raise_firewall(12), 12, "raised again, not doubled");
+        assert_eq!(
+            boss.raise_firewall(-5),
+            12,
+            "a negative amount changes nothing"
+        );
+
+        assert_eq!(boss.drop_firewall(), 12);
+        assert_eq!(boss.firewall(), 0);
+        assert_eq!(boss.drop_firewall(), 0);
+        assert_eq!(
+            boss.take_blockable_damage(5),
+            BlockedDamage {
+                blocked: 0,
+                dealt: 5
+            }
+        );
+    }
+
+    fn action_names(actions: &[SentryAction]) -> Vec<&str> {
+        actions.iter().map(|action| action.name.as_str()).collect()
+    }
+
+    /// Boss card E2c: only the final boss escalates. The earlier bosses fight
+    /// the same way all the way down.
+    #[test]
+    fn only_the_architect_has_a_second_phase() {
+        for zone in 0..BOSS_NAMES.len() {
+            let mut boss = Sentry::boss_for_zone(zone);
+            assert_eq!(boss.phase(), 1, "zone {zone}: every boss starts in phase 1");
+            assert_eq!(boss.has_second_phase(), zone == 2, "zone {zone}");
+
+            boss.take_damage(boss.max_health() / 2 + 1);
+            assert_eq!(boss.phase(), if zone == 2 { 2 } else { 1 }, "zone {zone}");
+        }
+        assert!(!Sentry::standard_for_zone(2).has_second_phase());
+        assert!(!Sentry::elite_for_zone(2).has_second_phase());
+    }
+
+    /// Boss card E2c: THE ARCHITECT switches once its integrity drops below
+    /// half, and not a point before. Exactly half is still phase 1.
+    #[test]
+    fn the_architect_escalates_once_below_half_integrity() {
+        let mut architect = Sentry::boss_for_zone(2);
+        assert_eq!(architect.max_health(), 120);
+
+        architect.take_damage(60);
+        assert_eq!(architect.health(), 60);
+        assert_eq!(architect.phase(), 1, "exactly half is not below half");
+
+        architect.take_damage(1);
+        assert_eq!(architect.phase(), 2);
+        assert_eq!(
+            architect.queued_action().map(|action| action.name.as_str()),
+            Some("Rewrite Protocol"),
+            "the new action set starts from its first action"
+        );
+    }
+
+    /// Boss card E2c: the second phase is a new action set, sharing nothing
+    /// with the first, and it carries every other boss's signature: Purge,
+    /// Firewall and a harder lockdown.
+    #[test]
+    fn the_second_phase_is_a_new_action_set() {
+        let mut architect = Sentry::boss_for_zone(2);
+        let first_phase = architect.script.clone();
+        architect.take_damage(61);
+
+        assert_eq!(
+            action_names(&architect.script),
+            vec!["Rewrite Protocol", "Fortify Core", "Total Lockdown"]
+        );
+        for name in action_names(&architect.script) {
+            assert!(
+                !action_names(&first_phase).contains(&name),
+                "{name} is already in phase 1"
+            );
+        }
+        let abilities: Vec<SentryAbility> = architect
+            .script
+            .iter()
+            .map(|action| action.ability)
+            .collect();
+        assert_eq!(
+            abilities,
+            vec![
+                SentryAbility::Purge,
+                SentryAbility::Firewall(FIREWALL_BLOCK),
+                SentryAbility::DrainEnergy(3),
+            ]
+        );
+
+        // Still louder than anything standard security does in its zone.
+        for action in &architect.script {
+            assert!(
+                action.noise > Sentry::loudest_standard_noise(2),
+                "{}",
+                action.name
+            );
+        }
+    }
+
+    /// Corruption ticking it below half escalates it too, since every source
+    /// of damage goes through the same check.
+    #[test]
+    fn a_corruption_tick_can_escalate_the_architect() {
+        let mut architect = Sentry::boss_for_zone(2);
+        architect.take_damage(58);
+        architect.add_corruption(4);
+
+        assert_eq!(architect.resolve_corruption_tick(), 4);
+        assert_eq!(architect.health(), 58);
+        assert_eq!(architect.phase(), 2);
+    }
+
+    /// The escalation happens once. Reinforcing above half does not put it
+    /// back, and later damage does not restart the new action set.
+    #[test]
+    fn the_second_phase_holds_once_reached() {
+        let mut architect = Sentry::boss_for_zone(2);
+        architect.take_damage(61);
+        architect.perform_queued_action();
+
+        architect.restore_integrity(50);
+        assert_eq!(architect.phase(), 2);
+
+        architect.take_damage(10);
+        assert_eq!(
+            architect.queued_action().map(|action| action.name.as_str()),
+            Some("Fortify Core"),
+            "the cycle carries on where it was"
+        );
+    }
+
+    /// A blow that takes it straight to zero ends the fight rather than
+    /// starting a phase it will never act in.
+    #[test]
+    fn a_killing_blow_does_not_escalate() {
+        let mut architect = Sentry::boss_for_zone(2);
+        architect.take_damage(architect.max_health());
+        assert!(architect.is_defeated());
+        assert_eq!(architect.phase(), 1);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 # Real scene/extension coverage for the zone-boss story. The Rust tests own the
 # rules; this drives the parts they cannot see: that the construct a boss node
 # actually loads is the boss one, that its resistance reaches the shared meter,
-# that its lockdown takes energy off the player's next turn, and that beating it
-# opens the next zone on the map the hub draws from.
+# that its Purge is announced and wipes the corruption off it, and that beating
+# it opens the next zone on the map the hub draws from. The deeper bosses and
+# their signature abilities are covered by boss_signature_test.gd.
 #
 # Run: godot --headless --path godot -s res://tests/boss_encounter_test.gd
 extends SceneTree
@@ -146,6 +147,9 @@ func _run() -> void:
 	_check("sealed" in key_statuses, "the map key explains the sealed marker")
 
 	# --- the next zone is sealed while its boss is still standing -----------
+	# Fixture: Malware gives the boss corruption for its Purge to clear. Added
+	# before the fight, since a fight deals from the run deck it started with.
+	_check(_flow.take_card_reward("malware"), "the fixture deck includes Malware")
 	var boss_id := await _advance_to_first_boss()
 	_check(boss_id >= 0, "the run reaches a boss at the end of its first zone")
 	if boss_id < 0:
@@ -210,56 +214,38 @@ func _run() -> void:
 		)
 		_check(_combat.sentry.noise() == 43, "and the meter moved by that much, not by 10")
 
-	# --- the lockdown takes energy off the turn it opens --------------------
-	var max_energy: int = _combat.draw_phase.max_energy
-	var drained_turn_seen := false
+	# --- Purge wipes the corruption off the boss -----------------------------
+	var purge_seen := false
 	for turn in 4:
-		var announced_drain: String = _combat.sentry.queued_action_ability()
-		var noise_before: int = _noise_meter.noise
-		if announced_drain != "":
-			_noise_meter.add_shield(_combat.sentry.queued_action_noise())
-		_press_end_turn()
-		if announced_drain == "":
+		if _combat.sentry.queued_action_name() != "Purge":
+			_press_end_turn()
 			continue
 
-		drained_turn_seen = true
+		purge_seen = true
 		_check(
-			_noise_meter.noise == noise_before,
-			"shield absorbs lockdown noise, not its energy drain"
+			_combat.intent_label.text.contains("clears corruption"),
+			"Purge is announced with what it does (got '%s')" % _combat.intent_label.text
 		)
-		_check(_noise_meter.get_shield() == 0, "shield is cleared after the boss turn")
+		_draw_whole_deck()
+		var malware_for_purge: int = _combat.draw_phase.hand_names().find("Malware")
+		_check(malware_for_purge >= 0, "Malware is in the full-deck hand")
+		if malware_for_purge < 0:
+			break
+		_combat.card_buttons[malware_for_purge].pressed.emit()
+		_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+		var corruption_before: int = _combat.sentry.corruption()
+		_check(corruption_before > 0, "Malware corrupts the boss before its Purge")
+
+		_press_end_turn()
+		_check(_combat.sentry.corruption() == 0, "Purge leaves no corruption behind")
+		# The corruption ticks before the boss acts, so Purge clears what is
+		# left after that tick rather than the whole amount Malware put on.
 		_check(
-			announced_drain == "-1 energy",
-			"the lockdown is announced before it lands (got '%s')" % announced_drain
-		)
-		_check(
-			_combat.draw_phase.energy == max_energy - 1,
-			(
-				"the lockdown leaves the new turn short of energy (%d of %d)"
-				% [_combat.draw_phase.energy, max_energy]
-			)
-		)
-		_check(
-			_combat.energy_label.text == "Energy: %d / %d" % [max_energy - 1, max_energy],
-			"and the screen shows the reduced pool (got '%s')" % _combat.energy_label.text
-		)
-		_check(
-			_combat.status_label.text.contains("Lockdown cost you 1 energy"),
-			"and says why (got '%s')" % _combat.status_label.text
+			_combat.status_label.text.contains("Purge cleared %d corruption" % (corruption_before - 1)),
+			"and the screen says how much it cleared (got '%s')" % _combat.status_label.text
 		)
 		break
-	_check(drained_turn_seen, "the boss uses its lockdown within its first few turns")
-	var costs: PackedInt32Array = _combat.draw_phase.hand_costs()
-	for index in costs.size():
-		_check(
-			_combat.card_buttons[index].disabled == (costs[index] > max_energy - 1),
-			"lockdown updates card %d's affordability" % index
-		)
-	_press_end_turn()
-	_check(
-		_combat.draw_phase.energy == max_energy,
-		"lockdown lasts one turn, not the rest of the encounter"
-	)
+	_check(purge_seen, "the boss purges within its first few turns")
 
 	# --- losing the boss does not unlock the zone ---------------------------
 	_noise_meter.add_noise(_noise_meter.max_noise - 1 - _noise_meter.noise)

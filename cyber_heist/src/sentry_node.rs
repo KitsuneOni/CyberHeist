@@ -223,10 +223,29 @@ impl SentryNode {
         self.sentry.corruption_boost()
     }
 
+    /// Which phase the construct is fighting in: 1, or 2 once THE ARCHITECT
+    /// has escalated below half integrity.
+    #[func]
+    fn phase(&self) -> u32 {
+        self.sentry.phase()
+    }
+
+    /// Plain damage BLACK MONOLITH's firewall will still absorb this turn, or
+    /// zero when none is up.
+    #[func]
+    fn firewall(&self) -> i32 {
+        self.sentry.firewall()
+    }
+
     /// Takes the sentry's turn and reports what it did:
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed,
-    /// energy_drain, ability, integrity_restored, corruption_damage,
-    /// corruption, defeated}`.
+    /// energy_drain, ability, integrity_restored, corruption_purged, firewall,
+    /// corruption_damage, corruption, phase, escalated, defeated}`.
+    ///
+    /// `escalated` is true when the corruption tick took the construct into
+    /// its second phase. It spends that turn escalating, so `ok` is false and
+    /// no action runs: the one it had announced belonged to the old set, and
+    /// the new set's first action has not been shown to the player yet.
     ///
     /// `ok` is false when nothing is queued, the meter is already full or the
     /// screen is detached. In those cases neither intent nor noise changes.
@@ -234,13 +253,20 @@ impl SentryNode {
     fn perform_queued_action(&mut self) -> VarDictionary {
         let meter = self.noise_meter();
 
+        // A firewall covers the player turn after it went up and no further,
+        // so it comes down before anything else in the construct's turn.
+        self.sentry.drop_firewall();
+
+        let phase_before = self.sentry.phase();
         let corruption_damage = self.sentry.resolve_corruption_tick();
         let corruption = self.sentry.corruption();
+        let escalated = self.sentry.phase() != phase_before;
 
         let action = if self.base().is_inside_tree()
             && !self.base().is_queued_for_deletion()
             && !meter.bind().is_at_cap()
             && !self.sentry.is_defeated()
+            && !escalated
         {
             self.sentry.perform_queued_action()
         } else {
@@ -258,6 +284,15 @@ impl SentryNode {
                 let integrity_restored = self
                     .sentry
                     .restore_integrity(action.ability.integrity_restored());
+                // A boss's Purge and Firewall land on the construct too. Purge
+                // runs after the corruption tick, so it clears what would
+                // have ticked next turn.
+                let corruption_purged = if action.ability.purges_corruption() {
+                    self.sentry.purge_corruption()
+                } else {
+                    0
+                };
+                let firewall = self.sentry.raise_firewall(action.ability.firewall_raised());
 
                 vdict! {
                     "ok" => true,
@@ -273,8 +308,13 @@ impl SentryNode {
                     "ability" => action.ability.describe().as_str(),
                     // The actual amount regained, clamped at max integrity.
                     "integrity_restored" => integrity_restored,
+                    "corruption_purged" => corruption_purged,
+                    // The firewall now standing for the player's next turn.
+                    "firewall" => firewall,
                     "corruption_damage" => corruption_damage,
-                    "corruption" => corruption,
+                    "corruption" => self.sentry.corruption(),
+                    "phase" => self.sentry.phase(),
+                    "escalated" => false,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }
@@ -294,8 +334,12 @@ impl SentryNode {
                     "energy_drain" => 0,
                     "ability" => "",
                     "integrity_restored" => 0,
+                    "corruption_purged" => 0,
+                    "firewall" => 0,
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
+                    "phase" => self.sentry.phase(),
+                    "escalated" => escalated,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }
