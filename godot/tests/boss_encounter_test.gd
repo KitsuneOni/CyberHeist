@@ -125,7 +125,10 @@ func _run() -> void:
 	await process_frame
 
 	var booted := _screen()
-	_check(booted != null and booted.name == "ContractHub", "the run opens on the contract hub")
+	_check(booted != null and booted.name == "MainMenu", "the game opens on the main menu")
+	_check(_flow.start_new_contract().get("ok", false), "New contract leaves the main menu")
+	await process_frame
+	_check(_screen().name == "ContractHub", "the run opens on the contract hub")
 
 	# --- the contract is laid out in zones, each closed off by one boss -----
 	var zones: Dictionary = _flow.zone_progress()

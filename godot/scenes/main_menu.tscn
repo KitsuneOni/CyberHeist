@@ -1,0 +1,138 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scenes/main_menu.gd" id="1_menu"]
+[ext_resource type="Theme" path="res://themes/terminal_theme.tres" id="2_theme"]
+[ext_resource type="Shader" path="res://shaders/crt_overlay.gdshader" id="3_crt"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
+shader = ExtResource("3_crt")
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+script = ExtResource("1_menu")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.0392157, 0.0588235, 0.0509804, 1)
+
+[node name="FeedClip" type="Control" parent="."]
+clip_contents = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="PacketFeed" type="Label" parent="FeedClip"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0.22)
+layout_mode = 0
+offset_left = 700.0
+offset_right = 1580.0
+offset_bottom = 900.0
+mouse_filter = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 14
+
+[node name="Content" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 88
+theme_override_constants/margin_top = 64
+theme_override_constants/margin_right = 88
+theme_override_constants/margin_bottom = 64
+
+[node name="Column" type="VBoxContainer" parent="Content"]
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_constants/separation = 4
+
+[node name="Wordmark" type="Label" parent="Content/Column"]
+layout_mode = 2
+theme_type_variation = &"DisplayLabel"
+text = "CYBERHEIST"
+
+[node name="Tagline" type="Label" parent="Content/Column"]
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+text = "a job is only clean if nobody looks_"
+
+[node name="Spacer" type="Control" parent="Content/Column"]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Menu" type="VBoxContainer" parent="Content/Column"]
+custom_minimum_size = Vector2(460, 0)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_constants/separation = 6
+
+[node name="NewContractButton" type="Button" parent="Content/Column/Menu"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TerminalMenuButton"
+text = "  New contract"
+alignment = 0
+
+[node name="ContinueButton" type="Button" parent="Content/Column/Menu"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TerminalMenuButton"
+text = "  Continue run"
+alignment = 0
+
+[node name="QuitButton" type="Button" parent="Content/Column/Menu"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TerminalMenuButton"
+text = "  Quit"
+alignment = 0
+
+[node name="StatusLabel" type="Label" parent="Content/Column"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.2, 0.333333, 1)
+
+[node name="BuildLabel" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = -44.0
+offset_right = 424.0
+offset_bottom = -16.0
+grow_vertical = 0
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 14
+text = "build dev"
+
+[node name="CrtOverlay" type="ColorRect" parent="."]
+material = SubResource("ShaderMaterial_crt")
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
