@@ -462,7 +462,10 @@ wrap and the final clamped +1. Both run in the stress workflow.
 The generated contract does not guarantee an opening combat option. The shared
 `tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle, selecting
 a reachable node and mounting combat content if that node has another type.
-These tests exercise combat, not the random encounter scene registry.
+These tests exercise combat, not the random encounter scene registry. It only
+picks a combat, event or shop node, because an elite or boss node fields its
+own construct rather than WARDEN-7. If a contract offers nothing else, it rolls
+a fresh one.
 
 For the zone boss slice, run:
 
