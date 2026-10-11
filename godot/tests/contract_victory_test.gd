@@ -318,6 +318,11 @@ func _run() -> void:
 	var reached: bool = await _advance_to_final_boss(total_zones)
 	_check(reached, "the run reaches the final zone's boss")
 	var combat := _screen()
+	_check(combat != null, "a screen is up for the final boss")
+	_check(
+		combat != null and combat.has_node("Sentry"),
+		"the final boss loads the combat screen with its Sentry"
+	)
 	if not reached or combat == null or not combat.has_node("Sentry"):
 		_finish()
 		return
