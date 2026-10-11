@@ -41,6 +41,14 @@ impl RunDeckNode {
         self.deck.card_ids().to_vec()
     }
 
+    /// The run's deck itself, for a Rust rule that adds a card as part of a
+    /// larger step. `ShopNode` lends it to `ShopVisit::buy`, so a bought card
+    /// is added in the same operation that takes its price. Every id the shop
+    /// sells comes from the card database, so it needs no check here.
+    pub(crate) fn deck_mut(&mut self) -> &mut RunDeck {
+        &mut self.deck
+    }
+
     fn card_database(&self) -> Option<Gd<CardDatabase>> {
         self.base()
             .try_get_node_as::<CardDatabase>("/root/CardDatabaseGlobal")

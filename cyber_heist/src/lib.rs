@@ -19,6 +19,8 @@ mod run_state_node;
 mod run_stats;
 mod sentry;
 mod sentry_node;
+mod shop;
+mod shop_node;
 mod starter_deck;
 
 use card_data::CardData;
@@ -130,6 +132,15 @@ impl PlayerState {
             "fine" => fine,
             "lost_upgrades" => &lost,
         }
+    }
+}
+
+impl PlayerState {
+    /// The credit balance itself, for a Rust rule that has to check and spend
+    /// it in one step. `ShopNode` lends it to `ShopVisit::buy`, which refuses
+    /// rather than take the balance below zero.
+    pub(crate) fn credits_mut(&mut self) -> &mut i64 {
+        &mut self.money
     }
 }
 

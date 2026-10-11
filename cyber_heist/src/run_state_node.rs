@@ -246,9 +246,10 @@ impl RunStateNode {
     }
 
     /// Records a card going into the run's deck. Called by
-    /// `FlowCoordinator.add_card_to_deck` once the deck has accepted it.
+    /// `FlowCoordinator.add_card_to_deck` once the deck has accepted it, and
+    /// by `ShopNode` for a card bought in the shop.
     #[func]
-    fn record_card_added(&mut self) {
+    pub(crate) fn record_card_added(&mut self) {
         self.state.record_card_added();
     }
 
