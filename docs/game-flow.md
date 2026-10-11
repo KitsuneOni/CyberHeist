@@ -24,6 +24,10 @@ The plain Rust model in `cyber_heist/src/run_state.rs` enforces these states:
 - `encounter_active`: exactly one active encounter with an ID and type.
 - `caught`: retains that active encounter so caught UI and penalty code can
   inspect it. Finishing the caught flow returns to the hub and clears it.
+- `contract_won`: the final zone's boss has been beaten and the contract is
+  complete. There is no active encounter and nothing left to select; the run
+  ends on the victory screen, where a new run can start (see
+  [Winning a contract](#winning-a-contract-stories-89-and-23)).
 
 Rejected transitions do not mutate run state. The Godot adapter returns
 `{"ok": false, "error": "..."}` for a rejection and `{"ok": true}` for
@@ -31,7 +35,7 @@ success. `FlowCoordinator.run_snapshot()` returns:
 
 ```gdscript
 {
-    "phase": "hub", # or "encounter_active" / "caught"
+    "phase": "hub", # or "encounter_active" / "caught" / "contract_won"
     "active_encounter": null, # or {"id": String, "type": String}
 }
 ```
@@ -122,7 +126,8 @@ player may change their mind and accept a different offer.
 default contract** (three zones of two columns), exactly as before. The hub
 and every headless test keep working without accepting anything. That default
 contract is not one of the offers, so `accepted_contract_offer()` reports
-`ok: false` for it and it has no credit reward to pay.
+`ok: false` for it and it has no credit reward to pay: winning it still ends
+the contract on the victory screen, but the contract reward is 0.
 
 ```gdscript
 FlowCoordinator.contract_offers()
@@ -139,7 +144,7 @@ FlowCoordinator.accepted_contract_offer()
 Offers are listed shortest first. Accepting only changes run state; it does
 not navigate. The selection or details screen decides where to go next, and
 the hub reads the new map when it is next shown. The accepted offer's
-`credit_reward` is kept on the run for the victory payout to read.
+`credit_reward` is what winning the contract pays (see below).
 
 Run the headless check with a built extension:
 
@@ -165,7 +170,8 @@ and a new run starts them again.
     itself.
   - Anything applying credits from GDScript (the combat payout in #114, the
     contract payout in #89/#23) calls `FlowCoordinator.change_credits(amount)`,
-    which updates `PlayerStateGlobal` and records the change together.
+    which updates `PlayerStateGlobal` and records the change together. The
+    contract reward therefore counts towards `credits_earned`.
   - The caught fine is a loss, so it is not recorded and does not need to be.
 - **Cards added** counts cards that go into the run's deck on top of the
   starter deck. Every card is added through
@@ -200,8 +206,8 @@ back to the starter deck, noise and shield go to 0, detection resistance is
 cleared, knowledge goes back to its starting level and the contract's upgrades
 are dropped from `PlayerStateGlobal`. Finally it shows the hub.
 
-A new run can start from the hub or the caught screen, which is where a run
-ends. It is refused during an encounter, with nothing changed, because that
+A new run can start from the hub, the caught screen or the victory screen,
+which is where a run ends. It is refused during an encounter, with nothing changed, because that
 encounter's screen would otherwise carry on playing against a run that no
 longer exists.
 
@@ -218,6 +224,68 @@ Run the headless check with a built extension:
 ```sh
 godot --headless --path godot -s res://tests/run_stats_test.gd
 ```
+
+## Winning a contract (stories #89 and #23)
+
+A contract is won by beating the boss of its **final** zone. Every earlier
+boss still only opens the next zone and leads back to the map through its card
+reward, exactly as before.
+
+`RunState::complete_encounter` decides which it is with
+`active_encounter_wins_contract()`: the active encounter is a boss and sits in
+the contract's last zone. Completing it moves the run to `contract_won` rather
+than `hub`. The win is still counted like any other fight. A contract with no
+boss on it, such as the authored test contract, is never won this way.
+
+`FlowCoordinator.complete_active_encounter()` reads the same check before it
+completes, so it prepares the victory screen (`scenes/victory_screen.tscn`)
+instead of the card reward. The run is over, so no card is offered for a deck
+that is about to be reset. Once the transition succeeds it:
+
+1. pays the final boss's own encounter credits, like any boss, then
+2. claims the contract reward from run state and pays it with
+   `change_credits`, so it lands on `PlayerStateGlobal` and counts as credits
+   earned on the run.
+
+**The reward is the accepted offer's `credit_reward`**, which grows with the
+contract's length and boss count (see Contract offers). The default contract a
+run starts on was never offered, so it pays 0. `RunState::claim_contract_reward`
+only pays in `contract_won` and only once per contract: a second claim is
+refused with `ContractRewardAlreadyClaimed`, and a caught contract never
+reaches `contract_won`, so being caught pays no contract reward.
+
+```gdscript
+FlowCoordinator.contract_payout()
+# {"credits": 495, "balance_before": 625, "balance_after": 1120}
+# Empty until a contract is won, and cleared by start_new_run().
+```
+
+The victory screen names the contract, summarises the run from
+`run_summary()`, says what the contract and final boss paid, and counts the
+balance up from `balance_before` to `balance_after` over 1.5 seconds. The
+credits are already in the balance when it opens; the count is only how the
+screen shows them arriving. For tests it exposes `displayed_balance`,
+`is_counting()`, and the `displayed_balance_changed` and
+`balance_count_finished` signals.
+
+**Take another contract** calls `FlowCoordinator.start_new_run()`, the same
+clean reset as after being caught: a fresh contract and offers, no zone
+progress or stats, noise and knowledge reset, the starter deck and no
+upgrades. The credit balance, reward included, carries over.
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/contract_victory_test.gd
+```
+
+It accepts the offer with the most zones and walks it without playing the
+ordinary encounters. It checks that each earlier boss returns to the map with
+the next zone open and no contract reward, then beats the final boss with a
+real Trojan play. It checks the victory screen replaces the map, the offer's
+reward is paid exactly once and counted as earned, and the balance counts up
+in steps to the new total. Finally it takes another contract from the victory
+screen, and checks that being caught on it costs the fine and pays no reward.
 
 ## The sentry's turn
 
@@ -522,6 +590,7 @@ ordinary encounter progression still carries noise forward.
 FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
+FlowCoordinator.contract_payout()
 FlowCoordinator.run_summary()
 FlowCoordinator.change_credits(amount: int)
 FlowCoordinator.add_card_to_deck(card_id: String)

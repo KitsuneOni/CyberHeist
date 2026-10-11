@@ -1,0 +1,109 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scenes/victory_screen.gd" id="1_victory"]
+[ext_resource type="Theme" path="res://themes/terminal_theme.tres" id="2_theme"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_victory"]
+bg_color = Color(0.0392157, 0.0588235, 0.0509804, 0.96)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2, 1, 0.4, 0.8)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
+[node name="VictoryScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+script = ExtResource("1_victory")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.0196078, 0.0313725, 0.027451, 1)
+
+[node name="Page" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 64
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 64
+theme_override_constants/margin_bottom = 48
+
+[node name="VictoryPanel" type="PanelContainer" parent="Page"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_victory")
+
+[node name="Margin" type="MarginContainer" parent="Page/VictoryPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 32
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 32
+theme_override_constants/margin_bottom = 24
+
+[node name="Content" type="VBoxContainer" parent="Page/VictoryPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 14
+alignment = 1
+
+[node name="TitleLabel" type="Label" parent="Page/VictoryPanel/Margin/Content"]
+layout_mode = 2
+theme_type_variation = &"DisplayLabel"
+text = "CONTRACT COMPLETE"
+horizontal_alignment = 1
+
+[node name="ContractLabel" type="Label" parent="Page/VictoryPanel/Margin/Content"]
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="SummaryLabel" type="Label" parent="Page/VictoryPanel/Margin/Content"]
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="RewardLabel" type="Label" parent="Page/VictoryPanel/Margin/Content"]
+layout_mode = 2
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="BalanceLabel" type="Label" parent="Page/VictoryPanel/Margin/Content"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Balance: 0 credits"
+horizontal_alignment = 1
+
+[node name="NewContractButton" type="Button" parent="Page/VictoryPanel/Margin/Content"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 44)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_type_variation = &"TerminalMenuButton"
+text = "Take another contract"
+
+[node name="StatusLabel" type="Label" parent="Page/VictoryPanel/Margin/Content"]
+custom_minimum_size = Vector2(0, 24)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.72, 0.36, 1)
+horizontal_alignment = 1
+autowrap_mode = 3
