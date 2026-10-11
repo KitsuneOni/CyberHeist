@@ -18,6 +18,8 @@ pub struct PlayedCard {
     pub name: String,
     pub noise_change: i32,
     pub damage_dealt: i32,
+    /// Plain damage a boss's firewall absorbed before it reached integrity.
+    pub damage_blocked: i32,
     pub shield_added: i32,
     pub cards_drawn: i32,
     pub knowledge_change: i32,
@@ -30,6 +32,7 @@ pub struct PlayedCard {
 #[derive(Default)]
 struct KeywordEffects {
     damage_dealt: i32,
+    damage_blocked: i32,
     shield_added: i32,
     cards_drawn: i32,
     knowledge_change: i32,
@@ -38,11 +41,23 @@ struct KeywordEffects {
     corruption_boost_added: i32,
 }
 
+/// Plain damage, which a firewall can absorb.
 fn total_damage(keywords: &[Keyword]) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Damage(amount) | Keyword::Penetrating(amount) => *amount,
+            Keyword::Damage(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Penetrating damage, which goes straight through a firewall.
+fn total_penetrating(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Penetrating(amount) => *amount,
             _ => 0,
         })
         .sum()
@@ -139,7 +154,8 @@ fn resolve_keywords(
     rng: &mut impl Rng,
 ) -> KeywordEffects {
     let shield_added = noise.add_shield(total_shield(active_keywords));
-    let damage_dealt = sentry.take_damage(total_damage(active_keywords));
+    let blockable = sentry.take_blockable_damage(total_damage(active_keywords));
+    let damage_dealt = blockable.dealt + sentry.take_damage(total_penetrating(active_keywords));
     let knowledge_change = knowledge.add(total_knowledge(active_keywords));
     let corruption_added = sentry.add_corruption(total_corrupting(active_keywords));
     let corruption_boost_added =
@@ -156,6 +172,7 @@ fn resolve_keywords(
 
     KeywordEffects {
         damage_dealt,
+        damage_blocked: blockable.blocked,
         shield_added,
         cards_drawn,
         knowledge_change,
@@ -217,6 +234,7 @@ pub fn play_card(
         name: card.display_name(pre_play_noise),
         noise_change,
         damage_dealt: effects.damage_dealt,
+        damage_blocked: effects.damage_blocked,
         shield_added: effects.shield_added,
         cards_drawn: effects.cards_drawn,
         knowledge_change: effects.knowledge_change,
@@ -275,6 +293,7 @@ pub fn resolve_end_of_turn_effects(
             name: card.display_name(current_noise),
             noise_change,
             damage_dealt: effects.damage_dealt,
+            damage_blocked: effects.damage_blocked,
             shield_added: effects.shield_added,
             cards_drawn: effects.cards_drawn,
             knowledge_change: effects.knowledge_change,
@@ -505,6 +524,34 @@ mod tests {
         let mut combat = Combat::with_card("trojan", 0);
         assert_eq!(combat.play(0).unwrap().damage_dealt, 6);
         assert_eq!(combat.sentry.health(), combat.sentry.max_health() - 6);
+    }
+
+    /// Boss card E2b: BLACK MONOLITH's firewall soaks up a plain Strike, and
+    /// the card reports what was blocked as well as what got through.
+    #[test]
+    fn a_firewall_blocks_plain_damage_before_it_reaches_integrity() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.sentry.raise_firewall(4);
+        let health_before = combat.sentry.health();
+
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_blocked, 4);
+        assert_eq!(played.damage_dealt, 2);
+        assert_eq!(combat.sentry.health(), health_before - 2);
+        assert_eq!(combat.sentry.firewall(), 0);
+    }
+
+    /// Penetrating damage is what goes "straight through the target's block",
+    /// so it is the answer to a firewall.
+    #[test]
+    fn penetrating_damage_goes_straight_through_a_firewall() {
+        let mut combat = Combat::with_card("trojan", 0);
+        combat.sentry.raise_firewall(12);
+
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_blocked, 0);
+        assert_eq!(played.damage_dealt, 6);
+        assert_eq!(combat.sentry.firewall(), 12, "the firewall is untouched");
     }
 
     #[test]

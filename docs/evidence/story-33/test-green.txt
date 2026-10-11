@@ -1,0 +1,15 @@
+# main_menu_test.gd after implementing the main menu (2026-10-07)
+  ok    FlowCoordinator autoload is present
+  ok    the game opens on the main menu
+  ok    the menu offers New contract
+  ok    the menu offers Continue run
+  ok    the menu offers Quit
+  ok    a fresh launch has no saved run
+  ok    Continue run is greyed out when there is no save
+  ok    New contract is selected when the menu opens
+  ok    moving down from New contract skips the unavailable Continue run
+  ok    Quit is connected to an action
+  ok    New contract opens the contract map
+  ok    the new run starts with no encounter active
+  ok    the new run has encounters ready to choose
+main menu test: PASSED

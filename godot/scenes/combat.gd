@@ -30,9 +30,13 @@ var card_buttons: Array[Button] = []
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
+# The phase the player has been told about, so an escalation is announced once
+# whichever way it happens: a card on their turn, or corruption on the boss's.
+var shown_phase := 1
 
 
 func _ready() -> void:
+	shown_phase = sentry.phase()
 	_draw_hand()
 
 
@@ -85,14 +89,21 @@ func _on_end_turn_button_pressed() -> void:
 		var restored: int = turn.get("integrity_restored", 0)
 		if restored > 0:
 			message += " Reinforce restored %d integrity." % restored
+		var purged: int = turn.get("corruption_purged", 0)
+		if purged > 0:
+			message += " Purge cleared %d corruption." % purged
+		var firewall: int = turn.get("firewall", 0)
+		if firewall > 0:
+			message += " Firewall will block the next %d damage." % firewall
 		var corruption_damage: int = turn.get("corruption_damage", 0)
 		if corruption_damage > 0:
 			message += " Corruption dealt %d damage." % corruption_damage
-		status_label.text = message
+		status_label.text = message + _escalation_message()
 	else:
 		var corruption_damage: int = turn.get("corruption_damage", 0)
 		if corruption_damage > 0:
 			status_label.text = "Corruption dealt %d damage." % corruption_damage
+		status_label.text = (status_label.text + _escalation_message()).strip_edges()
 
 
 # Connected in the scene to the sentry, which announces its turn from inside
@@ -100,6 +111,16 @@ func _on_end_turn_button_pressed() -> void:
 # been dealt yet at this point.
 func _on_sentry_turn_resolved(turn: Dictionary) -> void:
 	sentry_turn = turn
+
+
+# Says so the first time the sentry is seen in a new phase, and nothing after.
+# The intent line then carries the phase for as long as it lasts.
+func _escalation_message() -> String:
+	var phase: int = sentry.phase()
+	if phase == shown_phase:
+		return ""
+	shown_phase = phase
+	return " %s escalates to phase %d: new action set." % [sentry.construct_name(), phase]
 
 
 func _report_detected() -> void:
@@ -224,6 +245,7 @@ func _on_play_button_pressed() -> void:
 		selected_index = -1
 		var noise_change: int = result.get("noise_change", 0)
 		var damage_dealt: int = result.get("damage_dealt", 0)
+		var damage_blocked: int = result.get("damage_blocked", 0)
 		var shield_added: int = result.get("shield_added", 0)
 		var cards_drawn: int = result.get("cards_drawn", 0)
 		var knowledge_change: int = result.get("knowledge_change", 0)
@@ -241,6 +263,8 @@ func _on_play_button_pressed() -> void:
 		)
 		if damage_dealt > 0:
 			message += " Damage: %d." % damage_dealt
+		if damage_blocked > 0:
+			message += " Firewall blocked %d." % damage_blocked
 		if shield_added > 0:
 			message += " Shield: +%d." % shield_added
 		if cards_drawn > 0:
@@ -255,7 +279,7 @@ func _on_play_button_pressed() -> void:
 			message += " (+%d energy tax)" % energy_tax_paid
 		if corruption_boost_added > 0:
 			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
-		status_label.text = message
+		status_label.text = message + _escalation_message()
 
 		_rebuild_card_buttons(draw_phase.hand_names())
 	else:
@@ -286,6 +310,11 @@ func _update_health_label() -> void:
 	health_label.text = (
 		"%s: %d / %d HP" % [sentry.construct_name(), sentry.health(), sentry.max_health()]
 	)
+	# Only shown while one is up, so the player can see how much plain damage
+	# is still going to be soaked up before integrity.
+	var firewall: int = sentry.firewall()
+	if firewall > 0:
+		health_label.text += "  [Firewall %d]" % firewall
 
 
 func _update_knowledge_label() -> void:
@@ -365,6 +394,12 @@ func _update_intent_label() -> void:
 		intent_label.text = "%s: nothing queued" % sentry.construct_name()
 		return
 
+	# A second phase is called out on the intent itself, so the player can see
+	# the boss has changed what it does, not only that this action is new.
+	var who: String = sentry.construct_name()
+	if sentry.phase() > 1:
+		who += " [PHASE %d]" % sentry.phase()
+
 	# An ability is announced with the intent rather than sprung afterwards, so
 	# ending the turn into a lockdown is a decision and not a surprise.
 	var ability: String = sentry.queued_action_ability()
@@ -372,7 +407,7 @@ func _update_intent_label() -> void:
 		intent_label.text = (
 			"%s will: %s (+%d noise)"
 			% [
-				sentry.construct_name(),
+				who,
 				action,
 				sentry.queued_action_noise(),
 			]
@@ -381,7 +416,7 @@ func _update_intent_label() -> void:
 		intent_label.text = (
 			"%s will: %s (+%d noise, %s)"
 			% [
-				sentry.construct_name(),
+				who,
 				action,
 				sentry.queued_action_noise(),
 				ability,

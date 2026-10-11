@@ -1,5 +1,6 @@
 extends Node
 
+const MAIN_MENU_SCENE_PATH := "res://scenes/main_menu.tscn"
 const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const PLACEHOLDER_ENCOUNTER_SCENE_PATH := "res://scenes/placeholder_encounter.tscn"
@@ -37,17 +38,48 @@ func bind_screen_host(host: Node) -> void:
 		return
 
 	_screen_host = host
-	var destination := _destination_for_snapshot(run_snapshot())
-	if not destination.get("ok", false):
-		push_error(destination.get("error", "Could not resolve the current run screen."))
-		return
 
-	var prepared := _prepare_screen(destination["path"])
+	# Every launch opens on the main menu. The run is already rolled behind it,
+	# so New contract only has to show the map.
+	var prepared := _prepare_screen(MAIN_MENU_SCENE_PATH)
 	if not prepared.get("ok", false):
-		push_error(prepared.get("error", "Could not load the current run screen."))
+		push_error(prepared.get("error", "Could not load the main menu."))
 		return
 
 	_replace_screen(prepared["screen"])
+
+
+# Leaves the main menu for the contract map. Each launch rolls a fresh contract
+# in RunStateNode, so the run behind the menu is already a new one.
+func start_new_contract() -> Dictionary:
+	return _show_current_run_screen()
+
+
+# Whether the menu can offer Continue run. Nothing is saved between sessions
+# until the save story (#10) lands, so for now there is never a run to resume.
+func has_saved_run() -> bool:
+	return false
+
+
+func continue_run() -> Dictionary:
+	if not has_saved_run():
+		return _failure("There is no saved run to continue.")
+	return _show_current_run_screen()
+
+
+# Shows whichever screen the run's current phase belongs on: the map, the
+# active encounter, or the caught screen.
+func _show_current_run_screen() -> Dictionary:
+	var destination := _destination_for_snapshot(run_snapshot())
+	if not destination.get("ok", false):
+		return destination
+
+	var prepared := _prepare_screen(destination["path"])
+	if not prepared.get("ok", false):
+		return prepared
+
+	_replace_screen(prepared["screen"])
+	return {"ok": true}
 
 
 func selectable_encounters() -> Array:

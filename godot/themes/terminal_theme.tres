@@ -1,0 +1,57 @@
+[gd_resource type="Theme" load_steps=7 format=3]
+
+[ext_resource type="FontFile" path="res://assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf" id="1_body"]
+[ext_resource type="FontFile" path="res://assets/fonts/share-tech-mono/ShareTechMono-Regular.ttf" id="2_menu"]
+[ext_resource type="FontFile" path="res://assets/fonts/vt323/VT323-Regular.ttf" id="3_display"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_menu_idle"]
+content_margin_left = 16.0
+content_margin_top = 6.0
+content_margin_right = 16.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_menu_selected"]
+content_margin_left = 16.0
+content_margin_top = 6.0
+content_margin_right = 16.0
+content_margin_bottom = 6.0
+bg_color = Color(0.2, 1, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_menu_pressed"]
+content_margin_left = 16.0
+content_margin_top = 6.0
+content_margin_right = 16.0
+content_margin_bottom = 6.0
+bg_color = Color(0, 0.898, 1, 1)
+
+[resource]
+default_font = ExtResource("1_body")
+default_font_size = 20
+Label/colors/font_color = Color(0.2, 1, 0.4, 1)
+DisplayLabel/base_type = &"Label"
+DisplayLabel/fonts/font = ExtResource("3_display")
+DisplayLabel/font_sizes/font_size = 144
+DisplayLabel/colors/font_color = Color(0.2, 1, 0.4, 1)
+DisplayLabel/colors/font_shadow_color = Color(0.2, 1, 0.4, 0.2)
+DisplayLabel/constants/shadow_offset_x = 0
+DisplayLabel/constants/shadow_offset_y = 0
+DisplayLabel/constants/shadow_outline_size = 6
+DimLabel/base_type = &"Label"
+DimLabel/colors/font_color = Color(0.2, 1, 0.4, 0.55)
+DimLabel/font_sizes/font_size = 18
+TerminalMenuButton/base_type = &"Button"
+TerminalMenuButton/fonts/font = ExtResource("2_menu")
+TerminalMenuButton/font_sizes/font_size = 34
+TerminalMenuButton/colors/font_color = Color(0.2, 1, 0.4, 1)
+TerminalMenuButton/colors/font_hover_color = Color(0.0392157, 0.0588235, 0.0509804, 1)
+TerminalMenuButton/colors/font_focus_color = Color(0.0392157, 0.0588235, 0.0509804, 1)
+TerminalMenuButton/colors/font_hover_pressed_color = Color(0.0392157, 0.0588235, 0.0509804, 1)
+TerminalMenuButton/colors/font_pressed_color = Color(0.0392157, 0.0588235, 0.0509804, 1)
+TerminalMenuButton/colors/font_disabled_color = Color(0.2, 1, 0.4, 0.3)
+TerminalMenuButton/constants/h_separation = 12
+TerminalMenuButton/styles/normal = SubResource("StyleBoxEmpty_menu_idle")
+TerminalMenuButton/styles/hover = SubResource("StyleBoxFlat_menu_selected")
+TerminalMenuButton/styles/focus = SubResource("StyleBoxFlat_menu_selected")
+TerminalMenuButton/styles/pressed = SubResource("StyleBoxFlat_menu_pressed")
+TerminalMenuButton/styles/hover_pressed = SubResource("StyleBoxFlat_menu_pressed")
+TerminalMenuButton/styles/disabled = SubResource("StyleBoxEmpty_menu_idle")
