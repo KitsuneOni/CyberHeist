@@ -202,6 +202,16 @@ impl RunState {
             .and_then(|index| self.contract_offers.get(index))
     }
 
+    /// Whether `accept_contract_offer` would currently take an offer: the run
+    /// is at the hub, has offers to choose from and has not yet entered an
+    /// encounter on its contract. The hub reads this to decide whether to show
+    /// the contract choice before the map.
+    pub fn can_accept_contract_offer(&self) -> bool {
+        self.phase == ContractPhase::Hub
+            && !self.contract_started
+            && !self.contract_offers.is_empty()
+    }
+
     /// Takes on the offer at `index`, replacing the contract map with the one
     /// it describes.
     ///
@@ -669,8 +679,8 @@ mod tests {
         );
     }
 
-    /// Until the selection screen exists, the hub has to keep working on the
-    /// contract a run is created with.
+    /// A run is created on a playable default contract, so anything driving
+    /// it without the hub's offer picker (the headless tests) still works.
     #[test]
     fn a_generated_run_is_playable_before_any_offer_is_accepted() {
         let state = generated_run(5);
@@ -774,6 +784,47 @@ mod tests {
             Err(RunStateError::ContractAlreadyStarted)
         );
         assert_eq!(state, before);
+    }
+
+    /// The hub asks this before drawing the map, so it has to agree with
+    /// what `accept_contract_offer` actually allows.
+    #[test]
+    fn an_offer_can_be_accepted_only_before_the_contract_starts() {
+        let mut state = generated_run(5);
+        assert!(state.can_accept_contract_offer(), "a new run can choose");
+
+        state.accept_contract_offer(1).expect("second offer");
+        assert!(
+            state.can_accept_contract_offer(),
+            "the player can still change their mind before entering anything"
+        );
+
+        enter_first_encounter(&mut state);
+        assert!(
+            !state.can_accept_contract_offer(),
+            "not during an encounter"
+        );
+
+        state.complete_encounter().expect("the encounter is active");
+        assert!(
+            !state.can_accept_contract_offer(),
+            "not once the contract is under way"
+        );
+    }
+
+    #[test]
+    fn an_offer_cannot_be_accepted_after_being_caught_on_the_contract() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        state.report_caught().expect("the encounter is active");
+        state.finish_caught().expect("the run was caught");
+
+        assert!(!state.can_accept_contract_offer());
+    }
+
+    #[test]
+    fn an_authored_run_has_no_offer_choice_to_make() {
+        assert!(!RunState::new().can_accept_contract_offer());
     }
 
     #[test]

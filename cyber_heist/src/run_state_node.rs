@@ -189,6 +189,15 @@ impl RunStateNode {
         offers
     }
 
+    /// Whether `accept_contract_offer` would currently take an offer: at the
+    /// hub, with offers to choose from, before any encounter on the contract
+    /// has been entered. The hub reads this to decide whether to show the
+    /// contract choice before the map.
+    #[func]
+    fn can_accept_contract_offer(&self) -> bool {
+        self.state.can_accept_contract_offer()
+    }
+
     /// Takes on the offer at `index` and rebuilds the contract map from it.
     /// `{ok: true}`, or `{ok: false, error}` for an index that is not on offer,
     /// outside the hub, or once an encounter on the contract has been entered.

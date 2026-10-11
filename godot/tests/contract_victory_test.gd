@@ -1,15 +1,18 @@
 # Real scene/extension coverage for winning a contract (Trello #89) and being
 # paid for it (Trello #23). The Rust tests own the rules: which boss wins the
 # contract, and that the reward is paid once and never for a caught contract.
-# This plays a whole accepted contract through FlowCoordinator and checks what
-# the player actually sees:
+# This plays a whole contract, chosen on the hub's offer picker, through
+# FlowCoordinator and checks what the player actually sees:
 #
+#   - a new run asks for a contract before showing the map, and accepting one
+#     through the picker puts the run on that contract,
 #   - an earlier zone's boss only opens the next zone and returns to the map,
 #   - beating the final zone's boss in real combat shows the victory screen
 #     instead of the map,
 #   - the accepted offer's credit reward lands in the balance exactly once,
 #     and the victory screen counts the balance up to it in steps,
-#   - Take another contract starts a clean new run at the hub, and
+#   - Take another contract starts a clean new run at the hub's offer picker,
+#     where the next contract is chosen, and
 #   - a contract the player is caught on pays no contract reward.
 #
 # Run: godot --headless --path godot -s res://tests/contract_victory_test.gd
@@ -71,26 +74,83 @@ func _phase() -> String:
 	return str(_flow.run_snapshot().get("phase", ""))
 
 
-# Accepts the offer with the most zones, so the contract has an earlier boss
-# as well as a final one. Rolls fresh runs until one is on offer. Returns the
-# accepted offer, or an empty dictionary if none could be accepted.
+# Accepts the offer with the most zones through the hub's offer picker, so the
+# contract has an earlier boss as well as a final one. Rolls fresh runs until
+# one is on offer. Returns the accepted offer, or an empty dictionary if none
+# could be accepted.
 func _accept_a_multi_zone_offer() -> Dictionary:
 	for _roll in MAX_RUN_ROLLS:
+		var hub := _screen()
+		if hub == null or hub.name != "ContractHub" or not hub.is_choosing_contract():
+			push_error("the hub is not asking for a contract: %s" % hub)
+			return {}
+
 		var best: Dictionary = {}
-		for offer: Dictionary in _flow.contract_offers():
+		for offer: Dictionary in hub.offer_picker.offers:
 			if best.is_empty() or int(offer.get("zone_count", 0)) > int(best.get("zone_count", 0)):
 				best = offer
 
 		if int(best.get("zone_count", 0)) >= 2:
-			var accepted: Dictionary = _flow.accept_contract_offer(int(best.get("index", -1)))
-			if accepted.get("ok", false):
+			if _choose_offer_on_picker(hub, int(best.get("index", -1))):
 				return best
-			push_error("could not accept %s: %s" % [best, accepted])
 			return {}
 
 		_flow.start_new_run()
 		await _settle()
 	return {}
+
+
+# Cycles the hub's offer picker to the offer with `index` and presses Accept,
+# as a player would. True once the hub has swapped to the map.
+func _choose_offer_on_picker(hub: Node, index: int) -> bool:
+	var picker: Node = hub.offer_picker
+	for _press in picker.offers.size():
+		if int(picker.shown_offer().get("index", -1)) == index:
+			break
+		picker.next_button.pressed.emit()
+
+	if int(picker.shown_offer().get("index", -1)) != index:
+		push_error("offer %d never came up on the picker" % index)
+		return false
+
+	picker.accept_button.pressed.emit()
+	if hub.is_choosing_contract():
+		push_error("accepting offer %d left the picker up: %s" % [index, picker.status_label.text])
+		return false
+	return true
+
+
+# The offer picker is the only way a player takes on a contract, so check it
+# is what a new run opens on and that it describes the offers.
+func _check_offer_picker(hub: Node, context: String) -> void:
+	_check(
+		hub != null and hub.name == "ContractHub" and hub.is_choosing_contract(),
+		"%s asks for a contract before showing the map" % context
+	)
+	if hub == null or not hub.has_method("is_choosing_contract"):
+		return
+	_check(not hub.map_panel.visible, "%s hides the map until a contract is chosen" % context)
+
+	var picker: Node = hub.offer_picker
+	_check(
+		picker.offers.size() == _flow.contract_offers().size() and not picker.offers.is_empty(),
+		"%s offers every contract on the table" % context
+	)
+	var first: Dictionary = picker.shown_offer()
+	_check(
+		picker.name_label.text == str(first.get("name", "?"))
+		and picker.payout_label.text.contains(str(first.get("credit_reward", "?"))),
+		"%s shows the offer's name and payout (%s, %s)"
+		% [context, picker.name_label.text, picker.payout_label.text]
+	)
+
+	picker.next_button.pressed.emit()
+	_check(
+		picker.shown_position == 1 and picker.name_label.text != str(first.get("name", "?")),
+		"%s cycles to the next offer" % context
+	)
+	picker.previous_button.pressed.emit()
+	_check(picker.shown_position == 0, "%s cycles back to the first offer" % context)
 
 
 # Enters the next node on the route, preferring a boss so the walk is short.
@@ -228,12 +288,24 @@ func _run() -> void:
 	_flow.start_new_contract()
 	await _settle()
 
-	# --- set up: an accepted contract with more than one zone --------------
+	# --- set up: choose a contract with more than one zone -----------------
+	_check_offer_picker(_screen(), "a new contract")
 	var offer: Dictionary = await _accept_a_multi_zone_offer()
 	_check(not offer.is_empty(), "an offer with more than one zone is accepted: %s" % offer)
 	if offer.is_empty():
 		_finish()
 		return
+	var accepted_offer: Dictionary = _flow.accepted_contract_offer()
+	_check(
+		accepted_offer.get("ok", false)
+		and int(accepted_offer.get("index", -1)) == int(offer.get("index", -2)),
+		"the picker accepts the chosen offer (%s)" % accepted_offer
+	)
+	var map_hub := _screen()
+	_check(
+		map_hub != null and map_hub.map_panel.visible and not map_hub.is_choosing_contract(),
+		"accepting a contract shows its map"
+	)
 	var credit_reward := int(offer.get("credit_reward", 0))
 	var total_zones := int(_flow.zone_progress().get("total_zones", 0))
 	_check(credit_reward > 0, "the accepted contract carries a credit reward")
@@ -343,6 +415,7 @@ func _run() -> void:
 	var hub := _screen()
 	_check(hub != null and hub.name == "ContractHub", "Take another contract shows the hub")
 	_check(_phase() == "hub", "the new run starts at the hub")
+	_check_offer_picker(hub, "the hub after a won contract")
 	_check(
 		not _flow.accepted_contract_offer().get("ok", true),
 		"the new run has not accepted a contract yet"
@@ -354,8 +427,18 @@ func _run() -> void:
 	_check(not _run_state.claim_contract_reward().get("ok", true), "the new contract has not been won")
 
 	# --- a caught contract pays no contract reward -------------------------
-	var accepted: Dictionary = _flow.accept_contract_offer(0)
-	_check(accepted.get("ok", false), "the new run takes another contract")
+	var next_offer: Dictionary = {}
+	var offers_after_victory: Array = _flow.contract_offers()
+	if not offers_after_victory.is_empty():
+		next_offer = offers_after_victory[0]
+	_check(
+		hub != null and _choose_offer_on_picker(hub, 0),
+		"the new run takes another contract through the picker"
+	)
+	_check(
+		str(_flow.accepted_contract_offer().get("name", "")) == str(next_offer.get("name", "?")),
+		"the new run is on the contract chosen after the victory"
+	)
 	var entered := _enter_next_encounter()
 	_check(entered.get("ok", false), "the new contract's first encounter can be entered")
 	await _settle()

@@ -121,8 +121,8 @@ func contract_offers() -> Array:
 # {ok: true} or {ok: false, error}; a rejection changes nothing. Allowed only
 # from the hub before any encounter on the contract has been entered.
 #
-# This only changes run state. It does not navigate, so the selection or
-# details screen decides where to go next once it has the result.
+# This only changes run state. It does not navigate: the hub's offer picker
+# calls it and redraws the map itself once it has the result.
 func accept_contract_offer(index: int) -> Dictionary:
 	return _run_state.accept_contract_offer(index)
 
@@ -131,6 +131,19 @@ func accept_contract_offer(index: int) -> Dictionary:
 # still on the contract it started with.
 func accepted_contract_offer() -> Dictionary:
 	return _run_state.accepted_contract_offer()
+
+
+# Whether the hub should ask the player to choose a contract before showing
+# the map: a new run that has offers on the table and has not yet accepted one
+# or entered any encounter. Every new run, from the main menu or the victory
+# screen, starts here, so the reward for winning is always an offer's reward.
+#
+# An authored run has no offers and goes straight to the map, and so does a
+# run that has already started on its contract.
+func needs_contract_choice() -> bool:
+	if not _run_state.can_accept_contract_offer():
+		return false
+	return not accepted_contract_offer().get("ok", false)
 
 
 func select_encounter(node_id: int) -> Dictionary:

@@ -122,12 +122,29 @@ index that is not on offer, outside the hub, or once any encounter on the
 current contract has been entered (completed or caught). Before then the
 player may change their mind and accept a different offer.
 
-**Until the contract selection screen lands, a run still starts on a playable
-default contract** (three zones of two columns), exactly as before. The hub
-and every headless test keep working without accepting anything. That default
-contract is not one of the offers, so `accepted_contract_offer()` reports
-`ok: false` for it and it has no credit reward to pay: winning it still ends
-the contract on the victory screen, but the contract reward is 0.
+A run is still created on a playable **default contract** (three zones of two
+columns), so headless tests that drive `FlowCoordinator` directly keep working
+without accepting anything. That default contract is not one of the offers, so
+`accepted_contract_offer()` reports `ok: false` for it and it has no credit
+reward to pay: winning it still ends the contract on the victory screen, but
+the contract reward is 0. A player never plays it, because the hub asks for a
+contract first (below).
+
+### Choosing a contract on the hub
+
+While `FlowCoordinator.needs_contract_choice()` is true, the contract hub shows
+the **offer picker** (`scenes/contract_offer_picker.tscn`) in place of the map.
+That is a new run at the hub with offers on the table, none accepted yet and
+no encounter entered (`RunState::can_accept_contract_offer`), which covers
+both **New contract** on the main menu and **Take another contract** on the
+victory screen. An authored run has no offers, so it goes straight to the map.
+
+The picker follows sheet 3 of the UI mockups: one offer on screen at a time
+with its name, target, length in zones and encounters, and payout; arrows
+cycle through the offers, and **Accept contract** commits. The picker only
+reports the chosen offer's `index`; the hub accepts it through
+`accept_contract_offer` and then draws the new map. A rejected acceptance
+leaves the picker up with the reason under the offer.
 
 ```gdscript
 FlowCoordinator.contract_offers()
@@ -137,13 +154,15 @@ FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(1)
 # {"ok": true}, or {"ok": false, "error": "..."}
 
+FlowCoordinator.needs_contract_choice()
+# true while the hub should show the offer picker instead of the map
+
 FlowCoordinator.accepted_contract_offer()
 # the accepted offer's fields plus "ok": true, or {"ok": false}
 ```
 
 Offers are listed shortest first. Accepting only changes run state; it does
-not navigate. The selection or details screen decides where to go next, and
-the hub reads the new map when it is next shown. The accepted offer's
+not navigate. The hub's offer picker accepts and then redraws the map itself. The accepted offer's
 `credit_reward` is what winning the contract pays (see below).
 
 Run the headless check with a built extension:
@@ -248,8 +267,10 @@ that is about to be reset. Once the transition succeeds it:
    earned on the run.
 
 **The reward is the accepted offer's `credit_reward`**, which grows with the
-contract's length and boss count (see Contract offers). The default contract a
-run starts on was never offered, so it pays 0. `RunState::claim_contract_reward`
+contract's length and boss count (see Contract offers). Players always accept
+one on the hub's offer picker before the map appears. The default contract a
+run is created on was never offered, so it pays 0, but only a test that skips
+the picker can win it. `RunState::claim_contract_reward`
 only pays in `contract_won` and only once per contract: a second claim is
 refused with `ContractRewardAlreadyClaimed`, and a caught contract never
 reaches `contract_won`, so being caught pays no contract reward.
@@ -271,7 +292,8 @@ screen shows them arriving. For tests it exposes `displayed_balance`,
 **Take another contract** calls `FlowCoordinator.start_new_run()`, the same
 clean reset as after being caught: a fresh contract and offers, no zone
 progress or stats, noise and knowledge reset, the starter deck and no
-upgrades. The credit balance, reward included, carries over.
+upgrades. The credit balance, reward included, carries over. The hub then
+opens on the offer picker, so the next contract is chosen there.
 
 Run the headless check with a built extension:
 
@@ -279,13 +301,15 @@ Run the headless check with a built extension:
 godot --headless --path godot -s res://tests/contract_victory_test.gd
 ```
 
-It accepts the offer with the most zones and walks it without playing the
-ordinary encounters. It checks that each earlier boss returns to the map with
+It checks a new run opens on the offer picker with the map hidden, cycles the
+picker to the offer with the most zones and accepts it there, as a player
+would, then walks it without playing the ordinary encounters. It checks that each earlier boss returns to the map with
 the next zone open and no contract reward, then beats the final boss with a
 real Trojan play. It checks the victory screen replaces the map, the offer's
 reward is paid exactly once and counted as earned, and the balance counts up
 in steps to the new total. Finally it takes another contract from the victory
-screen, and checks that being caught on it costs the fine and pays no reward.
+screen, checks the hub asks for a contract again, accepts one through the
+picker, and checks that being caught on it costs the fine and pays no reward.
 
 ## The sentry's turn
 
@@ -590,6 +614,7 @@ ordinary encounter progression still carries noise forward.
 FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
+FlowCoordinator.needs_contract_choice()
 FlowCoordinator.contract_payout()
 FlowCoordinator.run_summary()
 FlowCoordinator.change_credits(amount: int)
