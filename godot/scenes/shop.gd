@@ -1,19 +1,23 @@
-# The dark web shop a shop node opens (Trello #38, with S1 #104 and S2 #105).
+# The dark web shop a shop node opens (Trello #38, with S1 #104, S2 #105,
+# S3 #106 and S4 #107).
 #
 # Five cards are for sale, each with its full details and a price set by its
-# rarity. The stock is rolled once by ShopNode when this screen opens and stays
-# the same for the visit; a bought card's slot shows as sold. A card the player
-# cannot afford has its buy button disabled and its price in red. Leave
-# completes the shop node and returns to the contract map.
+# rarity. The stock is rolled by ShopNode when this screen opens; a bought
+# card's slot shows as sold. Beside Leave are two services: Scrub Logs, which
+# lowers noise once per visit, and a reroll, which replaces every unsold card
+# and costs more each time. Anything the player cannot afford has its
+# button disabled and its price in red. Leave completes the shop node and
+# returns to the contract map.
 #
 # The rules live in ../../cyber_heist/src/shop.rs, and ShopNode (shop_node.rs)
-# is the bridge. Buying is one Rust call that checks the price against the
-# player's credits, takes it and adds the card to the run's deck together.
+# is the bridge. Every paid action is one Rust call that checks the price
+# against the player's credits and takes it together with its effect, or
+# changes nothing.
 #
-# The S1/S2 cards give this screen's visual design to Neel, so the layout here
-# is deliberately plain and functional, in the main menu's terminal style. It
-# reads everything from ShopNode, so a redesign only has to replace this file
-# and the scene.
+# The S1 to S4 cards give this screen's visual design to Neel, so the layout
+# here is deliberately plain and functional, in the main menu's terminal style.
+# It reads everything from ShopNode, so a redesign only has to replace this
+# file and the scene.
 extends Control
 
 const PRICE_COLOUR := Color(0.2, 1, 0.4, 1)
@@ -26,10 +30,17 @@ const SOLD_ROW_ALPHA := 0.45
 @onready var stock_list: VBoxContainer = %StockList
 @onready var status_label: Label = %StatusLabel
 @onready var leave_button: Button = %LeaveButton
+@onready var scrub_logs_details: Label = %ScrubLogsDetails
+@onready var scrub_logs_price_label: Label = %ScrubLogsPriceLabel
+@onready var scrub_logs_button: Button = %ScrubLogsButton
+@onready var reroll_details: Label = %RerollDetails
+@onready var reroll_price_label: Label = %RerollPriceLabel
+@onready var reroll_button: Button = %RerollButton
 
 # One entry per stock slot, in the same order ShopNode lists them, so a slot
 # index finds its controls without searching the tree.
 var _rows: Array[Control] = []
+var _detail_labels: Array[Label] = []
 var _price_labels: Array[Label] = []
 var _buy_buttons: Array[Button] = []
 # Guards against a double click leaving twice.
@@ -38,13 +49,16 @@ var _leaving := false
 
 func _ready() -> void:
 	leave_button.pressed.connect(_on_leave_pressed)
+	scrub_logs_button.pressed.connect(_on_scrub_logs_pressed)
+	reroll_button.pressed.connect(_on_reroll_pressed)
 	_build_stock_rows()
 	_refresh()
 	_focus_first_control()
 
 
-# Builds one row per card for sale. The stock is fixed for the visit, so this
-# only runs once; _refresh updates the rows after that.
+# Builds one row per card for sale. The number of slots is fixed for the
+# visit, so this only runs once; _refresh updates the rows after that,
+# including the cards a reroll puts in them.
 func _build_stock_rows() -> void:
 	var stock: Array = shop_node.stock()
 	if stock.is_empty():
@@ -66,8 +80,6 @@ func _add_stock_row(card: Dictionary) -> void:
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	details.add_theme_font_size_override("font_size", 16)
-	details.text = _card_details_text(card)
-	details.tooltip_text = _keyword_explanations(card)
 	details.mouse_filter = Control.MOUSE_FILTER_PASS
 	row.add_child(details)
 
@@ -91,6 +103,7 @@ func _add_stock_row(card: Dictionary) -> void:
 
 	stock_list.add_child(row)
 	_rows.append(row)
+	_detail_labels.append(details)
 	_price_labels.append(price_label)
 	_buy_buttons.append(buy_button)
 
@@ -126,8 +139,9 @@ func _keyword_explanations(card: Dictionary) -> String:
 	return "\n".join(lines)
 
 
-# Re-reads the stock and the balance, so every slot shows whether it is sold
-# and whether it is still affordable after the last purchase.
+# Re-reads the stock, the services and the balance, so every slot shows its
+# current card, whether it is sold and whether it is still affordable after
+# the last purchase or reroll.
 func _refresh() -> void:
 	credits_label.text = "$ %d  credits on hand" % PlayerStateGlobal.money()
 
@@ -137,6 +151,8 @@ func _refresh() -> void:
 		var price := int(card.get("price", 0))
 		var price_label := _price_labels[index]
 		var buy_button := _buy_buttons[index]
+		_detail_labels[index].text = _card_details_text(card)
+		_detail_labels[index].tooltip_text = _keyword_explanations(card)
 
 		if card.get("sold", false):
 			_rows[index].modulate.a = SOLD_ROW_ALPHA
@@ -146,24 +162,101 @@ func _refresh() -> void:
 			buy_button.disabled = true
 		else:
 			var affordable: bool = card.get("affordable", false)
-			price_label.text = "%d cr" % price
-			price_label.add_theme_color_override(
-				"font_color", PRICE_COLOUR if affordable else UNAFFORDABLE_COLOUR
-			)
+			_rows[index].modulate.a = 1.0
+			_show_price(price_label, price, affordable)
 			buy_button.text = "[ buy ]"
 			buy_button.disabled = not affordable
 
-		# A disabled button is skipped by keyboard navigation, as the main
-		# menu does for Continue run.
-		buy_button.focus_mode = Control.FOCUS_NONE if buy_button.disabled else Control.FOCUS_ALL
+		_update_focus_mode(buy_button)
+
+	_refresh_scrub_logs()
+	_refresh_reroll()
+
+
+# The services sit in the footer beside Leave, so the five cards keep the
+# rest of the screen. Each shows two short lines; hovering explains it fully.
+func _refresh_scrub_logs() -> void:
+	var offer: Dictionary = shop_node.scrub_logs_offer()
+	var reduction := int(offer.get("reduction", 0))
+	var noise := int(offer.get("noise", 0))
+	scrub_logs_details.text = "SCRUB LOGS\n−%d noise · now %d/%d" % [
+		reduction,
+		noise,
+		int(offer.get("max_noise", 0)),
+	]
+	var explanation := "Wipe the access logs to lower noise by %d. Once per visit." % reduction
+	scrub_logs_details.tooltip_text = explanation
+	scrub_logs_button.tooltip_text = explanation
+
+	if offer.get("sold", false):
+		scrub_logs_price_label.text = "SOLD OUT"
+		scrub_logs_price_label.remove_theme_color_override("font_color")
+		scrub_logs_button.text = "sold out"
+		scrub_logs_button.disabled = true
+	else:
+		var affordable: bool = offer.get("affordable", false)
+		_show_price(scrub_logs_price_label, int(offer.get("price", 0)), affordable)
+		scrub_logs_button.text = "[ scrub ]"
+		# With no noise there is nothing to pay for, so the shop holds it back.
+		scrub_logs_button.disabled = not affordable or noise <= 0
+
+	_update_focus_mode(scrub_logs_button)
+
+
+func _refresh_reroll() -> void:
+	var offer: Dictionary = shop_node.reroll_offer()
+	reroll_details.text = "REROLL STOCK\nunsold cards only"
+	var explanation := (
+		"Replace every card still for sale with a new one. Sold cards stay sold."
+		+ " Each reroll in this shop costs more than the last."
+	)
+	reroll_details.tooltip_text = explanation
+	reroll_button.tooltip_text = explanation
+
+	if not offer.get("available", false):
+		reroll_price_label.text = "SOLD OUT"
+		reroll_price_label.remove_theme_color_override("font_color")
+		reroll_button.text = "nothing left"
+		reroll_button.disabled = true
+	else:
+		var affordable: bool = offer.get("affordable", false)
+		_show_price(reroll_price_label, int(offer.get("price", 0)), affordable)
+		reroll_button.text = "[ reroll ]"
+		reroll_button.disabled = not affordable
+
+	_update_focus_mode(reroll_button)
+
+
+func _show_price(price_label: Label, price: int, affordable: bool) -> void:
+	price_label.text = "%d cr" % price
+	price_label.add_theme_color_override(
+		"font_color", PRICE_COLOUR if affordable else UNAFFORDABLE_COLOUR
+	)
+
+
+# A disabled button is skipped by keyboard navigation, as the main menu does
+# for Continue run.
+func _update_focus_mode(button: Button) -> void:
+	button.focus_mode = Control.FOCUS_NONE if button.disabled else Control.FOCUS_ALL
 
 
 func _focus_first_control() -> void:
-	for buy_button in _buy_buttons:
-		if not buy_button.disabled:
-			buy_button.grab_focus()
+	var candidates: Array[Button] = []
+	candidates.append_array(_buy_buttons)
+	candidates.append(scrub_logs_button)
+	candidates.append(reroll_button)
+	for button in candidates:
+		if not button.disabled:
+			button.grab_focus()
 			return
 	leave_button.grab_focus()
+
+
+# Keeps keyboard focus on a usable control after an action that may have
+# disabled the button the player just pressed.
+func _refocus_if_disabled(pressed_button: Button) -> void:
+	if pressed_button.disabled:
+		_focus_first_control()
 
 
 func _on_buy_pressed(slot: int) -> void:
@@ -175,11 +268,40 @@ func _on_buy_pressed(slot: int) -> void:
 			int(result.get("price", 0)),
 		]
 	else:
-		status_label.text = _refusal_text(String(result.get("error", "")))
+		status_label.text = _refusal_text(String(result.get("error", "")), "that card")
 
 	_refresh()
-	if _buy_buttons[slot].disabled:
-		_focus_first_control()
+	if slot >= 0 and slot < _buy_buttons.size():
+		_refocus_if_disabled(_buy_buttons[slot])
+
+
+func _on_scrub_logs_pressed() -> void:
+	var result: Dictionary = shop_node.scrub_logs()
+	if result.get("ok", false):
+		status_label.text = "Logs scrubbed for %d credits. Noise down %d to %d." % [
+			int(result.get("price", 0)),
+			int(result.get("noise_removed", 0)),
+			int(result.get("noise", 0)),
+		]
+	else:
+		status_label.text = _refusal_text(String(result.get("error", "")), "Scrub Logs")
+
+	_refresh()
+	_refocus_if_disabled(scrub_logs_button)
+
+
+func _on_reroll_pressed() -> void:
+	var result: Dictionary = shop_node.reroll()
+	if result.get("ok", false):
+		status_label.text = "Stock rerolled for %d credits. The next reroll costs %d." % [
+			int(result.get("price", 0)),
+			int(result.get("next_price", 0)),
+		]
+	else:
+		status_label.text = _refusal_text(String(result.get("error", "")), "a reroll")
+
+	_refresh()
+	_refocus_if_disabled(reroll_button)
 
 
 func _card_name(slot: int) -> String:
@@ -189,14 +311,22 @@ func _card_name(slot: int) -> String:
 	return String(stock[slot].get("name", "the card"))
 
 
-func _refusal_text(error: String) -> String:
+# `item` names what was refused, such as "that card" or "Scrub Logs".
+func _refusal_text(error: String, item: String) -> String:
 	match error:
 		"not_enough_credits":
-			return "Not enough credits for that card."
+			return "Not enough credits for %s." % item
 		"already_sold":
-			return "That card has already been sold."
+			# Upper-cases only the first letter, so "that card" reads as a
+			# sentence and "Scrub Logs" keeps its own capitals.
+			var sentence_start := item.left(1).to_upper() + item.substr(1)
+			return "%s has already been sold this visit." % sentence_start
+		"nothing_to_scrub":
+			return "Noise is already at zero. There are no logs to scrub."
+		"nothing_to_reroll":
+			return "Every card has been sold. There is nothing left to reroll."
 		_:
-			return "Could not buy that card: %s" % error
+			return "Could not buy %s: %s" % [item, error]
 
 
 func _on_leave_pressed() -> void:
