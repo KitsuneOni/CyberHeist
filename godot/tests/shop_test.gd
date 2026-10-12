@@ -171,6 +171,27 @@ func _first_unaffordable_slot(stock: Array) -> int:
 	return -1
 
 
+# Presses a Buy button the way a player could: only when it is enabled.
+# Emitting `pressed` alone would bypass the disabled state, so a screen that
+# wrongly disabled every affordable card would still appear to sell them.
+# Returns whether the button could be pressed.
+func _press_buy(shop: Node, slot: int, card_name: String) -> bool:
+	var button: Button = shop._buy_buttons[slot]
+	_check(not button.disabled, "the buy button for affordable %s is enabled" % card_name)
+	if button.disabled:
+		return false
+	button.pressed.emit()
+	return true
+
+
+func _count_in(names: PackedStringArray, card_name: String) -> int:
+	var count := 0
+	for drawn_name in names:
+		if drawn_name == card_name:
+			count += 1
+	return count
+
+
 func _run() -> void:
 	await process_frame
 
@@ -261,6 +282,13 @@ func _run() -> void:
 	var earned_before: int = _flow.run_summary().credits_earned
 	var bought: Array[String] = []
 
+	# Stock can include starter cards, so remember how many copies the run
+	# already owns; the later draw must show the bought copies on top of those.
+	var run_deck: Node = _flow.get_node("RunDeck")
+	var copies_before := {}
+	for card: Dictionary in stock:
+		copies_before[String(card.name)] = int(run_deck.count_of(String(card.id)))
+
 	var slot_to_buy := _cheapest_affordable_slot(stock)
 	_check(slot_to_buy >= 0, "with %d credits a card is affordable" % STARTING_CREDITS)
 	if slot_to_buy < 0:
@@ -269,7 +297,9 @@ func _run() -> void:
 	var target: Dictionary = stock[slot_to_buy]
 	var credits_before: int = _player.money()
 
-	shop._buy_buttons[slot_to_buy].pressed.emit()
+	if not _press_buy(shop, slot_to_buy, String(target.name)):
+		_finish()
+		return
 	bought.append(String(target.name))
 	stock = shop_node.stock()
 
@@ -297,8 +327,10 @@ func _run() -> void:
 		var next_slot := _cheapest_affordable_slot(stock)
 		if next_slot < 0:
 			break
-		bought.append(String(stock[next_slot].name))
-		shop._buy_buttons[next_slot].pressed.emit()
+		var next_name := String(stock[next_slot].name)
+		if not _press_buy(shop, next_slot, next_name):
+			break
+		bought.append(next_name)
 		stock = shop_node.stock()
 		unaffordable_slot = _first_unaffordable_slot(stock)
 
@@ -360,7 +392,19 @@ func _run() -> void:
 	draw.hand_size = draw.hand_names().size() + draw.draw_pile_count() + draw.discard_pile_count()
 	combat._draw_hand()
 	var hand: PackedStringArray = draw.hand_names()
+	var checked := {}
 	for card_name in bought:
-		_check(hand.has(card_name), "the bought card '%s' can be drawn in a later encounter" % card_name)
+		if checked.has(card_name):
+			continue
+		checked[card_name] = true
+		var expected: int = int(copies_before[card_name]) + bought.count(card_name)
+		var drawn := _count_in(hand, card_name)
+		_check(
+			drawn == expected,
+			(
+				"every copy of the bought card '%s' can be drawn in a later encounter (%d of %d)"
+				% [card_name, drawn, expected]
+			)
+		)
 
 	_finish()
