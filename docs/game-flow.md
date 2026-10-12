@@ -219,6 +219,84 @@ Run the headless check with a built extension:
 godot --headless --path godot -s res://tests/run_stats_test.gd
 ```
 
+## Sound and music (story #111)
+
+The `AudioDirector` autoload (`godot/autoload/audio_director.tscn`) owns
+everything the player hears. Sound goes through three buses, defined in
+`godot/default_bus_layout.tres`:
+
+| Bus | Carries | Sends to |
+| --- | --- | --- |
+| `Master` | everything | the output |
+| `Music` | the background loop (`MusicPlayer`) | `Master` |
+| `SFX` | card sounds (`SfxPlayer`) | `Master` |
+
+**Card sounds.** Every card type has its own sound. `card_play` reports the
+played card's type, and `DrawPhase.play_card()` adds `type` (the display name,
+e.g. `"Social Engineering"`) and `sound_cue` to its result. The cue comes from
+`SoundCue::for_card_type` in `cyber_heist/src/audio_mix.rs`, and the combat
+screen hands it to `AudioDirector.play_card_sound(cue)`:
+
+| Card type | `sound_cue` | Sound |
+| --- | --- | --- |
+| Attack | `attack` | a hard downward zap with a burst of static |
+| Defence | `defence` | a rising, humming shield swell |
+| Skill | `skill` | two quick rising blips |
+| Recon | `recon` | a sonar ping with one echo |
+| Social Engineering | `social_engineering` | a sly, voice-like murmur |
+
+Each cue's sound is `godot/assets/audio/sfx/<cue>.wav`, so adding a card type
+means adding a cue in Rust and a file of the same name.
+
+**Music.** An eight-second tense loop (`assets/audio/music/heist_loop.wav`)
+starts when the game launches and keeps going across every screen. It loops
+because its `.import` file sets `edit/loop_mode=2`. The autoload runs with
+`process_mode = always`, so the music carries on under a pause menu later.
+
+**Volume.** There was no settings screen before this story, so it adds a
+minimal one: **Settings** on the main menu opens `settings_menu.tscn`, with a
+slider each for Master, Music and Effects. Moving a slider applies to its bus
+at once and saves to `user://settings.cfg` (section `audio`, keys `master`,
+`music`, `sfx`), which `AudioDirector` loads on every launch. Missing or
+unreadable values fall back to the defaults (80, 60, 80). Display options are
+left to the settings menu story, which can add them to the same screen and
+file.
+
+A volume is a whole percentage, clamped to 0..100 by `Volume` in
+`audio_mix.rs`. The bus level follows the square of the slider (100% is 0 dB,
+50% about -12 dB, 10% -40 dB). **0 is silence**: the bus is muted outright and
+set to -80 dB, so Music at 0 silences the music while effects carry on, and
+Master at 0 silences everything. GDScript reaches these rules through the
+static `AudioRules` class:
+
+```gdscript
+AudioDirector.volume("music")              # 0..100
+AudioDirector.set_volume("music", 0)       # applies now; false for an unknown setting
+AudioDirector.save_settings()              # OK, or the ConfigFile error
+AudioRules.volume_db(50)                   # -12.04
+AudioRules.is_silent(0)                    # true
+```
+
+**Headless runs.** With no audio device (the `Dummy` driver that `--headless`
+uses) `AudioDirector` sets streams and buses up exactly as usual but does not
+start the players: nothing could be heard, and a playback still running when
+the engine quits is reported as a leak at exit. `is_music_on()` and
+`last_sound_cue` say what would be playing. The headless test checks the
+routing that way:
+
+```sh
+godot --headless --path godot -s res://tests/audio_test.gd
+```
+
+It plays one card of every type and checks each puts its own stream on the
+SFX player, that the music loops on the Music bus, that setting Music, Master
+or Effects to 0 in the settings screen mutes that bus and only that bus, and
+that the settings are saved and load back. It uses a scratch settings file so
+it never overwrites a developer's own.
+
+The sounds are synthesised by `tools/generate_audio.py` (Python and numpy),
+so there is no third-party audio to license; see `godot/assets/CREDITS.md`.
+
 ## The sentry's turn
 
 Combat alternates a player turn and the sentry's turn. A sentry is the named
@@ -419,8 +497,8 @@ queued sentry intent does not change. It must be played **before** the meter
 fills; recovery cannot revive a detected encounter. VPN's earlier intangible
 and end-turn promises are removed rather than implying those effects exist.
 
-`DrawPhase.play_card(index)` returns `{ok: true, name, noise_change}`
-or `{ok: false, error}`. The plain Rust `card_play` transaction rejects an
+`DrawPhase.play_card(index)` returns `{ok: true, name, type, sound_cue,
+noise_change, ...}` or `{ok: false, error}`. The plain Rust `card_play` transaction rejects an
 invalid index, insufficient energy or an already-full meter before changing
 anything. On success it spends energy, removes and discards the card, and
 applies its signed `noise_generated` exactly once to the borrowed `NoiseLevel`.
@@ -519,6 +597,8 @@ ordinary encounter progression still carries noise forward.
 ## Scene-facing API
 
 ```gdscript
+FlowCoordinator.open_settings()
+FlowCoordinator.close_settings()
 FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
