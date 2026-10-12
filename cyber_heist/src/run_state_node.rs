@@ -34,6 +34,19 @@ impl INode for RunStateNode {
     }
 }
 
+impl RunStateNode {
+    /// The run as it stands, for `SaveGameNode` to save.
+    pub(crate) fn state(&self) -> &RunState {
+        &self.state
+    }
+
+    /// Replaces the run with one resumed from a save. `SaveGameNode` only
+    /// hands over a run that passed `RunState::validate_restored`.
+    pub(crate) fn restore_state(&mut self, state: RunState) {
+        self.state = state;
+    }
+}
+
 #[godot_api]
 impl RunStateNode {
     #[func]

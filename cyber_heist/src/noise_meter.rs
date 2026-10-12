@@ -196,6 +196,14 @@ impl NoiseMeter {
     pub(crate) fn level_mut(&mut self) -> &mut NoiseLevel {
         &mut self.level
     }
+
+    /// Puts the meter back where a saved run left it. A run is only saved
+    /// between fights, where no construct is resisting and no shield is up,
+    /// so only the noise itself is restored and the rest starts clear.
+    pub(crate) fn restore_noise(&mut self, noise: i32) {
+        self.level = NoiseLevel::new(self.level.max_noise());
+        self.level.add(noise);
+    }
 }
 
 #[cfg(test)]

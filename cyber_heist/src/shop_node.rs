@@ -9,6 +9,10 @@
 //! the price is taken and the card added together or not at all. The spend and
 //! the card are then recorded on the run for the end screen, as rewards and
 //! events do.
+//!
+//! A shop is the one encounter a run can be saved in. The node keeps
+//! `SaveGameNode` told about its stock, and a shop resumed by Continue opens
+//! with the stock it was saved with instead of rolling a new one.
 
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
@@ -18,6 +22,7 @@ use crate::card_database::CardDatabase;
 use crate::card_text;
 use crate::run_deck_node::RunDeckNode;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
+use crate::save_game_node::{SAVE_GAME_PATH, SaveGameNode};
 use crate::shop::ShopVisit;
 use crate::{PlayerState, RUN_DECK_PATH};
 
@@ -40,6 +45,15 @@ impl INode for ShopNode {
     }
 
     fn ready(&mut self) {
+        let resumed = self
+            .save_game()
+            .and_then(|mut save_game| save_game.bind_mut().take_resumed_shop());
+        if let Some(visit) = resumed {
+            self.visit = Some(visit);
+            self.track_stock_for_saving();
+            return;
+        }
+
         let Some(db) = self
             .base()
             .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
@@ -54,6 +68,7 @@ impl INode for ShopNode {
             .map(|card| (card.id.clone(), card.rarity))
             .collect();
         self.visit = Some(ShopVisit::open(&pool, &mut rand::rng()));
+        self.track_stock_for_saving();
     }
 }
 
@@ -148,6 +163,7 @@ impl ShopNode {
         match result {
             Ok(purchase) => {
                 self.record_purchase_on_run(purchase.price);
+                self.track_stock_for_saving();
                 vdict! {
                     "ok" => true,
                     "id" => purchase.card_id.as_str(),
@@ -169,6 +185,19 @@ impl ShopNode {
             Some(player_state) => player_state.bind().money(),
             None => 0,
         }
+    }
+
+    fn save_game(&self) -> Option<Gd<SaveGameNode>> {
+        self.base().try_get_node_as::<SaveGameNode>(SAVE_GAME_PATH)
+    }
+
+    /// Hands the current stock to `SaveGameNode`, so the next save made in
+    /// this shop has it. Skipped when the shop screen is open on its own.
+    fn track_stock_for_saving(&self) {
+        let (Some(visit), Some(mut save_game)) = (self.visit.as_ref(), self.save_game()) else {
+            return;
+        };
+        save_game.bind_mut().track_open_shop(visit);
     }
 
     /// Tells the run about the spend and the card gained, so the end screen

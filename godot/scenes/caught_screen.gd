@@ -4,7 +4,9 @@ extends Control
 @export var fine_amount: int = 50
 
 func _ready() -> void:
-	var result = PlayerStateGlobal.apply_penalty(fine_amount)
+	# Charged once per capture by the coordinator, so a caught screen reopened
+	# by Continue shows the same penalty without taking it again.
+	var result: Dictionary = FlowCoordinator.apply_caught_penalty(fine_amount)
 	$VBoxContainer/FineLabel.text = "Fined: $%d" % result["fine"]
 
 	var lost = result["lost_upgrades"]

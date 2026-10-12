@@ -17,6 +17,8 @@ mod run_deck_node;
 mod run_state;
 mod run_state_node;
 mod run_stats;
+mod save_game;
+mod save_game_node;
 mod sentry;
 mod sentry_node;
 mod shop;
@@ -141,6 +143,20 @@ impl PlayerState {
     /// rather than take the balance below zero.
     pub(crate) fn credits_mut(&mut self) -> &mut i64 {
         &mut self.money
+    }
+
+    /// The current contract's upgrades, for saving the run.
+    pub(crate) fn upgrade_names(&self) -> Vec<String> {
+        self.upgrades.iter().map(GString::to_string).collect()
+    }
+
+    /// Replaces the current contract's upgrades, for a run resumed from a
+    /// save.
+    pub(crate) fn restore_upgrades(&mut self, names: &[String]) {
+        self.upgrades = names
+            .iter()
+            .map(|name| GString::from(name.as_str()))
+            .collect();
     }
 }
 

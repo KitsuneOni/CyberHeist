@@ -36,6 +36,11 @@ impl RunDeck {
         Self { card_ids }
     }
 
+    /// A deck holding exactly these cards, for a run resumed from a save.
+    pub fn from_card_ids(card_ids: Vec<String>) -> Self {
+        Self { card_ids }
+    }
+
     pub fn card_ids(&self) -> &[String] {
         &self.card_ids
     }

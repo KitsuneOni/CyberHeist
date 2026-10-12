@@ -27,6 +27,7 @@
 
 use rand::Rng;
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 
 use crate::card_data::Rarity;
 use crate::run_deck::RunDeck;
@@ -49,7 +50,7 @@ pub fn price_for(rarity: Rarity) -> i64 {
 }
 
 /// One place in the shop's stock: a card, its price and whether it has gone.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShopSlot {
     card_id: String,
     price: i64,
@@ -111,7 +112,9 @@ impl ShopError {
 }
 
 /// Everything about one visit to a shop node.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Saved with the run while the player is in a shop (see `save_game.rs`), so
+/// a resumed visit keeps its stock and what has already been bought.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShopVisit {
     slots: Vec<ShopSlot>,
 }

@@ -24,8 +24,12 @@ const ENCOUNTER_SCENES := {
 # shop is completing its node.
 const REWARDING_ENCOUNTERS := ["combat", "elite", "boss"]
 
+# Where the game keeps the player's save between sessions (story #10).
+const DEFAULT_SAVE_PATH := "user://cyberheist_save.json"
+
 @onready var _run_state: Node = $RunState
 @onready var _run_deck: Node = $RunDeck
+@onready var _save_game: Node = $SaveGame
 
 var _screen_host: Node
 # What the encounter just cleared paid out, {credits, guaranteed_rare}, kept
@@ -36,6 +40,25 @@ var _pending_reward := {}
 # for the victory screen so it can count the balance up from where it was.
 # Empty until a contract is won.
 var _contract_payout := {}
+# What being caught cost, {fine, lost_upgrades}, kept for the caught screen so
+# that reopening it, from Continue for instance, never charges a second time.
+# Empty until the player is caught.
+var _caught_penalty := {}
+# The file the run is saved to and Continue reads. Empty turns saving off,
+# which is how headless tests run unless they choose a file (see _ready).
+var _save_path := ""
+# Why the save could not be read at launch, for the main menu to mention.
+# Empty when it was read, or there was none.
+var _save_load_error := ""
+
+
+func _ready() -> void:
+	# A headless test drives the game from its own SceneTree script. It gets
+	# no save file unless it picks one with use_save_file, so tests never read
+	# the player's save or each other's, and never write one.
+	if Engine.get_main_loop().get_script() != null:
+		return
+	use_save_file(DEFAULT_SAVE_PATH)
 
 
 func bind_screen_host(host: Node) -> void:
@@ -56,21 +79,83 @@ func bind_screen_host(host: Node) -> void:
 
 
 # Leaves the main menu for the contract map. Each launch rolls a fresh contract
-# in RunStateNode, so the run behind the menu is already a new one.
+# in RunStateNode, so the run behind the menu is already a new one. It replaces
+# any saved run straight away; the credit balance read from the save stays.
 func start_new_contract() -> Dictionary:
-	return _show_current_run_screen()
+	_save_game.discard_saved_run()
+	var result := _show_current_run_screen()
+	if result.get("ok", false):
+		save_progress()
+	return result
 
 
-# Whether the menu can offer Continue run. Nothing is saved between sessions
-# until the save story (#10) lands, so for now there is never a run to resume.
+# Whether the menu can offer Continue run: a save was read at launch and its
+# run has not been continued or replaced yet.
 func has_saved_run() -> bool:
-	return false
+	return _save_game.has_saved_run()
 
 
+# Why the save could not be read at launch, or "" when it was read or there
+# was none. A save that cannot be read is ignored and the game starts fresh.
+func save_load_error() -> String:
+	return _save_load_error
+
+
+# Puts the saved run back exactly as it was at its last safe point and shows
+# the screen it was saved on: the map, a card reward still to choose, a shop,
+# the caught screen or the victory screen. A run is never saved in the middle
+# of a fight or an event, so one quit there resumes from the safe point
+# before it.
 func continue_run() -> Dictionary:
 	if not has_saved_run():
 		return _failure("There is no saved run to continue.")
+
+	var restored: Dictionary = _save_game.restore_saved_run()
+	if not restored.get("ok", false):
+		return restored
+
+	_pending_reward = restored.get("pending_reward", {})
+	_contract_payout = restored.get("contract_payout", {})
+	_caught_penalty = restored.get("caught_penalty", {})
 	return _show_current_run_screen()
+
+
+# Chooses the save file and reads it: its credit balance is applied at once
+# and its run is kept for Continue. Called with the default file at launch;
+# headless tests call it to use a file of their own. Returns {ok: true,
+# has_run}, or {ok: false, error} for a corrupt or incompatible save, which
+# loads nothing.
+func use_save_file(path: String) -> Dictionary:
+	_save_path = path
+	_save_load_error = ""
+	var result: Dictionary = _save_game.load_save(path)
+	if not result.get("ok", false):
+		_save_load_error = result.get("error", "unknown error")
+		push_warning("The saved game could not be loaded, so a new one starts: %s" % _save_load_error)
+	return result
+
+
+# Saves the run and the credit balance, replacing the previous save. The
+# coordinator calls this at every safe point: a new contract or accepted
+# offer, entering a shop, each completed encounter, leaving the card reward,
+# being caught and leaving the caught screen, and winning. The shop screen
+# calls it after each purchase.
+#
+# Returns {ok: true}, or {ok: false, error} when the run is not at a safe
+# point or the file cannot be written. Does nothing when saving is off.
+func save_progress() -> Dictionary:
+	if _save_path.is_empty():
+		return {"ok": true}
+
+	var screen_results := {
+		"pending_reward": _pending_reward,
+		"contract_payout": _contract_payout,
+		"caught_penalty": _caught_penalty,
+	}
+	var result: Dictionary = _save_game.write_save(_save_path, screen_results)
+	if not result.get("ok", false):
+		push_warning("The game could not be saved: %s" % result.get("error", "unknown error"))
+	return result
 
 
 # Shows whichever screen the run's current phase belongs on: the map, the
@@ -125,7 +210,10 @@ func contract_offers() -> Array:
 # This only changes run state. It does not navigate: the hub's offer picker
 # calls it and redraws the map itself once it has the result.
 func accept_contract_offer(index: int) -> Dictionary:
-	return _run_state.accept_contract_offer(index)
+	var result: Dictionary = _run_state.accept_contract_offer(index)
+	if result.get("ok", false):
+		save_progress()
+	return result
 
 
 # The accepted offer's fields plus ok: true, or {ok: false} while the run is
@@ -166,6 +254,10 @@ func select_encounter(node_id: int) -> Dictionary:
 		return transition
 
 	_replace_screen(prepared["screen"])
+	# A shop is the one encounter that is a safe point, saved with its stock
+	# as soon as it opens so quitting cannot reroll it.
+	if encounter_type == "shop":
+		save_progress()
 	return transition
 
 
@@ -206,7 +298,12 @@ func complete_active_encounter() -> Dictionary:
 	change_credits(_pending_reward["credits"])
 	if wins_contract:
 		_pay_contract_reward()
+	elif next_scene == HUB_SCENE_PATH:
+		# Nothing is waiting to be chosen after an event or a shop, so a save
+		# made at the hub does not resume on a card reward.
+		_pending_reward = {}
 	_replace_screen(prepared["screen"])
+	save_progress()
 	return transition
 
 
@@ -314,6 +411,7 @@ func finish_reward() -> Dictionary:
 
 	_pending_reward = {}
 	_replace_screen(prepared["screen"])
+	save_progress()
 	return {"ok": true}
 
 
@@ -327,8 +425,23 @@ func report_caught() -> Dictionary:
 		_dispose_screen(prepared["screen"])
 		return transition
 
+	# A new capture costs a new penalty, which the caught screen applies
+	# through apply_caught_penalty as it opens.
+	_caught_penalty = {}
 	_replace_screen(prepared["screen"])
 	return transition
+
+
+# Takes the fine for being caught, and the contract's upgrades with it, once
+# per capture, and returns what was taken: {fine, lost_upgrades}. The caught
+# screen calls this as it opens. A caught screen reopened by Continue gets the
+# same result back without the player being charged again.
+func apply_caught_penalty(fine: int) -> Dictionary:
+	if _caught_penalty.is_empty():
+		var player_state: Node = get_node("/root/PlayerStateGlobal")
+		_caught_penalty = player_state.apply_penalty(fine)
+		save_progress()
+	return _caught_penalty.duplicate()
 
 
 func finish_caught() -> Dictionary:
@@ -345,7 +458,9 @@ func finish_caught() -> Dictionary:
 	# completion and rejected transitions must preserve the shared meter.
 	var noise_meter: Node = get_node("/root/NoiseMeterGlobal")
 	noise_meter.add_noise(-noise_meter.noise)
+	_caught_penalty = {}
 	_replace_screen(prepared["screen"])
+	save_progress()
 	return transition
 
 
@@ -379,9 +494,12 @@ func start_new_run() -> Dictionary:
 	# Its payout belongs to the old run and must not reach the next one.
 	_pending_reward = {}
 	_contract_payout = {}
+	_caught_penalty = {}
 	var player_state: Node = get_node("/root/PlayerStateGlobal")
 	player_state.clear_upgrades()
 	_replace_screen(prepared["screen"])
+	# The new run replaces the old one's save.
+	save_progress()
 	return transition
 
 
@@ -448,6 +566,10 @@ func _destination_for_snapshot(snapshot: Dictionary) -> Dictionary:
 	var phase: String = snapshot.get("phase", "")
 	match phase:
 		"hub":
+			# A fight's card reward is chosen at the hub phase, so a run saved
+			# before choosing one resumes on it.
+			if not _pending_reward.is_empty():
+				return {"ok": true, "path": CARD_REWARD_SCENE_PATH}
 			return {"ok": true, "path": HUB_SCENE_PATH}
 		"encounter_active":
 			var active_encounter = snapshot.get("active_encounter")

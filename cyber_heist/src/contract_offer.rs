@@ -7,6 +7,7 @@
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use serde::{Deserialize, Serialize};
 
 use crate::contract_map::{ContractMap, ContractShape};
 use crate::sentry::BOSS_NAMES;
@@ -60,7 +61,7 @@ const CONTRACT_TARGETS: [&str; 10] = [
 
 /// One job the player can take on: what it is called, who it hits, what it
 /// pays and how the contract map is laid out if it is accepted.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractOffer {
     pub name: String,
     /// The organisation being broken into.

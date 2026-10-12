@@ -6,6 +6,7 @@
 use std::fmt;
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::contract_map::{
     ContractMap, ContractMapError, ContractProgress, ContractShape, EncounterNode,
@@ -14,7 +15,8 @@ use crate::contract_map::{
 use crate::contract_offer::{ContractOffer, generate_offers};
 use crate::run_stats::RunStats;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContractPhase {
     Hub,
     EncounterActive,
@@ -35,7 +37,7 @@ impl ContractPhase {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveEncounter {
     id: String,
     encounter_type: EncounterType,
@@ -81,7 +83,9 @@ pub struct RunSummary {
     pub total_zones: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Serialised whole as part of a saved run (see `save_game.rs`). A run read
+/// back from a save must pass `validate_restored` before it is used.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunState {
     phase: ContractPhase,
     active_encounter: Option<ActiveEncounter>,
@@ -397,6 +401,69 @@ impl RunState {
         Ok(())
     }
 
+    /// Checks a run read back from a save file is one the transitions above
+    /// could have produced, so nothing that relies on their rules can be
+    /// handed a run that breaks them.
+    ///
+    /// The map must hold together on its own (`ContractMap::validate_restored`),
+    /// an accepted offer must be one of the offers, and the phase must agree
+    /// with the active encounter: one is under way while an encounter is
+    /// active or the player has just been caught in it, and none otherwise.
+    /// An active encounter must also be the node the map has under way, with
+    /// that node's type and zone.
+    pub fn validate_restored(&self) -> Result<(), RunStateError> {
+        self.contract_map
+            .validate_restored()
+            .map_err(RunStateError::ContractMap)?;
+
+        if let Some(index) = self.accepted_offer_index
+            && index >= self.contract_offers.len()
+        {
+            return Err(RunStateError::UnknownContractOffer {
+                index,
+                offered: self.contract_offers.len(),
+            });
+        }
+
+        let expects_encounter = matches!(
+            self.phase,
+            ContractPhase::EncounterActive | ContractPhase::Caught
+        );
+        match (&self.active_encounter, self.contract_map.active_node()) {
+            (None, None) if !expects_encounter => Ok(()),
+            (Some(encounter), Some(active_node)) if expects_encounter => {
+                self.validate_restored_encounter(encounter, active_node)
+            }
+            _ => Err(RunStateError::InconsistentRun(
+                "the phase and the encounter under way disagree",
+            )),
+        }
+    }
+
+    fn validate_restored_encounter(
+        &self,
+        encounter: &ActiveEncounter,
+        active_node: NodeId,
+    ) -> Result<(), RunStateError> {
+        if encounter.id != active_node.to_string() {
+            return Err(RunStateError::InconsistentRun(
+                "the active encounter is not the node under way on the map",
+            ));
+        }
+        let (node, zone) =
+            self.contract_map
+                .node_and_zone(active_node)
+                .ok_or(RunStateError::ContractMap(ContractMapError::UnknownNode(
+                    active_node,
+                )))?;
+        if node.encounter_type() != encounter.encounter_type || zone != encounter.zone {
+            return Err(RunStateError::InconsistentRun(
+                "the active encounter's type or zone does not match its node",
+            ));
+        }
+        Ok(())
+    }
+
     fn require_phase(
         &self,
         action: &'static str,
@@ -430,6 +497,9 @@ pub enum RunStateError {
     ContractAlreadyStarted,
     /// The reward for winning this contract has already been paid.
     ContractRewardAlreadyClaimed,
+    /// A run read back from a save breaks one of the rules its transitions
+    /// keep. Says which.
+    InconsistentRun(&'static str),
 }
 
 impl fmt::Display for RunStateError {
@@ -452,6 +522,9 @@ impl fmt::Display for RunStateError {
             ),
             Self::ContractRewardAlreadyClaimed => {
                 formatter.write_str("the reward for this contract has already been paid")
+            }
+            Self::InconsistentRun(reason) => {
+                write!(formatter, "the saved run is invalid: {reason}")
             }
         }
     }
@@ -1318,5 +1391,77 @@ mod tests {
         let message = RunStateError::ContractRewardAlreadyClaimed.to_string();
 
         assert!(message.contains("already been paid"), "{message}");
+    }
+
+    // --- Restoring a saved run (story #10) ---------------------------------
+
+    /// Whatever the transitions reach, a save of it must read back. Walks a
+    /// generated contract through every phase, checking at each step.
+    #[test]
+    fn every_run_the_transitions_reach_passes_the_restore_check() {
+        let mut state = generated_run(21);
+        state.accept_contract_offer(2).expect("third offer");
+        assert_eq!(
+            state.validate_restored(),
+            Ok(()),
+            "a run that has just started"
+        );
+
+        enter_first_encounter(&mut state);
+        assert_eq!(state.validate_restored(), Ok(()), "an encounter under way");
+        state.report_caught().unwrap();
+        assert_eq!(state.validate_restored(), Ok(()), "caught in it");
+        state.finish_caught().unwrap();
+        assert_eq!(
+            state.validate_restored(),
+            Ok(()),
+            "back at the hub to retry"
+        );
+
+        play_to_victory(&mut state);
+        assert_eq!(state.validate_restored(), Ok(()), "a contract won");
+        state.claim_contract_reward().unwrap();
+        assert_eq!(state.validate_restored(), Ok(()), "its reward claimed");
+    }
+
+    #[test]
+    fn an_active_encounter_the_map_does_not_have_under_way_is_refused() {
+        let mut state = active_combat();
+        state.active_encounter = Some(ActiveEncounter {
+            id: "2".to_string(),
+            encounter_type: EncounterType::Event,
+            zone: 0,
+        });
+
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
+    }
+
+    #[test]
+    fn an_active_encounter_with_the_wrong_type_is_refused() {
+        let mut state = active_combat();
+        state.active_encounter = Some(ActiveEncounter {
+            id: "1".to_string(),
+            encounter_type: EncounterType::Shop,
+            zone: 0,
+        });
+
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
+    }
+
+    #[test]
+    fn a_hub_run_with_an_encounter_still_active_is_refused() {
+        let mut state = active_combat();
+        state.phase = ContractPhase::Hub;
+
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
     }
 }
