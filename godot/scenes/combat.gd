@@ -22,8 +22,10 @@ var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailConte
 @onready var shield_label: Label = $VBoxContainer/ShieldLabel
 @onready var knowledge_label: Label = $VBoxContainer/KnowledgeLabel
 @onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
+@onready var complete_encounter_button: Button = $VBoxContainer/Buttons/CompleteEncounterButton
 
 const NO_SELECTION_HINT := "Select a card to see its details"
+const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
@@ -37,7 +39,17 @@ var shown_phase := 1
 
 func _ready() -> void:
 	shown_phase = sentry.phase()
+	_disable_shortcut_on_final_boss()
 	_draw_hand()
+
+
+# Skipping the final boss would win the whole contract reward without a fight,
+# so the testing shortcut is off for it. Every other encounter keeps it.
+func _disable_shortcut_on_final_boss() -> void:
+	if not FlowCoordinator.active_encounter_wins_contract():
+		return
+	complete_encounter_button.disabled = true
+	complete_encounter_button.tooltip_text = FINAL_BOSS_SHORTCUT_HINT
 
 
 func _on_end_turn_button_pressed() -> void:
@@ -138,8 +150,15 @@ func _report_detected() -> void:
 # also collects that encounter's full payout, including an elite or boss's
 # credits and guaranteed Rare. Remove the button, or stop it paying out,
 # before this is treated as a real build.
+#
+# It never completes the final boss, which would win the contract and its
+# reward. The button is disabled there, and this check also stops a press that
+# arrives anyway, such as a test emitting the signal.
 func _on_complete_encounter_pressed() -> void:
 	if not _can_act():
+		return
+	if FlowCoordinator.active_encounter_wins_contract():
+		status_label.text = FINAL_BOSS_SHORTCUT_HINT
 		return
 
 	var result: Dictionary = FlowCoordinator.complete_active_encounter()

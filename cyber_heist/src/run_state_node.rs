@@ -157,22 +157,30 @@ impl RunStateNode {
         }
     }
 
-    /// What clearing the active encounter pays: `{ok, credits,
-    /// guaranteed_rare}`. Read by `FlowCoordinator` before it completes the
+    /// What completing the active encounter leads to: `{ok, type, credits,
+    /// guaranteed_rare, wins_contract}`. `credits` and `guaranteed_rare` are
+    /// what clearing it pays, and `wins_contract` is whether it is the final
+    /// zone's boss.
+    ///
+    /// Read by `FlowCoordinator` in one call before it completes the
     /// encounter, since completing clears it. With nothing active it pays
-    /// nothing.
+    /// nothing and wins nothing.
     #[func]
-    fn active_encounter_reward(&self) -> VarDictionary {
+    fn active_encounter_completion(&self) -> VarDictionary {
         match self.state.active_encounter() {
             Some(encounter) => vdict! {
                 "ok" => true,
+                "type" => encounter.encounter_type().as_str(),
                 "credits" => encounter_reward::credits_for(encounter.encounter_type(), encounter.zone()),
                 "guaranteed_rare" => encounter_reward::guaranteed_rarity(encounter.encounter_type()).is_some(),
+                "wins_contract" => self.state.active_encounter_wins_contract(),
             },
             None => vdict! {
                 "ok" => false,
+                "type" => "",
                 "credits" => 0_i64,
                 "guaranteed_rare" => false,
+                "wins_contract" => false,
             },
         }
     }
@@ -304,29 +312,23 @@ impl RunStateNode {
         transition_result(self.state.complete_encounter())
     }
 
-    /// Whether completing the active encounter would win the contract,
-    /// because it is the boss of the final zone. Read by `FlowCoordinator`
-    /// before it completes, to choose the victory screen over the card reward.
-    #[func]
-    fn active_encounter_wins_contract(&self) -> bool {
-        self.state.active_encounter_wins_contract()
-    }
-
-    /// Claims the reward for the contract just won: `{ok: true, credits}`,
-    /// where `credits` is the accepted offer's `credit_reward` (0 on the
-    /// default contract). `{ok: false, error}` unless the contract has been
-    /// won, and on any claim after the first, so it pays exactly once.
+    /// What winning this contract paid: `{ok: true, credits}` once it has
+    /// been won, where `credits` is the accepted offer's `credit_reward` (0 on
+    /// the default contract). `{ok: false}` before then and on a contract the
+    /// player was caught on.
     ///
-    /// This only works out the amount. `FlowCoordinator` applies it with
-    /// `change_credits`, which also records it on the run's stats.
+    /// Run state records the amount when the final boss is completed.
+    /// `FlowCoordinator` applies it with `change_credits` straight after that
+    /// transition, and the victory screen reads it from here, so it can be
+    /// rebuilt from run state alone.
     #[func]
-    fn claim_contract_reward(&mut self) -> VarDictionary {
-        match self.state.claim_contract_reward() {
-            Ok(credits) => vdict! {
+    fn contract_reward(&self) -> VarDictionary {
+        match self.state.contract_reward() {
+            Some(credits) => vdict! {
                 "ok" => true,
                 "credits" => credits,
             },
-            Err(error) => transition_error(&error.to_string()),
+            None => vdict! { "ok" => false },
         }
     }
 
