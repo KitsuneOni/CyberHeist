@@ -189,6 +189,14 @@ impl RunStateNode {
         offers
     }
 
+    /// Whether an encounter on the current contract has been entered, even if
+    /// the player was caught in it and so completed nothing. Once it has, the
+    /// run is committed to this contract.
+    #[func]
+    fn contract_started(&self) -> bool {
+        self.state.contract_started()
+    }
+
     /// Takes on the offer at `index` and rebuilds the contract map from it.
     /// `{ok: true}`, or `{ok: false, error}` for an index that is not on offer,
     /// outside the hub, or once an encounter on the contract has been entered.
