@@ -101,6 +101,9 @@ func _run() -> void:
 		_original_volumes[setting] = _audio.volume(setting)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_SETTINGS_PATH))
 	_audio.settings_path = TEST_SETTINGS_PATH
+	# Start from the default volumes rather than whatever the player last saved,
+	# so a muted Master or SFX setting cannot make the routing checks fail.
+	_audio.load_settings()
 
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
