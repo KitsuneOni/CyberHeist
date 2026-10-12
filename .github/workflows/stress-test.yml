@@ -135,6 +135,11 @@ jobs:
       - name: Run headless elite encounter test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/elite_encounter_test.gd
 
+      # Gets caught in a real standard combat and checks it paid nothing, then
+      # retries and wins the same fight to check it pays.
+      - name: Run headless combat credits test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/combat_credits_test.gd
+
       # Chooses a contract on the hub's offer picker (and changes it once)
       # and plays it to its final boss: earlier bosses only open the next
       # zone, the testing shortcut cannot skip the final one, beating it

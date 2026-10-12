@@ -170,12 +170,17 @@ FlowCoordinator.can_change_contract()
 
 FlowCoordinator.accepted_contract_offer()
 # the accepted offer's fields plus "ok": true, or {"ok": false}
+
+FlowCoordinator.contract_started()
+# true once an encounter on this contract has been entered
 ```
 
-Offers are listed shortest first. Accepting only changes run state; it does
-not navigate. The hub's offer picker accepts and then redraws the map itself.
-The accepted offer's `credit_reward` is what winning the contract pays (see
-below).
+Offers are listed shortest first. An offer can be swapped for another until
+`contract_started()` turns true, when the first encounter is entered. That
+stays true if the player is caught in it, even though nothing has been
+completed. Accepting only changes run state; it does not navigate. The hub's
+offer picker accepts and then redraws the map itself. The accepted offer's
+`credit_reward` is what winning the contract pays (see below).
 
 Run the headless check with a built extension:
 
@@ -586,9 +591,17 @@ The smoke test seeds 90/100, then checks six announced actions through queue
 wrap and the final clamped +1. Both run in the stress workflow.
 
 The generated contract does not guarantee an opening combat option. The shared
-`tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle, selecting
-a reachable node and mounting combat content if that node has another type.
-These tests exercise combat, not the random encounter scene registry.
+`tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle and only
+enters from the hub. On a contract where nothing has been entered yet
+(`contract_started()` is false) it always enters a real combat node, rolling
+fresh contracts in place (`RunStateNode.start_new_run`) until column one offers
+one. Once an encounter has been entered it never replaces the run, even after
+being caught in the first one, so re-entering is that encounter's retry. It
+prefers a combat node, otherwise mounts combat content on an event or shop
+node, and fails if only elites or the boss are offered, since those field their
+own construct rather than WARDEN-7. These tests exercise combat, not the random
+encounter scene registry. The shared noise test moves to a fresh contract
+explicitly when the column after its first encounter holds only elites.
 
 For the zone boss slice, run:
 
@@ -616,6 +629,19 @@ with 60 integrity, an ability and its resistance on the shared meter. It then
 checks that Reinforce is announced, restores integrity and is reported on
 screen, and that beating it pays more than that standard combat and offers a
 Rare.
+
+For credits from combat (#114), run:
+
+```sh
+godot --headless --path godot -s res://tests/combat_credits_test.gd
+```
+
+It fills the meter during a first-zone standard combat and checks that being
+caught pays nothing: only the fine comes off, credits earned and wins are
+unchanged, and nothing is paid when leaving the caught screen. It then retries
+the same fight and wins it by playing a Strike, the card-play win path, to check
+that it pays 25 credits, counts them in the run's stats and shows them on the
+reward screen.
 
 For cross-component sharing and the authored social threshold (50), run:
 
@@ -648,6 +674,7 @@ ordinary encounter progression still carries noise forward.
 FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
+FlowCoordinator.contract_started()
 FlowCoordinator.needs_contract_choice()
 FlowCoordinator.can_change_contract()
 FlowCoordinator.active_encounter_wins_contract()
