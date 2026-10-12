@@ -225,10 +225,10 @@ godot --headless --path godot -s res://tests/run_stats_test.gd
 
 A shop node opens `scenes/shop.tscn`, a dark web market where the player
 spends credits on cards for the rest of the run. It delivers the epic through
-two stories: S1 shop stock and pricing (#104) and S2 buying with credits
-(#105). The rules are plain Rust in `cyber_heist/src/shop.rs`; `ShopNode`
-(`shop_node.rs`) sits on the shop screen as its bridge, as `EventNode` does for
-events.
+four stories: S1 shop stock and pricing (#104), S2 buying with credits (#105),
+S3 the Scrub Logs service (#106) and S4 rerolling the stock (#107). The rules
+are plain Rust in `cyber_heist/src/shop.rs`; `ShopNode` (`shop_node.rs`) sits
+on the shop screen as its bridge, as `EventNode` does for events.
 
 **Stock.** When the screen opens, `ShopNode` rolls a `ShopVisit` of five
 distinct cards (`STOCK_SIZE`) from the card database. Cursed cards are not in
@@ -241,14 +241,13 @@ that pool. Each card's price comes from its rarity (`price_for`):
 | Rare | 100 |
 | Legendary | 150 |
 
-The stock is fixed for the visit and never restocks. A bought card's slot is
-marked sold rather than removed, so the other cards keep their places and the
-screen shows `SOLD` in that row.
+The stock only changes when the player pays to reroll it (see below). A bought
+card's slot is marked sold rather than removed, so the other cards keep their
+places and the screen shows `SOLD` in that row.
 
-**Buying.** `ShopVisit::buy` is the only thing that spends credits in the shop.
-It checks the slot and the balance before changing anything, then takes the
-exact price from `PlayerStateGlobal` and adds the card to the run's deck on
-`RunDeckNode`, all in one call. A refusal (`not_enough_credits`,
+**Buying.** `ShopVisit::buy` checks the slot and the balance before changing
+anything, then takes the exact price from `PlayerStateGlobal` and adds the card
+to the run's deck on `RunDeckNode`, all in one call. A refusal (`not_enough_credits`,
 `already_sold`, `no_such_slot`) changes neither the credits, the deck nor the
 stock, and a purchase can never take the balance below zero. A balance already
 below zero from a caught fine simply affords nothing. A bought card is in the
@@ -275,17 +274,62 @@ $ShopNode.buy(0)
 # or {"ok": false, "error": "not_enough_credits"} with nothing changed
 ```
 
-`ShopVisit` holds everything about one visit, so the later shop stories can
-build on it without restructuring:
+**Services.** Two paid services sit beside Leave at the foot of the screen,
+so the five cards keep the rest of it. Their prices are constants in
+`shop.rs`:
 
-- **Scrub Logs (#106):** a once-per-visit noise reduction service, added as a
-  `scrub_logs_used` flag on the visit and a method that pays through the same
-  private `charge` step before lowering noise.
-- **Reroll (#107):** a paid reroll of the unsold stock pays through `charge`
-  too, then refills only the slots still for sale with `roll_slots`. Sold slots
-  stay sold, which is why each slot keeps its own sold state.
+| Service | Price | Effect |
+| --- | --- | --- |
+| Scrub Logs (#106) | 60 (`SCRUB_LOGS_PRICE`) | Noise −20 (`SCRUB_LOGS_NOISE_REDUCTION`), once per visit |
+| Reroll (#107) | 25, then 50, 75, … (`REROLL_BASE_PRICE` + `REROLL_PRICE_STEP` per earlier reroll) | A new card in every unsold slot |
 
-The visual design of this screen belongs to Neel (see the S1/S2 cards). The
+- **Scrub Logs** (`ShopVisit::scrub_logs`) lowers the shared
+  `NoiseMeterGlobal` by 20, clamped at zero by the meter. 60 credits is a bit
+  more than a common card, for two plays' worth of a common recovery card
+  without spending a turn on them. Once bought it shows `SOLD OUT` for the rest
+  of the visit; the next shop sells it again. With noise already at zero it is
+  refused (`nothing_to_scrub`) and its button stays disabled, so it never
+  takes credits for nothing. Shops have no sentry, so detection resistance is
+  always zero there and the full 20 comes off.
+- **Reroll** (`ShopVisit::reroll`) replaces the card in every unsold slot with
+  a fresh roll from the same pool, priced by its rarity. Sold slots stay sold
+  and every slot keeps its place. A replacement is always a card that was not
+  in the stock before the reroll, unless the pool is too small to have enough
+  of them, and the stock never holds the same card twice. The first reroll in a
+  visit costs one zone 1 combat's pay; each one after costs 25 more, so it is a
+  way to hunt for one card rather than to see the whole pool for a flat fee.
+  The price starts at 25 again at the next shop. With every card sold there is
+  nothing to reroll (`nothing_to_reroll`).
+
+**One charging path.** Buying a card, Scrub Logs and rerolling all spend
+credits through `ShopVisit`'s one private `charge` step, after every other
+check. A refusal (`not_enough_credits`, `already_sold`, `no_such_slot`,
+`nothing_to_scrub`, `nothing_to_reroll`) changes neither the credits, the deck,
+the noise meter nor the stock, and nothing can take the balance below zero. A
+balance already below zero from a caught fine simply affords nothing. Like a
+card, a service the player cannot afford has its button disabled and its price
+in red, and every spend is recorded on the run as a credit change, which does
+not count towards `credits_earned`.
+
+```gdscript
+$ShopNode.scrub_logs_offer()
+# {"price": 60, "reduction": 20, "sold": false, "affordable": true,
+#  "noise": 70, "max_noise": 100}
+
+$ShopNode.scrub_logs()
+# {"ok": true, "price": 60, "noise_removed": 20, "noise": 50, "credits": 40},
+# or {"ok": false, "error": "already_sold"} with nothing changed
+
+$ShopNode.reroll_offer()
+# {"price": 25, "affordable": true, "available": true}
+
+$ShopNode.reroll()
+# {"ok": true, "price": 25, "next_price": 50, "credits": 25},
+# or {"ok": false, "error": "not_enough_credits"} with nothing changed;
+# read stock() again for the new cards
+```
+
+The visual design of this screen belongs to Neel (see the S1 to S4 cards). The
 current screen is a plain, functional version in the main menu's terminal
 style that reads everything from `ShopNode`, so a redesign only has to replace
 `shop.gd` and `shop.tscn`.
@@ -301,9 +345,15 @@ offers a shop, then clicks the shop on the map with 120 credits. It checks the
 five rows and their details and prices, buys through the buy buttons until a
 card is out of reach, and checks the exact deduction, the sold slot, the
 unchanged stock, and that the out-of-reach card's button is disabled, its price
-red and a forced attempt changes nothing. Then it presses Leave and checks the
-map and the completed node. Finally it enters the next encounter and draws the
-whole deck to find every card it bought.
+red and a forced attempt changes nothing. It then plays the services: Scrub
+Logs refused one credit short, then bought at 70 noise to take noise to 50 and
+exactly its price off, then shown as sold out and refused a second time; a
+reroll from 50 credits that leaves 25, keeps the sold slots and puts a new card
+in every unsold one, then a dearer next reroll that is red and refused on 25
+credits and paid for with more. It buys one of the rerolled cards. Then it
+presses Leave and checks the map and the completed node. Finally it enters the
+next encounter and draws the whole deck, at zero noise so every card shows its
+shop name, to find every card it bought.
 
 ## The sentry's turn
 
