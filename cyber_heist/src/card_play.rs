@@ -18,7 +18,8 @@ pub struct PlayedCard {
     pub name: String,
     pub noise_change: i32,
     pub damage_dealt: i32,
-    /// Plain damage a boss's firewall absorbed before it reached integrity.
+    /// Plain damage the construct's firewall absorbed before it reached
+    /// integrity.
     pub damage_blocked: i32,
     pub shield_added: i32,
     pub cards_drawn: i32,

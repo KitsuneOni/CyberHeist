@@ -21,12 +21,13 @@
 
 /// Something an action does to the player beyond adding noise.
 ///
-/// Ordinary security only ever makes noise. An ability is what marks an
-/// encounter out as more than a louder version of the last one, which is why
-/// only bosses carry them.
+/// An ability is what marks an encounter out as more than a louder version of
+/// the last one. Standard security has a couple, so no fight is noise alone;
+/// elites add their own on top, and each boss has a signature no one else
+/// uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SentryAbility {
-    /// Noise and nothing else. Every standard sentry action.
+    /// Noise and nothing else.
     None,
     /// Takes energy off the player's next turn. The turn they had planned is
     /// spent before they get to it, rather than merely being noisier.
@@ -38,8 +39,9 @@ pub enum SentryAbility {
     /// signature: a corruption deck has to cash its stacks in before it lands.
     Purge,
     /// Raises a firewall that absorbs this much plain damage during the
-    /// player's next turn. BLACK MONOLITH's signature: penetrating damage and
-    /// corruption go straight through it.
+    /// player's next turn. Standard security's Firewall Up, and a bigger one
+    /// for BLACK MONOLITH's signature: penetrating damage and corruption go
+    /// straight through it.
     Firewall(i32),
 }
 
@@ -177,13 +179,24 @@ pub struct Sentry {
 }
 
 /// The actions every standard construct works through, before the zone's
-/// difficulty is applied to them. Zone 1 fields these as authored, which is
-/// what WARDEN-7 has always done.
-const STANDARD_SCRIPT: [(&str, i32); 3] = [
-    ("Packet Sniff", 1),
-    ("Trace Sweep", 2),
-    ("Lockdown Probe", 3),
+/// difficulty is applied to their noise. Zone 1 fields these as authored, as
+/// WARDEN-7. Not every one is noise alone: Firewall Up shields the construct,
+/// so even an ordinary node asks the player for more than outlasting the
+/// meter.
+const STANDARD_SCRIPT: [(&str, i32, SentryAbility); 4] = [
+    ("Packet Sniff", 1, SentryAbility::None),
+    (
+        "Firewall Up",
+        1,
+        SentryAbility::Firewall(STANDARD_FIREWALL_BLOCK),
+    ),
+    ("Trace Sweep", 2, SentryAbility::None),
+    ("Lockdown Probe", 3, SentryAbility::None),
 ];
+
+/// Plain damage standard security's Firewall Up absorbs: a Strike and a bit,
+/// short of the boss's.
+const STANDARD_FIREWALL_BLOCK: i32 = 8;
 
 /// Bosses by zone. A contract longer than this list falls back to a numbered
 /// name, so adding zones cannot leave a boss nameless. Contract offers read its
@@ -211,7 +224,8 @@ const ELITE_HEALTH: i32 = 60;
 const BOSS_HEALTH_BASE: i32 = 80;
 const BOSS_HEALTH_PER_ZONE: i32 = 20;
 
-/// Plain damage BLACK MONOLITH's Firewall absorbs: two Strikes' worth.
+/// Plain damage BLACK MONOLITH's Firewall absorbs: two Strikes' worth, half
+/// again what standard security's Firewall Up stands up.
 const FIREWALL_BLOCK: i32 = 12;
 
 /// THE ARCHITECT's zone. It closes the longest contract on offer, so it is
@@ -228,9 +242,14 @@ const ELITE_RESISTANCE_BONUS: i32 = 15;
 /// What an elite adds to each standard action it runs.
 const ELITE_NOISE_BONUS: i32 = 1;
 
-/// The actions an elite runs on top of the standard ones, renamed so the
+/// What an elite calls each standard action, in the same order, so the
 /// player can tell at a glance they are not facing ordinary security.
-const ELITE_SCRIPT: [&str; 3] = ["Deep Scan", "Hardened Trace", "Counter Probe"];
+const ELITE_SCRIPT: [&str; STANDARD_SCRIPT.len()] = [
+    "Deep Scan",
+    "Hardened Firewall",
+    "Hardened Trace",
+    "Counter Probe",
+];
 
 /// Integrity an elite's Reinforce restores in the first zone, and how much
 /// more it restores for every zone deeper.
@@ -268,7 +287,7 @@ impl Sentry {
         let step = Self::zone_step(zone);
         let script = STANDARD_SCRIPT
             .iter()
-            .map(|(name, noise)| SentryAction::new(name, noise * step))
+            .map(|(name, noise, ability)| SentryAction::with_ability(name, noise * step, *ability))
             .collect();
 
         let mut sentry =
@@ -279,8 +298,9 @@ impl Sentry {
 
     /// The construct guarding an elite node in `zone`.
     ///
-    /// The zone's standard script run a little louder, then a Reinforce that
-    /// restores some of the integrity the player has knocked off it. More
+    /// The zone's standard script run a little louder, abilities and all,
+    /// then a Reinforce that restores some of the integrity the player has
+    /// knocked off it. More
     /// integrity than standard security to start with, and harder to recover
     /// against, but short of the boss on both counts.
     pub fn elite_for_zone(zone: usize) -> Self {
@@ -288,7 +308,9 @@ impl Sentry {
         let mut script: Vec<SentryAction> = STANDARD_SCRIPT
             .iter()
             .zip(ELITE_SCRIPT)
-            .map(|((_, noise), name)| SentryAction::new(name, noise * step + ELITE_NOISE_BONUS))
+            .map(|((_, noise, ability), name)| {
+                SentryAction::with_ability(name, noise * step + ELITE_NOISE_BONUS, *ability)
+            })
             .collect();
         let reinforce = ELITE_REINFORCE_BASE
             .saturating_add(ELITE_REINFORCE_PER_ZONE.saturating_mul(step.saturating_sub(1)));
@@ -401,7 +423,7 @@ impl Sentry {
         let step = Self::zone_step(zone);
         STANDARD_SCRIPT
             .iter()
-            .map(|(_, noise)| noise * step)
+            .map(|(_, noise, _)| noise * step)
             .max()
             .unwrap_or(0)
     }

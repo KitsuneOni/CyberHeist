@@ -197,11 +197,14 @@ func _run() -> void:
 	# --- Reinforce is announced, then restores integrity --------------------
 	sentry.take_damage(20)
 	var reinforced := false
-	for turn in 5:
+	# The elite also runs standard security's abilities (#102), so wait for
+	# Reinforce by name rather than the first ability that comes up.
+	for turn in 6:
+		var queued: String = sentry.queued_action_name()
 		var announced: String = sentry.queued_action_ability()
 		var health_before: int = sentry.health()
 		_press_end_turn()
-		if announced == "":
+		if queued != "Reinforce":
 			continue
 
 		reinforced = true

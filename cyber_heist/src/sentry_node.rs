@@ -230,7 +230,7 @@ impl SentryNode {
         self.sentry.phase()
     }
 
-    /// Plain damage BLACK MONOLITH's firewall will still absorb this turn, or
+    /// Plain damage the construct's firewall will still absorb this turn, or
     /// zero when none is up.
     #[func]
     fn firewall(&self) -> i32 {
@@ -284,9 +284,9 @@ impl SentryNode {
                 let integrity_restored = self
                     .sentry
                     .restore_integrity(action.ability.integrity_restored());
-                // A boss's Purge and Firewall land on the construct too. Purge
-                // runs after the corruption tick, so it clears what would
-                // have ticked next turn.
+                // Purge and a firewall land on the construct too. Purge runs
+                // after the corruption tick, so it clears what would have
+                // ticked next turn.
                 let corruption_purged = if action.ability.purges_corruption() {
                     self.sentry.purge_corruption()
                 } else {
