@@ -150,5 +150,12 @@ jobs:
       - name: Run headless contract victory and reward test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/contract_victory_test.gd
 
+      # Plays partway, saves at safe points, then starts a second engine on
+      # the same save file and presses Continue: the map, contract, credits,
+      # deck, noise and stats come back exactly, on the hub, the caught
+      # screen and in a shop. A corrupt or incompatible save starts fresh.
+      - name: Run headless save and continue test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/save_continue_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh
