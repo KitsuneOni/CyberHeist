@@ -13,7 +13,7 @@ const EXPECTED_NOISE := [87, 88, 90, 91, 94, 95, 96, 98, 99, 100]
 const ACTION_NAMES := ["Packet Sniff", "Firewall Up", "Trace Sweep", "Inject Malware", "Lockdown Probe"]
 const ACTION_NOISE := [1, 1, 2, 1, 3]
 # What each action announces beside its noise, or "" when it only makes noise.
-const ACTION_ABILITY := ["", "blocks 8 damage", "", "adds 1 Malware to your discard", ""]
+const ACTION_ABILITY := ["", "blocks 8 damage", "", "adds 1 Injected Malware to your discard", ""]
 const EXPECTED_FINE := 50
 
 # A script error inside _run kills the coroutine part way through, so the run

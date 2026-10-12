@@ -5,21 +5,24 @@
 #   - E4a: Firewall Up is announced with the intent before the turn ends,
 #     leaves a firewall of 8 standing once it runs, and that firewall is used
 #     up by plain damage before any integrity is lost.
-#   - E4b: Inject Malware is announced, then puts a Malware card in the
-#     discard pile. Malware costs 1 energy, does nothing when played and
-#     leaves the encounter, and none of it reaches the run's deck once the
-#     encounter is over.
+#   - E4b: Inject Malware is announced, then puts an Injected Malware card
+#     in the discard pile (named apart from the player's own Malware attack).
+#     It costs 1 energy, does nothing when played and leaves the encounter,
+#     and none of it reaches the run's deck once the encounter is over.
 #
 # Run: godot --headless --path godot -s res://tests/security_actions_test.gd
 extends SceneTree
 
 const FIREWALL_UP_BLOCK := 8
 const STRIKE_DAMAGE := 6
-const MALWARE_ID := "malware"
+const MALWARE_ID := "injected_malware"
+const MALWARE_NAME := "Injected Malware"
 # A script error inside _run kills the coroutine before it reaches _finish, and
 # the engine would then sit there until CI's job timeout. The watchdog turns
 # that into a fast failure instead.
 const WATCHDOG_SECONDS := 60.0
+# Contracts rolled looking for an ordinary combat node in the first column.
+const MAX_RUN_ROLLS := 20
 
 var _flow: Node
 var _combat: Node
@@ -163,7 +166,7 @@ func _malware_in_encounter() -> int:
 	var draw: Node = _combat.draw_phase
 	var count := 0
 	for card_name in draw.hand_names():
-		if card_name == "Malware":
+		if card_name == MALWARE_NAME:
 			count += 1
 	for pile in [draw.draw_pile_ids(), draw.discard_pile_ids()]:
 		for id in pile:
@@ -188,7 +191,7 @@ func _check_inject_malware() -> void:
 	_check(_end_turns_until_queued("Inject Malware"), "WARDEN-7 queues Inject Malware")
 	_check(
 		_combat.intent_label.text
-		== "WARDEN-7 will: Inject Malware (+1 noise, adds 1 Malware to your discard)",
+		== "WARDEN-7 will: Inject Malware (+1 noise, adds 1 Injected Malware to your discard)",
 		"the intent shows the Malware before the turn ends (got '%s')" % _combat.intent_label.text
 	)
 	var malware_before := _malware_in_encounter()
@@ -201,7 +204,7 @@ func _check_inject_malware() -> void:
 	)
 	_check(_malware_in_encounter() == malware_before + 1, "and nowhere else")
 	_check(
-		_combat.status_label.text.contains("1 Malware added to your discard pile."),
+		_combat.status_label.text.contains("1 Injected Malware added to your discard pile."),
 		"the turn report says Malware was planted (got '%s')" % _combat.status_label.text
 	)
 
@@ -210,7 +213,7 @@ func _check_inject_malware() -> void:
 func _check_malware_is_dead() -> void:
 	_draw_whole_deck()
 	var draw: Node = _combat.draw_phase
-	var index: int = draw.hand_names().find("Malware")
+	var index: int = draw.hand_names().find(MALWARE_NAME)
 	_check(index >= 0, "Malware can be drawn")
 	if index < 0:
 		return
@@ -221,7 +224,7 @@ func _check_malware_is_dead() -> void:
 	var noise_before: int = _combat.sentry.noise()
 	var health_before: int = _combat.sentry.health()
 	var hand_before: int = draw.hand_names().size()
-	if not _play("Malware"):
+	if not _play(MALWARE_NAME):
 		return
 
 	_check(draw.energy == energy_before - 1, "playing Malware spends 1 energy")
@@ -230,7 +233,7 @@ func _check_malware_is_dead() -> void:
 	_check(draw.hand_names().size() == hand_before - 1, "Malware leaves the hand")
 	_check(_malware_in_encounter() == malware_before - 1, "and is removed from the encounter")
 	_check(
-		_combat.status_label.text.contains("Malware leaves the encounter."),
+		_combat.status_label.text.contains("Injected Malware leaves the encounter."),
 		"the play report says it is gone (got '%s')" % _combat.status_label.text
 	)
 
@@ -267,6 +270,20 @@ func _check_malware_stays_behind() -> void:
 	_check(_malware_in_encounter() == 0, "the next encounter's deck has no Malware")
 
 
+# Rolls fresh contracts until the first column offers an ordinary combat node,
+# then enters it. The shared combat fixture can land on an elite, and this
+# test is about standard security, so it picks the node itself.
+func _enter_standard_combat() -> bool:
+	for attempt in MAX_RUN_ROLLS:
+		for option: Dictionary in _flow.selectable_encounters():
+			if str(option.get("type", "")) == "combat":
+				return _flow.select_encounter(option.id).get("ok", false)
+		if not _flow.start_new_run().get("ok", false):
+			return false
+		await process_frame
+	return false
+
+
 func _run() -> void:
 	await process_frame
 
@@ -283,8 +300,7 @@ func _run() -> void:
 
 	_check(_flow.start_new_contract().get("ok", false), "New contract leaves the main menu")
 	await process_frame
-	var selected: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
-	_check(selected.get("ok", false), "a first-zone encounter can be entered")
+	_check(await _enter_standard_combat(), "a first-zone combat node can be entered")
 	await process_frame
 	await process_frame
 

@@ -95,6 +95,9 @@ func _on_end_turn_button_pressed() -> void:
 		var firewall: int = turn.get("firewall", 0)
 		if firewall > 0:
 			message += " Firewall will block the next %d damage." % firewall
+		var malware: int = turn.get("malware_planted", 0)
+		if malware > 0:
+			message += " %d Injected Malware added to your discard pile." % malware
 		var corruption_damage: int = turn.get("corruption_damage", 0)
 		if corruption_damage > 0:
 			message += " Corruption dealt %d damage." % corruption_damage
@@ -279,6 +282,10 @@ func _on_play_button_pressed() -> void:
 			message += " (+%d energy tax)" % energy_tax_paid
 		if corruption_boost_added > 0:
 			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
+		# Exhausted cards, such as security's Injected Malware, are gone for
+		# the rest of the fight rather than waiting in the discard pile.
+		if result.get("exhausted", false):
+			message += " %s leaves the encounter." % result.get("name", "Card")
 		status_label.text = message + _escalation_message()
 
 		_rebuild_card_buttons(draw_phase.hand_names())

@@ -43,14 +43,26 @@ pub enum SentryAbility {
     /// for BLACK MONOLITH's signature: penetrating damage and corruption go
     /// straight through it.
     Firewall(i32),
+    /// Plants this many Injected Malware junk cards in the player's discard pile.
+    /// They only last the encounter: the combat deck is rebuilt from the
+    /// run's deck each time, and Malware is never added to that.
+    InjectMalware(i32),
 }
+
+/// The card id Inject Malware plants, authored in cursed_cards.ron. Not
+/// "malware": that is the player's own attack card in cards.ron.
+pub const MALWARE_CARD_ID: &str = "injected_malware";
 
 impl SentryAbility {
     /// Energy this ability takes, or zero when it takes none.
     pub fn energy_drain(self) -> i32 {
         match self {
             Self::DrainEnergy(amount) => amount.max(0),
-            Self::None | Self::RestoreIntegrity(_) | Self::Purge | Self::Firewall(_) => 0,
+            Self::None
+            | Self::RestoreIntegrity(_)
+            | Self::Purge
+            | Self::Firewall(_)
+            | Self::InjectMalware(_) => 0,
         }
     }
 
@@ -60,7 +72,11 @@ impl SentryAbility {
     pub fn integrity_restored(self) -> i32 {
         match self {
             Self::RestoreIntegrity(amount) => amount.max(0),
-            Self::None | Self::DrainEnergy(_) | Self::Purge | Self::Firewall(_) => 0,
+            Self::None
+            | Self::DrainEnergy(_)
+            | Self::Purge
+            | Self::Firewall(_)
+            | Self::InjectMalware(_) => 0,
         }
     }
 
@@ -74,7 +90,24 @@ impl SentryAbility {
     pub fn firewall_raised(self) -> i32 {
         match self {
             Self::Firewall(amount) => amount.max(0),
-            Self::None | Self::DrainEnergy(_) | Self::RestoreIntegrity(_) | Self::Purge => 0,
+            Self::None
+            | Self::DrainEnergy(_)
+            | Self::RestoreIntegrity(_)
+            | Self::Purge
+            | Self::InjectMalware(_) => 0,
+        }
+    }
+
+    /// Malware cards this ability plants, or zero when it plants none. A
+    /// negative count plants nothing rather than taking cards away.
+    pub fn malware_planted(self) -> i32 {
+        match self {
+            Self::InjectMalware(count) => count.max(0),
+            Self::None
+            | Self::DrainEnergy(_)
+            | Self::RestoreIntegrity(_)
+            | Self::Purge
+            | Self::Firewall(_) => 0,
         }
     }
 
@@ -91,6 +124,9 @@ impl SentryAbility {
             Self::RestoreIntegrity(amount) => format!("+{} integrity", amount.max(0)),
             Self::Purge => "clears corruption".to_string(),
             Self::Firewall(amount) => format!("blocks {} damage", amount.max(0)),
+            Self::InjectMalware(count) => {
+                format!("adds {} Injected Malware to your discard", count.max(0))
+            }
         }
     }
 }
@@ -180,10 +216,10 @@ pub struct Sentry {
 
 /// The actions every standard construct works through, before the zone's
 /// difficulty is applied to their noise. Zone 1 fields these as authored, as
-/// WARDEN-7. Not every one is noise alone: Firewall Up shields the construct,
-/// so even an ordinary node asks the player for more than outlasting the
-/// meter.
-const STANDARD_SCRIPT: [(&str, i32, SentryAbility); 4] = [
+/// WARDEN-7. Not every one is noise alone: Firewall Up shields the construct
+/// and Inject Malware clogs the player's deck, so even an ordinary node asks
+/// for more than outlasting the meter.
+const STANDARD_SCRIPT: [(&str, i32, SentryAbility); 5] = [
     ("Packet Sniff", 1, SentryAbility::None),
     (
         "Firewall Up",
@@ -191,6 +227,7 @@ const STANDARD_SCRIPT: [(&str, i32, SentryAbility); 4] = [
         SentryAbility::Firewall(STANDARD_FIREWALL_BLOCK),
     ),
     ("Trace Sweep", 2, SentryAbility::None),
+    ("Inject Malware", 1, SentryAbility::InjectMalware(1)),
     ("Lockdown Probe", 3, SentryAbility::None),
 ];
 
@@ -248,6 +285,7 @@ const ELITE_SCRIPT: [&str; STANDARD_SCRIPT.len()] = [
     "Deep Scan",
     "Hardened Firewall",
     "Hardened Trace",
+    "Payload Drop",
     "Counter Probe",
 ];
 
@@ -802,7 +840,10 @@ mod tests {
                 "zone {zone}"
             );
             assert_eq!(inject.ability.malware_planted(), 1);
-            assert_eq!(inject.ability.describe(), "adds 1 Malware to your discard");
+            assert_eq!(
+                inject.ability.describe(),
+                "adds 1 Injected Malware to your discard"
+            );
         }
     }
 

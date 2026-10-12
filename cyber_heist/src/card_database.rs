@@ -101,22 +101,25 @@ mod tests {
         let text = std::fs::read_to_string("../godot/data/cursed_cards.ron")
             .expect("could not find cursed_cards.ron");
         let cursed = parse_cards(&text);
-        let malware = cursed.get("malware").expect("malware is authored");
+        let malware = cursed
+            .get("injected_malware")
+            .expect("injected malware is authored");
 
-        assert_eq!(malware.name, "Malware");
+        assert_eq!(malware.name, "Injected Malware");
         assert_eq!(malware.cost, 1);
         assert_eq!(malware.noise_generated, 0);
         assert_eq!(malware.keywords, vec![crate::card_data::Keyword::Exhaust]);
         assert!(malware.weak_side.is_none());
     }
 
-    /// Rewards are offered from cards.ron alone, so keeping Malware out of it
-    /// means a card reward can never hand the player security's junk.
+    /// Rewards are offered from cards.ron alone, so keeping the junk card out
+    /// of it means a card reward can never hand it to the player. The
+    /// player's own Malware attack is a different card with its own id.
     #[test]
     fn malware_is_never_a_reward_card() {
         let text =
             std::fs::read_to_string("../godot/data/cards.ron").expect("could not find cards.ron");
-        assert!(!parse_cards(&text).contains_key("malware"));
+        assert!(!parse_cards(&text).contains_key("injected_malware"));
     }
 
     #[test]
