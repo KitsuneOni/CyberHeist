@@ -232,9 +232,10 @@ happened by the time the new hand exists.
 of actions the sentry cycles through. It owns no noise value. The autoload
 `/root/NoiseMeterGlobal` owns the single `NoiseLevel`, with the incoming
 100-point cap. The action at the front of the queue is shown to the player during their own turn, which
-is what makes ending a turn a decision rather than a formality. Reactive or
-varied actions are a later story. `sentry_node.rs` exposes it to the combat
-scene:
+is what makes ending a turn a decision rather than a formality. Even standard
+security does more than make noise (see "Standard security's actions" below);
+picking actions in reaction to the player is a later story (#101).
+`sentry_node.rs` exposes it to the combat scene:
 
 ```gdscript
 $Sentry.construct_name()          # "WARDEN-7"
@@ -262,9 +263,9 @@ calls `Sentry::for_encounter` with the matching `SecurityTier`. With no
 run behind the screen — a combat scene opened on its own — it falls back to
 first-zone security, the same way `DrawPhase` falls back to the starter deck.
 
-Standard security is the authored WARDEN script scaled by zone, so zone 1 is
-WARDEN-7 exactly as before. A zone's boss is then defined against the security
-around it rather than against a fixed bar:
+Standard security is the authored WARDEN script with its noise scaled by zone,
+so zone 1 is WARDEN-7 as authored. A zone's boss is then defined against the
+security around it rather than against a fixed bar:
 
 - every one of its actions is louder than the loudest standard action in that
   zone,
@@ -272,7 +273,9 @@ around it rather than against a fixed bar:
 - it has more integrity than standard security's 40, starting at 80 for
   ICEBREAKER and rising 20 per zone (BLACK MONOLITH 100, THE ARCHITECT 120),
   so every boss is a longer fight than the one before it, and
-- it carries a signature ability no standard construct has.
+- it carries a signature ability no standard construct has. BLACK MONOLITH's
+  Firewall is the closest: a heavier version of standard security's Firewall
+  Up (12 against 8).
 
 Each boss's signature is its second action, announced with the intent before
 it lands, so ending the turn into it is a decision rather than a surprise.
@@ -332,6 +335,40 @@ half, it spends that turn escalating: no action runs, `ok` is false and
 the new set's first action has not been shown yet, so running either would
 spring something on the player they never saw coming.
 
+### Standard security's actions
+
+Ordinary nodes are not noise alone (Trello #102, E4). Every standard construct
+cycles the same five actions, with the noise multiplied by the zone (zone 1 is
+WARDEN-7 as listed):
+
+| Action | Noise | Ability |
+| --- | --- | --- |
+| Packet Sniff | 1 | |
+| Firewall Up | 1 | blocks the next 8 plain damage |
+| Trace Sweep | 2 | |
+| Inject Malware | 1 | adds 1 Injected Malware to your discard |
+| Lockdown Probe | 3 | |
+
+**Firewall Up** (E4a) is the same firewall as BLACK MONOLITH's, smaller: it
+goes up on the construct's turn, absorbs plain damage before integrity, and
+comes down when its next turn starts. Its 8 do not scale by zone.
+
+**Inject Malware** (E4b) plants an **Injected Malware** card in the player's
+discard pile. The card lives in `cursed_cards.ron` as `injected_malware`; it is
+not called Malware because `cards.ron` already has a player attack with that
+id and name. It costs 1 energy, makes no noise, does nothing, and has
+**Exhaust**, so playing it removes it from the encounter instead of
+discarding it. `play_card` reports that as `exhausted`.
+
+The planting is split because the deck belongs to `DrawPhase`. `SentryNode`
+records the count, reports it as `malware_planted` in the turn outcome, and
+`DrawPhase.end_turn()` takes it straight after the `security_phase` signal,
+before the next hand is drawn, and puts the cards in its own discard pile
+(`card_play::plant_junk`). It never touches `RunDeckNode`, and each encounter
+builds its deck fresh from the run's deck, so Injected Malware never outlives
+the encounter it was planted in. `DrawPhase.draw_pile_ids()` and
+`discard_pile_ids()` let a screen or test see what is in each pile.
+
 ### Elite encounters
 
 An elite node is a fight the player chooses to take on for a better payout
@@ -342,12 +379,13 @@ against the same zone's standard security:
 | --- | --- | --- | --- |
 | Integrity | 40 | 60 | 80 (+20 per zone) |
 | Resistance | +10 per zone | standard + 15 | standard + 30 |
-| Ability | none | Reinforce | its own signature (see above) |
+| Ability | Firewall Up, Inject Malware | standard's, plus Reinforce | its own signature (see above) |
 | Credits (zone 1, +per zone) | 25 (+15) | 2x combat | 3x combat |
 | Card reward | any 3 | at least one Rare | at least one Rare |
 
 The elites are BASTION, HYDRA and CERBERUS, in zone order. Their script is the
-zone's standard one, renamed and one point louder per action, followed by
+zone's standard one, renamed and one point louder per action (Deep Scan,
+Hardened Firewall, Hardened Trace, Payload Drop, Counter Probe), followed by
 **Reinforce**: one point of noise, plus 8 integrity restored to the construct
 (4 more per zone deeper). It is announced with the intent as `+8 integrity`, so
 a player can try to finish the elite before it lands. Because it acts on the
@@ -396,6 +434,8 @@ own `turn_resolved` signal hands the result to the combat screen as:
     "run_failed": false,
     "energy_drain": 0,  # >0 only for a boss lockdown
     "ability": "",      # "-1 energy" when the action carries one
+    "firewall": 0,      # the firewall now standing, from Firewall Up or a boss
+    "malware_planted": 0, # Injected Malware headed for the discard pile
 }
 ```
 
