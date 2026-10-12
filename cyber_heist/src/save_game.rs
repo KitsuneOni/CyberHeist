@@ -20,6 +20,7 @@
 //! one that is not valid JSON, or one describing a run the game could never
 //! have reached is refused with a [`SaveError`] rather than half-loaded.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -95,6 +96,10 @@ pub struct PendingCardReward {
     pub credits: i64,
     /// Whether the offer must include a Rare (elites and bosses).
     pub guaranteed_rare: bool,
+    /// The cards the reward screen offered, so a resumed reward offers the
+    /// same ones rather than a free reroll. Empty when no offer was shown,
+    /// as on the victory screen, which offers no card.
+    pub offered_card_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +248,12 @@ impl SavedRun {
         let reward_phase = matches!(phase, ContractPhase::Hub | ContractPhase::ContractWon);
         if screen.pending_card_reward.is_some() && !reward_phase {
             return Err(invalid("a card reward is saved outside the hub"));
+        }
+        if let Some(reward) = &screen.pending_card_reward {
+            let distinct: BTreeSet<&String> = reward.offered_card_ids.iter().collect();
+            if distinct.len() != reward.offered_card_ids.len() {
+                return Err(invalid("a card reward offers the same card twice"));
+            }
         }
         Ok(())
     }
@@ -566,6 +577,45 @@ mod tests {
             fine: 50,
             lost_upgrades: Vec::new(),
         });
+
+        assert!(matches!(
+            SaveGame::new(MetaProgress::default(), run),
+            Err(SaveError::InvalidRun(_))
+        ));
+    }
+
+    fn pending_reward_offering(card_ids: &[&str]) -> PendingCardReward {
+        PendingCardReward {
+            credits: 40,
+            guaranteed_rare: false,
+            offered_card_ids: card_ids.iter().map(|id| id.to_string()).collect(),
+        }
+    }
+
+    /// Continuing on a card reward must offer the cards that were on the
+    /// screen, or quitting and continuing would be a free reroll.
+    #[test]
+    fn a_pending_card_reward_keeps_the_cards_it_offered() {
+        let mut run = saved_run(run_played_partway());
+        run.screen.pending_card_reward = Some(pending_reward_offering(&[
+            "wannacry",
+            "social_engineering",
+            "triple_worm",
+        ]));
+        let save = SaveGame::new(MetaProgress::default(), run).expect("the hub is a safe point");
+
+        let restored = SaveGame::from_json(&save.to_json().unwrap()).unwrap();
+
+        assert_eq!(
+            restored.run.screen.pending_card_reward,
+            save.run.screen.pending_card_reward
+        );
+    }
+
+    #[test]
+    fn a_card_reward_offering_a_card_twice_is_refused() {
+        let mut run = saved_run(run_played_partway());
+        run.screen.pending_card_reward = Some(pending_reward_offering(&["vpn", "vpn"]));
 
         assert!(matches!(
             SaveGame::new(MetaProgress::default(), run),

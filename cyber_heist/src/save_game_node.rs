@@ -235,9 +235,9 @@ impl SaveGameNode {
         SaveGame::new(meta, run).map_err(|error| error.to_string())
     }
 
-    /// The checks a save cannot make on its own: every card it names exists
-    /// in this build's card database, and noise and knowledge are within the
-    /// meters' caps.
+    /// The checks a save cannot make on its own: every card it names, in the
+    /// deck, a shop's stock or a card reward's offer, exists in this build's
+    /// card database, and noise and knowledge are within the meters' caps.
     fn check_against_this_build(&self, run: &SavedRun) -> Result<(), String> {
         let database = self
             .base()
@@ -250,9 +250,15 @@ impl SaveGameNode {
             .iter()
             .flat_map(|visit| visit.slots())
             .map(|slot| slot.card_id());
+        let reward_cards = run
+            .screen
+            .pending_card_reward
+            .iter()
+            .flat_map(|reward| reward.offered_card_ids.iter().map(String::as_str));
         let deck_cards = run.deck.iter().map(String::as_str);
         if let Some(unknown) = deck_cards
             .chain(shop_cards)
+            .chain(reward_cards)
             .find(|id| database.get(id).is_none())
         {
             return Err(format!("it names a card that does not exist: '{unknown}'"));
@@ -289,10 +295,18 @@ fn globalized(path: &GString) -> PathBuf {
 /// dictionary when there is none.
 fn screen_state_dictionary(screen: &ScreenState) -> VarDictionary {
     let pending_reward = match &screen.pending_card_reward {
-        Some(reward) => vdict! {
-            "credits" => reward.credits,
-            "guaranteed_rare" => reward.guaranteed_rare,
-        },
+        Some(reward) => {
+            let offered: Array<GString> = reward
+                .offered_card_ids
+                .iter()
+                .map(|id| GString::from(id.as_str()))
+                .collect();
+            vdict! {
+                "credits" => reward.credits,
+                "guaranteed_rare" => reward.guaranteed_rare,
+                "offered_card_ids" => &offered,
+            }
+        }
         None => VarDictionary::new(),
     };
     let contract_payout = match &screen.contract_payout {
@@ -331,6 +345,12 @@ fn screen_state_from(screen: &VarDictionary) -> Result<ScreenState, String> {
         Some(reward) => Some(PendingCardReward {
             credits: field(&reward, "credits")?,
             guaranteed_rare: field(&reward, "guaranteed_rare")?,
+            // Missing until the reward screen has rolled its offer.
+            offered_card_ids: if reward.contains_key("offered_card_ids") {
+                string_list(&reward, "offered_card_ids")?
+            } else {
+                Vec::new()
+            },
         }),
         None => None,
     };

@@ -34,7 +34,8 @@ const DEFAULT_SAVE_PATH := "user://cyberheist_save.json"
 var _screen_host: Node
 # What the encounter just cleared paid out, {credits, guaranteed_rare}, kept
 # for the reward screen because completing the encounter clears it from run
-# state before that screen opens.
+# state before that screen opens. Once the screen rolls its offer, the cards
+# are kept here too, as offered_card_ids, so the save holds them.
 var _pending_reward := {}
 # What winning the contract paid, {credits, balance_before, balance_after}, kept
 # for the victory screen so it can count the balance up from where it was.
@@ -351,8 +352,23 @@ func contract_payout() -> Dictionary:
 # Cards on offer after clearing an encounter. Each is a dictionary of
 # {id, name, type, rarity, cost_text, noise_text, description}.
 # An elite or boss offer always includes at least one Rare.
+#
+# The offer for a pending reward is rolled once and kept with it, so asking
+# again, or continuing a run saved on the reward screen, offers the same cards
+# rather than a free reroll. An offer of a different size is rolled afresh and
+# not kept.
 func offer_card_reward(count: int) -> Array:
-	return _run_deck.offer_reward(count, _pending_reward.get("guaranteed_rare", false))
+	var kept_ids: Array = _pending_reward.get("offered_card_ids", [])
+	if not kept_ids.is_empty() and kept_ids.size() == count:
+		return _run_deck.describe_cards(PackedStringArray(kept_ids))
+
+	var offer: Array = _run_deck.offer_reward(count, _pending_reward.get("guaranteed_rare", false))
+	if not _pending_reward.is_empty() and kept_ids.is_empty():
+		var offered_ids := []
+		for card: Dictionary in offer:
+			offered_ids.append(card.get("id", ""))
+		_pending_reward["offered_card_ids"] = offered_ids
+	return offer
 
 
 # Credits the encounter just cleared paid out, for the reward screen to show.

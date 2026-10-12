@@ -27,7 +27,8 @@
 #     Then the contract, map, completed encounters, zone, credits, deck,
 #     upgrades, noise, knowledge, stats and phase are exactly as they were
 #     And the same holds on the caught screen, where the fine is not charged
-#     a second time, and in a shop after buying a card
+#     a second time, in a shop after buying a card, and on a fight's card
+#     reward, which offers the same cards rather than rerolling them
 #
 #   Scenario: Starting a new contract replaces the saved run
 #
@@ -51,6 +52,8 @@ const RESUME_TIMEOUT_SECONDS := 60.0
 # Fresh runs to roll looking for a shop on the first step. Each roll offers
 # one about a quarter of the time, so this only bounds a very bad streak.
 const MAX_SHOP_ROLLS := 60
+# Fresh runs to roll looking for a fight on the first step, which most offer.
+const MAX_FIGHT_ROLLS := 60
 # Credits to walk into the shop with, enough for any card on sale.
 const SHOP_CREDITS := 200
 
@@ -171,6 +174,12 @@ func _capture_state() -> Dictionary:
 	elif state.screen == "CaughtScreen":
 		state["caught_fine"] = screen.get_node("VBoxContainer/FineLabel").text
 		state["caught_upgrades"] = screen.get_node("VBoxContainer/UpgradesLabel").text
+	elif state.screen == "CardReward":
+		var offered_ids := []
+		for card: Dictionary in screen.offered:
+			offered_ids.append(card.get("id", ""))
+		state["reward_offer"] = offered_ids
+		state["reward_status"] = screen.status_label.text
 	return state
 
 
@@ -223,6 +232,9 @@ func _run() -> void:
 
 	print("-- resuming in a shop after a purchase")
 	await _check_shop_resume()
+
+	print("-- resuming on a fight's card reward")
+	await _check_card_reward_resume()
 
 	_remove_test_files()
 	_finish("save continue test: PASSED")
@@ -440,6 +452,51 @@ func _check_shop_resume() -> void:
 	)
 	_write_expected_state("shop")
 	_resume_in_a_new_process("shop")
+
+
+# Leaves the shop, rolls new runs until the first step offers a fight, wins
+# it and resumes on its card reward before a card is chosen. The resumed
+# screen must offer the cards this one did.
+func _check_card_reward_resume() -> void:
+	var left: Dictionary = _flow.complete_active_encounter()
+	await _settle()
+	_check(left.get("ok", false), "the shop is left for the hub")
+
+	var fight := {}
+	for _roll in MAX_FIGHT_ROLLS:
+		_flow.start_new_run()
+		await _settle()
+		fight = _first_selectable(["combat", "elite"])
+		if not fight.is_empty():
+			break
+	if fight.is_empty():
+		_check(false, "a fight is offered on the first step within %d runs" % MAX_FIGHT_ROLLS)
+		return
+
+	_flow.select_encounter(int(fight.id))
+	await _settle()
+	var completed: Dictionary = _flow.complete_active_encounter()
+	await _settle()
+	var screen := _screen()
+	_check(
+		completed.get("ok", false) and screen != null and screen.name == "CardReward",
+		"winning the %s opens its card reward" % fight.type
+	)
+	if screen == null or screen.name != "CardReward":
+		return
+
+	var offered_ids := []
+	for card: Dictionary in screen.offered:
+		offered_ids.append(card.get("id", ""))
+	var saved_reward: Dictionary = _saved().get("run", {}).get("screen", {}).get(
+		"pending_card_reward", {}
+	)
+	_check(
+		not offered_ids.is_empty() and saved_reward.get("offered_card_ids", []) == offered_ids,
+		"the card reward is saved with the cards it offers"
+	)
+	_write_expected_state("card_reward")
+	_resume_in_a_new_process("card_reward")
 
 
 func _cheapest_slot(stock: Array) -> int:

@@ -438,7 +438,9 @@ resumed screen shows what was already paid rather than paying it again: the
 pending card reward, the contract payout and the caught penalty. The caught
 screen takes its fine through `FlowCoordinator.apply_caught_penalty(fine)`,
 which charges once per capture, so a caught screen reopened by Continue never
-fines twice. A resumed card reward rolls its three cards afresh.
+fines twice. The card reward's offer is rolled once and kept with the pending
+reward (`offered_card_ids`), so a resumed card reward offers the same three
+cards rather than a free reroll.
 
 **New contract** on the menu replaces the saved run at once with the fresh run
 behind the menu. The credit balance read from the save stays.
@@ -448,8 +450,9 @@ behind the menu. The credit balance read from the save stays.
 first launch: Continue is unavailable and no error is shown. A file that is not
 valid JSON, is missing fields, was written with another version, or describes a
 run the game could never reach (for example a current node that is not on the
-map, an accepted offer that was never offered, a fight in progress, or a card
-this build does not have) loads nothing at all. The game starts fresh with
+map, an accepted offer that was never offered, an offer whose shape or reward
+no contract is offered with, a fight in progress, or a card this build does
+not have) loads nothing at all. The game starts fresh with
 Continue unavailable, and the menu says the save could not be loaded. The next
 save overwrites it. Saves are written to a temporary file and renamed into
 place, so closing the game mid-write leaves the previous save intact. Bump
@@ -483,8 +486,9 @@ partway through it. A second Godot process opens the same save, presses
 Continue and checks the contract, offers, map, completed nodes, zone, credits,
 deck, upgrades, noise, knowledge, stats, phase and screen against what the
 first process wrote down at the hub. It does the same on the caught screen,
-where the fine must not be taken twice, and in a shop after buying a card,
-where the stock must come back with that slot sold.
+where the fine must not be taken twice, in a shop after buying a card,
+where the stock must come back with that slot sold, and on a fight's card
+reward before a card is chosen, where the same cards must be offered again.
 
 ## The sentry's turn
 
