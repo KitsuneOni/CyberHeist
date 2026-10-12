@@ -35,12 +35,11 @@ impl INode for EventNode {
 
 #[godot_api]
 impl EventNode {
-    /// Rolls a random event and returns it for display:
-    /// `{ok, id, title, description, choices: [{label, preview}]}`.
+    /// Rolls a random event the run has not shown yet and returns it for
+    /// display: `{ok, id, title, description, choices: [{label, preview}]}`.
     #[func]
     fn roll_event(&mut self) -> VarDictionary {
-        let mut rng = rand::rng();
-        let event = random_event(&mut rng);
+        let event = self.roll_event_for_run();
 
         let mut choices: Array<VarDictionary> = Array::new();
         for choice in &event.choices {
@@ -115,6 +114,16 @@ impl EventNode {
 }
 
 impl EventNode {
+    /// Asks the run for the event, so it can skip ones already shown. When
+    /// the event screen is open on its own with no run behind it, any event
+    /// will do.
+    fn roll_event_for_run(&self) -> EventDefinition {
+        match self.base().try_get_node_as::<RunStateNode>(RUN_STATE_PATH) {
+            Some(mut run_state) => run_state.bind_mut().roll_event(),
+            None => random_event(&[], &mut rand::rng()),
+        }
+    }
+
     /// Tells the run about the credits this event moved, so they count
     /// towards what the run earned. Skipped when the event screen is open on
     /// its own with no run behind it, as `SentryNode` does.

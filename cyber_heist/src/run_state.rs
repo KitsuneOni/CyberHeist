@@ -12,6 +12,7 @@ use crate::contract_map::{
     EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
 use crate::contract_offer::{ContractOffer, generate_offers};
+use crate::events::{EventDefinition, random_event};
 use crate::run_stats::RunStats;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +105,9 @@ pub struct RunState {
     /// What this run has achieved, for the end screen. Owned here so that
     /// it starts and ends with the run.
     stats: RunStats,
+    /// Ids of the events this run has already shown, so an event node does
+    /// not repeat one. Owned here so a new run starts with a fresh pool.
+    seen_events: Vec<String>,
 }
 
 impl Default for RunState {
@@ -117,6 +121,7 @@ impl Default for RunState {
             contract_started: false,
             contract_reward: None,
             stats: RunStats::default(),
+            seen_events: Vec::new(),
         }
     }
 }
@@ -151,6 +156,7 @@ impl RunState {
             contract_started: false,
             contract_reward: None,
             stats: RunStats::default(),
+            seen_events: Vec::new(),
         }
     }
 
@@ -386,6 +392,14 @@ impl RunState {
     /// is added, once per card.
     pub fn record_card_added(&mut self) {
         self.stats.record_card_added();
+    }
+
+    /// Rolls the event for an event node, avoiding any this run has already
+    /// shown, and remembers it as seen.
+    pub fn roll_event(&mut self, rng: &mut impl Rng) -> EventDefinition {
+        let event = random_event(&self.seen_events, rng);
+        self.seen_events.push(event.id.clone());
+        event
     }
 
     /// The run's stats together with how far through the contract it got,
@@ -1116,6 +1130,34 @@ mod tests {
 
         assert_eq!(state.phase(), ContractPhase::Hub);
         assert_eq!(state.active_encounter(), None);
+    }
+
+    /// Story #116, scenario 2: the run remembers which events it has shown,
+    /// so a later event node gets a different one.
+    #[test]
+    fn a_run_does_not_roll_the_same_event_twice() {
+        let mut state = RunState::new();
+        let mut rng = StdRng::seed_from_u64(13);
+
+        let first = state.roll_event(&mut rng);
+        for _ in 0..20 {
+            let mut retry = state.clone();
+            let next = retry.roll_event(&mut rng);
+            assert_ne!(next.id, first.id, "the run showed '{}' twice", first.id);
+        }
+    }
+
+    /// The seen events belong to the run, so a new run can see them again.
+    #[test]
+    fn a_new_run_forgets_the_events_it_has_seen() {
+        let mut state = generated_run(5);
+        state.roll_event(&mut StdRng::seed_from_u64(1));
+
+        state
+            .start_new_run(&mut StdRng::seed_from_u64(3))
+            .expect("a new run can start from the hub");
+
+        assert_eq!(state.seen_events, Vec::<String>::new());
     }
 
     /// Abandoning a run part-way through a fight would leave its screen

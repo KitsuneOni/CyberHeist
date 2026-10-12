@@ -218,14 +218,190 @@ pub fn event_catalogue() -> Vec<EventDefinition> {
                 ),
             ],
         },
+        EventDefinition {
+            id: "honeypot_server".to_string(),
+            title: "Honeypot Server".to_string(),
+            description: "A payroll server sits wide open with no firewall in front of it. \
+                 It looks almost too easy."
+                .to_string(),
+            choices: vec![
+                EventChoice::gamble(
+                    "Raid the payroll data",
+                    "40% chance: gain 150 credits. Otherwise it is a honeypot and the trace costs you 60.",
+                    40,
+                    EventEffect::new(
+                        150,
+                        None,
+                        "The server is exactly what it looks like. +150 credits.",
+                    ),
+                    EventEffect::new(
+                        -60,
+                        None,
+                        "The honeypot snaps shut and you pay to burn the trace. -60 credits.",
+                    ),
+                ),
+                EventChoice::certain(
+                    "Tip off a fixer",
+                    "Guaranteed 30 credits for the lead.",
+                    EventEffect::new(
+                        30,
+                        None,
+                        "Let someone else take the risk. The fixer pays for the lead. +30 credits.",
+                    ),
+                ),
+            ],
+        },
+        EventDefinition {
+            id: "stranded_courier".to_string(),
+            title: "Stranded Courier".to_string(),
+            description: "A data courier's drop fell through. She wants the drive off her \
+                 hands before her client comes looking."
+                .to_string(),
+            choices: vec![
+                EventChoice::gamble(
+                    "Buy the drive for 50",
+                    "Costs 50 credits. 55% chance the data resells for 150, for a net gain of 100.",
+                    55,
+                    EventEffect::new(
+                        100,
+                        None,
+                        "The drive is full of client records that resell fast. +100 credits after her cut.",
+                    ),
+                    EventEffect::new(
+                        -50,
+                        None,
+                        "The drive was wiped before she got it. -50 credits.",
+                    ),
+                ),
+                EventChoice::certain(
+                    "Point her to a safe drop",
+                    "Safe. Nothing gained, nothing lost.",
+                    EventEffect::new(0, None, "She nods and vanishes into the crowd."),
+                ),
+            ],
+        },
+        EventDefinition {
+            id: "leaked_wallet_keys".to_string(),
+            title: "Leaked Wallet Keys".to_string(),
+            description: "A paste site is leaking crypto wallet keys faster than \
+                 anyone can sweep them."
+                .to_string(),
+            choices: vec![
+                EventChoice::gamble(
+                    "Sweep the big wallets",
+                    "30% chance: gain 200 credits. Otherwise someone beats you to them and the fees cost you 40.",
+                    30,
+                    EventEffect::new(
+                        200,
+                        None,
+                        "You empty the fat wallets before anyone else wakes up. +200 credits.",
+                    ),
+                    EventEffect::new(
+                        -40,
+                        None,
+                        "Every wallet is already empty, and the transaction fees still cost you. -40 credits.",
+                    ),
+                ),
+                EventChoice::certain(
+                    "Skim the small change",
+                    "Guaranteed 25 credits.",
+                    EventEffect::new(
+                        25,
+                        None,
+                        "Nobody misses a few coins from the small wallets. +25 credits.",
+                    ),
+                ),
+            ],
+        },
+        EventDefinition {
+            id: "rival_crew".to_string(),
+            title: "Rival Crew".to_string(),
+            description: "Another crew is working the same network. Their lead offers to \
+                 split what you both find."
+                .to_string(),
+            choices: vec![
+                EventChoice::certain(
+                    "Split the take",
+                    "Guaranteed 60 credits.",
+                    EventEffect::new(
+                        60,
+                        None,
+                        "They keep their word, which is rare in this business. +60 credits.",
+                    ),
+                ),
+                EventChoice::gamble(
+                    "Double-cross them",
+                    "45% chance: gain 140 credits. Otherwise they see it coming and it costs you 90.",
+                    45,
+                    EventEffect::new(
+                        140,
+                        None,
+                        "You lock them out and take the whole haul. +140 credits.",
+                    ),
+                    EventEffect::new(
+                        -90,
+                        None,
+                        "They were ready for you and drain your account on the way out. -90 credits.",
+                    ),
+                ),
+                EventChoice::certain(
+                    "Decline and keep moving",
+                    "Safe. Nothing gained, nothing lost.",
+                    EventEffect::new(0, None, "You leave them to it."),
+                ),
+            ],
+        },
+        EventDefinition {
+            id: "bug_bounty".to_string(),
+            title: "Bug Bounty".to_string(),
+            description: "You stumble on a zero-day in the target's login portal. \
+                 Somebody will pay for it."
+                .to_string(),
+            choices: vec![
+                EventChoice::certain(
+                    "Claim the corporate bounty",
+                    "Guaranteed 50 credits.",
+                    EventEffect::new(
+                        50,
+                        None,
+                        "The bounty clears through a shell account. +50 credits.",
+                    ),
+                ),
+                EventChoice::gamble(
+                    "Sell it on the dark web",
+                    "55% chance: gain 130 credits. Otherwise the buyer is a sting and you pay 50 to get clear.",
+                    55,
+                    EventEffect::new(
+                        130,
+                        None,
+                        "A broker pays top price for the zero-day. +130 credits.",
+                    ),
+                    EventEffect::new(
+                        -50,
+                        None,
+                        "The buyer was a sting, and you pay 50 credits to get clear.",
+                    ),
+                ),
+            ],
+        },
     ]
 }
 
-/// Picks one event at random for an event node.
-pub fn random_event(rng: &mut impl Rng) -> EventDefinition {
-    let mut catalogue = event_catalogue();
-    let index = rng.random_range(0..catalogue.len());
-    catalogue.swap_remove(index)
+/// Picks one event at random for an event node, skipping any whose id is in
+/// `seen` so that a run does not show the same event twice.
+///
+/// Once a run has seen every event, it picks from the whole catalogue again,
+/// so an event node always gets an event.
+pub fn random_event(seen: &[String], rng: &mut impl Rng) -> EventDefinition {
+    let mut pool: Vec<EventDefinition> = event_catalogue()
+        .into_iter()
+        .filter(|event| !seen.contains(&event.id))
+        .collect();
+    if pool.is_empty() {
+        pool = event_catalogue();
+    }
+    let index = rng.random_range(0..pool.len());
+    pool.swap_remove(index)
 }
 
 #[cfg(test)]
@@ -378,12 +554,82 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(21);
 
         for _ in 0..30 {
-            let event = random_event(&mut rng);
+            let event = random_event(&[], &mut rng);
             assert!(
                 catalogue_ids.contains(&event.id),
                 "random_event returned unknown id '{}'",
                 event.id
             );
+        }
+    }
+
+    /// Story #116, scenario 1: the event pool is big enough to stay
+    /// surprising across several runs.
+    #[test]
+    fn the_catalogue_has_at_least_eight_events() {
+        let count = event_catalogue().len();
+        assert!(count >= 8, "only {count} events in the catalogue");
+    }
+
+    /// Story #116, scenario 2: an event already seen this run is not rolled
+    /// again while there are others left.
+    #[test]
+    fn a_seen_event_is_not_rolled_again() {
+        let mut seen: Vec<String> = Vec::new();
+        let mut rng = StdRng::seed_from_u64(5);
+
+        for _ in 0..event_catalogue().len() {
+            let event = random_event(&seen, &mut rng);
+            assert!(
+                !seen.contains(&event.id),
+                "'{}' was rolled again after being seen",
+                event.id
+            );
+            seen.push(event.id);
+        }
+    }
+
+    /// With every event seen, the roll falls back to the whole catalogue, so
+    /// an event node is never left empty.
+    #[test]
+    fn a_run_that_has_seen_everything_still_gets_an_event() {
+        let seen: Vec<String> = event_catalogue().into_iter().map(|e| e.id).collect();
+        let mut rng = StdRng::seed_from_u64(9);
+
+        let event = random_event(&seen, &mut rng);
+
+        assert!(seen.contains(&event.id));
+    }
+
+    /// The previews quote the numbers, so they have to agree with what the
+    /// choice actually does.
+    #[test]
+    fn previews_quote_the_credits_and_chances_they_resolve_to() {
+        for event in event_catalogue() {
+            for choice in &event.choices {
+                let mut quoted: Vec<i64> = Vec::new();
+                match &choice.outcome {
+                    EventOutcome::Certain(effect) => quoted.push(effect.credits.abs()),
+                    EventOutcome::Gamble {
+                        success_chance,
+                        success,
+                        failure,
+                    } => {
+                        quoted.push(i64::from(*success_chance));
+                        quoted.push(success.credits.abs());
+                        quoted.push(failure.credits.abs());
+                    }
+                }
+                for amount in quoted.into_iter().filter(|amount| *amount != 0) {
+                    assert!(
+                        choice.preview.contains(&amount.to_string()),
+                        "choice '{}' in event '{}' resolves to {} but its preview does not say so",
+                        choice.label,
+                        event.id,
+                        amount
+                    );
+                }
+            }
         }
     }
 }

@@ -261,6 +261,21 @@ Run the headless check with a built extension:
 godot --headless --path godot -s res://tests/run_stats_test.gd
 ```
 
+## Random events (story #116)
+
+`event_catalogue()` in `events.rs` holds every event an event node can show,
+eight at the moment. Each one has at least two choices, and each choice's
+preview quotes the credits and chances it resolves to, which a unit test
+checks.
+
+The run remembers which events it has shown, so one run does not repeat an
+event. `EventNode.roll_event()` asks `RunStateNode`, which rolls from the
+events the run has not seen yet and records the one it picked. When a run has
+seen every event, the roll picks from the whole catalogue again, so an event
+node always has something to show. The seen list lives on `RunState`, so a new
+run starts with the full pool. With no run behind it, as when the event scene
+is opened on its own, `EventNode` picks any event.
+
 ## Winning a contract (stories #89 and #23)
 
 A contract is won by beating the boss of its **final** zone. Every earlier
