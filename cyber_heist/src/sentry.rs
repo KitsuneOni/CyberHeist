@@ -738,6 +738,7 @@ mod tests {
                 SentryAction::new("Packet Sniff", 1),
                 SentryAction::with_ability("Firewall Up", 1, SentryAbility::Firewall(8)),
                 SentryAction::new("Trace Sweep", 2),
+                SentryAction::with_ability("Inject Malware", 1, SentryAbility::InjectMalware(1)),
                 SentryAction::new("Lockdown Probe", 3),
             ]
         );
@@ -778,6 +779,52 @@ mod tests {
                 "zone {zone}"
             );
             assert_eq!(firewall_up.ability.describe(), "blocks 8 damage");
+        }
+    }
+
+    /// Varied security card E4b: standard security plants a Malware junk card
+    /// in the player's discard pile, announced with the intent like any other
+    /// ability. `SentryNode` and `DrawPhase` do the planting; this is what
+    /// tells them how many.
+    #[test]
+    fn standard_security_injects_malware() {
+        for zone in 0..4 {
+            let standard = Sentry::standard_for_zone(zone);
+            let inject = standard
+                .script
+                .iter()
+                .find(|action| action.name == "Inject Malware")
+                .unwrap_or_else(|| panic!("zone {zone}: no Inject Malware"));
+
+            assert_eq!(
+                inject.ability,
+                SentryAbility::InjectMalware(1),
+                "zone {zone}"
+            );
+            assert_eq!(inject.ability.malware_planted(), 1);
+            assert_eq!(inject.ability.describe(), "adds 1 Malware to your discard");
+        }
+    }
+
+    /// Only Inject Malware plants anything, and a nonsense count plants
+    /// nothing rather than taking cards away.
+    #[test]
+    fn only_inject_malware_plants_malware() {
+        assert_eq!(SentryAbility::InjectMalware(2).malware_planted(), 2);
+        assert_eq!(SentryAbility::InjectMalware(-1).malware_planted(), 0);
+        assert_eq!(SentryAbility::InjectMalware(2).firewall_raised(), 0);
+        assert_eq!(SentryAbility::InjectMalware(2).energy_drain(), 0);
+        assert_eq!(SentryAbility::InjectMalware(2).integrity_restored(), 0);
+        assert!(!SentryAbility::InjectMalware(2).purges_corruption());
+
+        for other in [
+            SentryAbility::None,
+            SentryAbility::DrainEnergy(2),
+            SentryAbility::RestoreIntegrity(8),
+            SentryAbility::Purge,
+            SentryAbility::Firewall(8),
+        ] {
+            assert_eq!(other.malware_planted(), 0, "{other:?}");
         }
     }
 

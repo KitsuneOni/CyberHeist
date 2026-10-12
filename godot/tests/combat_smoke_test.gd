@@ -9,11 +9,11 @@
 # Exits non-zero on the first failed expectation, so it works as a CI gate.
 extends SceneTree
 
-const EXPECTED_NOISE := [89, 90, 92, 95, 96, 97, 99, 100]
-const ACTION_NAMES := ["Packet Sniff", "Firewall Up", "Trace Sweep", "Lockdown Probe"]
-const ACTION_NOISE := [1, 1, 2, 3]
+const EXPECTED_NOISE := [87, 88, 90, 91, 94, 95, 96, 98, 99, 100]
+const ACTION_NAMES := ["Packet Sniff", "Firewall Up", "Trace Sweep", "Inject Malware", "Lockdown Probe"]
+const ACTION_NOISE := [1, 1, 2, 1, 3]
 # What each action announces beside its noise, or "" when it only makes noise.
-const ACTION_ABILITY := ["", "blocks 8 damage", "", ""]
+const ACTION_ABILITY := ["", "blocks 8 damage", "", "adds 1 Malware to your discard", ""]
 const EXPECTED_FINE := 50
 
 # A script error inside _run kills the coroutine part way through, so the run
@@ -169,7 +169,7 @@ func _run() -> void:
 
 	# Use a real near-cap shared value so the turns cover differing actions,
 	# queue wrap and the final authored +3 clamped to an actual +1.
-	root.get_node("NoiseMeterGlobal").add_noise(88)
+	root.get_node("NoiseMeterGlobal").add_noise(86)
 	combat._refresh_status_labels()
 
 	# --- a turn per expected value, playing no cards ---

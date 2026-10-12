@@ -94,6 +94,31 @@ mod tests {
         assert_eq!(vpn.keywords, vec![crate::card_data::Keyword::Intangible(1)]);
     }
 
+    /// Varied security card E4b: the junk card security plants is a dead
+    /// card. It costs 1, makes no noise, does nothing and exhausts.
+    #[test]
+    fn malware_is_a_dead_card_that_exhausts() {
+        let text = std::fs::read_to_string("../godot/data/cursed_cards.ron")
+            .expect("could not find cursed_cards.ron");
+        let cursed = parse_cards(&text);
+        let malware = cursed.get("malware").expect("malware is authored");
+
+        assert_eq!(malware.name, "Malware");
+        assert_eq!(malware.cost, 1);
+        assert_eq!(malware.noise_generated, 0);
+        assert_eq!(malware.keywords, vec![crate::card_data::Keyword::Exhaust]);
+        assert!(malware.weak_side.is_none());
+    }
+
+    /// Rewards are offered from cards.ron alone, so keeping Malware out of it
+    /// means a card reward can never hand the player security's junk.
+    #[test]
+    fn malware_is_never_a_reward_card() {
+        let text =
+            std::fs::read_to_string("../godot/data/cards.ron").expect("could not find cards.ron");
+        assert!(!parse_cards(&text).contains_key("malware"));
+    }
+
     #[test]
     fn real_cards_file_parses() {
         let text = std::fs::read_to_string("../godot/data/cards.ron")
