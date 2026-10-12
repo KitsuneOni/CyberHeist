@@ -9,8 +9,9 @@
 # The contract, run summary, reward and balance all come from run state and
 # the player's balance rather than anything FlowCoordinator keeps in memory,
 # so the screen is the same whether it opens straight after the fight or is
-# rebuilt later from the run (Continue run, once saving lands). Only the final
-# boss's own payout line needs the fight to have just happened.
+# rebuilt later from the run, as Continue run does. The final boss's own payout
+# line comes from FlowCoordinator's pending reward, which the save keeps too;
+# a screen rebuilt without it leaves that line out.
 #
 # Navigation goes through FlowCoordinator like every other screen.
 extends Control
