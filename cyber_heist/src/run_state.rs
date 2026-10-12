@@ -422,6 +422,11 @@ impl RunState {
     /// active or the player has just been caught in it, and none otherwise.
     /// An active encounter must also be the node the map has under way, with
     /// that node's type and zone.
+    ///
+    /// A contract that has not started must still be at the hub with nothing
+    /// played on its map, since Change contract is offered then and would
+    /// throw that progress away. A contract reward is recorded exactly when
+    /// the contract is won, and it is what winning that contract pays.
     pub fn validate_restored(&self) -> Result<(), RunStateError> {
         self.contract_map
             .validate_restored()
@@ -441,6 +446,9 @@ impl RunState {
             });
         }
 
+        self.validate_restored_contract_start()?;
+        self.validate_restored_contract_reward()?;
+
         let expects_encounter = matches!(
             self.phase,
             ContractPhase::EncounterActive | ContractPhase::Caught
@@ -453,6 +461,44 @@ impl RunState {
             _ => Err(RunStateError::InconsistentRun(
                 "the phase and the encounter under way disagree",
             )),
+        }
+    }
+
+    /// Until an encounter is entered the player may still change contract,
+    /// which replaces the map, so a run claiming not to have started must
+    /// have nothing on its map to lose.
+    fn validate_restored_contract_start(&self) -> Result<(), RunStateError> {
+        if self.contract_started {
+            return Ok(());
+        }
+        if self.phase != ContractPhase::Hub || !self.contract_map.is_untouched() {
+            return Err(RunStateError::InconsistentRun(
+                "a contract with progress on it is marked as not started",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The reward is recorded by the transition into `ContractWon` and by
+    /// nothing else, so it is there exactly in that phase, and it is the
+    /// accepted offer's reward (0 on the default contract). A save claiming
+    /// any other amount would be paid nothing extra on Continue, but the
+    /// victory screen would show a payout that never happened.
+    fn validate_restored_contract_reward(&self) -> Result<(), RunStateError> {
+        let won = self.phase == ContractPhase::ContractWon;
+        match self.contract_reward {
+            None if won => Err(RunStateError::InconsistentRun(
+                "a won contract has no contract reward recorded",
+            )),
+            Some(_) if !won => Err(RunStateError::InconsistentRun(
+                "a contract reward is recorded for a contract not won",
+            )),
+            Some(reward) if reward != self.reward_for_winning() => {
+                Err(RunStateError::InconsistentRun(
+                    "the contract reward is not what the accepted contract pays",
+                ))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -1476,6 +1522,91 @@ mod tests {
             Ok(()),
             "a contract won, with its reward recorded"
         );
+
+        state.start_new_run(&mut StdRng::seed_from_u64(22)).unwrap();
+        assert_eq!(state.validate_restored(), Ok(()), "a new run after it");
+    }
+
+    /// A run that accepted an offer and then changed its mind is still one
+    /// the player can change again after Continue.
+    #[test]
+    fn a_changed_contract_before_any_encounter_passes_the_restore_check() {
+        let mut state = generated_run(23);
+        state.accept_contract_offer(2).expect("third offer");
+        state
+            .accept_contract_offer(0)
+            .expect("changed to the first");
+
+        assert_eq!(state.validate_restored(), Ok(()));
+        assert!(state.can_accept_contract_offer(), "Change contract stays");
+        assert!(
+            !state.needs_contract_choice(),
+            "the map shows straight away"
+        );
+    }
+
+    #[test]
+    fn a_contract_with_progress_marked_as_not_started_is_refused() {
+        let mut at_hub = generated_run(24);
+        at_hub.accept_contract_offer(1).expect("second offer");
+        enter_first_encounter(&mut at_hub);
+        at_hub
+            .complete_encounter()
+            .expect("the encounter is active");
+        at_hub.contract_started = false;
+
+        let mut in_encounter = generated_run(24);
+        enter_first_encounter(&mut in_encounter);
+        in_encounter.contract_started = false;
+
+        for state in [at_hub, in_encounter] {
+            assert!(
+                matches!(
+                    state.validate_restored(),
+                    Err(RunStateError::InconsistentRun(_))
+                ),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_won_contract_without_its_reward_recorded_is_refused() {
+        let mut state = generated_run(25);
+        state.accept_contract_offer(0).expect("first offer");
+        play_to_victory(&mut state);
+        state.contract_reward = None;
+
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
+    }
+
+    #[test]
+    fn a_contract_reward_recorded_before_the_contract_is_won_is_refused() {
+        let mut state = generated_run(26);
+        state.accept_contract_offer(0).expect("first offer");
+        state.contract_reward = Some(state.accepted_offer().unwrap().credit_reward);
+
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
+    }
+
+    #[test]
+    fn a_contract_reward_other_than_the_accepted_offers_is_refused() {
+        let mut state = generated_run(27);
+        state.accept_contract_offer(1).expect("second offer");
+        play_to_victory(&mut state);
+        let reward = state.contract_reward().expect("won");
+        state.contract_reward = Some(reward + 1);
+
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
     }
 
     #[test]

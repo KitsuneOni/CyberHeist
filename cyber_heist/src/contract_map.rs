@@ -797,6 +797,17 @@ impl ContractMap {
         Ok(())
     }
 
+    /// Whether nothing has been played on this map yet: the player is still
+    /// at its entry, with no encounter under way or completed, no branch
+    /// locked off and no zone past the first opened.
+    pub fn is_untouched(&self) -> bool {
+        self.current_node == self.start_node
+            && self.active_node.is_none()
+            && self.locked_nodes.is_empty()
+            && self.completed_nodes.is_empty()
+            && self.unlocked_zones == 0
+    }
+
     /// The encounter being played, if one is under way.
     pub fn active_node(&self) -> Option<NodeId> {
         self.active_node

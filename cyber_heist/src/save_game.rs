@@ -35,7 +35,11 @@ use crate::shop::ShopVisit;
 /// The layout of the save file. Bump it whenever a change to anything saved
 /// would stop an older file reading back correctly; older files are then
 /// refused, and the player starts fresh, rather than being misread.
-pub const SAVE_VERSION: u32 = 1;
+///
+/// Version 2 keeps a won contract's reward in the run state
+/// (`contract_reward`). Version 1 kept a claimed flag there and the payout
+/// beside the screen, so a won run saved by it cannot be read back.
+pub const SAVE_VERSION: u32 = 2;
 
 /// Everything written to the save file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,8 +62,9 @@ pub struct MetaProgress {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedRun {
     /// The contract lifecycle: phase, contract offers and the accepted one,
-    /// the map with its completed and locked nodes and open zones, the reward
-    /// recorded for a won contract, and the run's stats.
+    /// whether the contract has started (until it has, the player can still
+    /// change it), the map with its completed and locked nodes and open
+    /// zones, the reward recorded for a won contract, and the run's stats.
     pub run_state: RunState,
     /// Card ids the run's deck owns, starter cards and gains alike.
     pub deck: Vec<String>,
@@ -310,6 +315,25 @@ mod tests {
         run
     }
 
+    /// A run that accepted its third offer and beat that contract's final
+    /// boss, so it is on the victory screen with the reward recorded.
+    fn run_won() -> RunState {
+        let mut run = RunState::generated(&mut StdRng::seed_from_u64(9));
+        run.accept_contract_offer(2).expect("third offer");
+
+        // Bounded so a contract that cannot be won fails rather than hangs.
+        for _ in 0..run.progress().total {
+            let next = run.selectable_encounters()[0].id();
+            run.select_encounter(next)
+                .expect("the hub offers an encounter");
+            run.complete_encounter().expect("the encounter is active");
+            if run.phase() == ContractPhase::ContractWon {
+                return run;
+            }
+        }
+        panic!("the contract was not won");
+    }
+
     fn saved_run(run_state: RunState) -> SavedRun {
         SavedRun {
             run_state,
@@ -398,6 +422,103 @@ mod tests {
         assert_eq!(restored.node_progress(), original.node_progress());
     }
 
+    /// Continuing on the victory screen shows what the contract paid, which
+    /// run state recorded when it was won. The credits themselves are in the
+    /// saved balance, so nothing is paid again.
+    #[test]
+    fn a_won_contract_is_saved_with_the_reward_it_recorded() {
+        let won = run_won();
+        let reward = won.accepted_offer().unwrap().credit_reward;
+        let save = save_of(won);
+
+        let restored = SaveGame::from_json(&save.to_json().unwrap()).unwrap();
+
+        assert_eq!(restored, save);
+        assert_eq!(restored.run.run_state.phase(), ContractPhase::ContractWon);
+        assert_eq!(restored.run.run_state.contract_reward(), Some(reward));
+    }
+
+    /// Accepting an offer does not commit the run to it until an encounter
+    /// is entered, and that has to survive quitting and continuing.
+    #[test]
+    fn a_contract_not_yet_started_can_still_be_changed_after_continuing() {
+        let mut run = RunState::generated(&mut StdRng::seed_from_u64(13));
+        run.accept_contract_offer(2).expect("third offer");
+        run.accept_contract_offer(0).expect("changed to the first");
+
+        let mut restored = SaveGame::from_json(&save_of(run).to_json().unwrap())
+            .unwrap()
+            .run
+            .run_state;
+
+        assert_eq!(restored.accepted_offer_index(), Some(0));
+        assert!(!restored.needs_contract_choice(), "it goes to the map");
+        assert!(restored.can_accept_contract_offer(), "with Change contract");
+        restored
+            .accept_contract_offer(1)
+            .expect("the contract can be changed again");
+    }
+
+    #[test]
+    fn a_contract_under_way_still_cannot_be_changed_after_continuing() {
+        let mut restored = SaveGame::from_json(&save_of(run_played_partway()).to_json().unwrap())
+            .unwrap()
+            .run
+            .run_state;
+
+        assert!(!restored.can_accept_contract_offer());
+        assert!(restored.accept_contract_offer(0).is_err());
+    }
+
+    #[test]
+    fn a_won_save_claiming_a_different_reward_is_refused() {
+        let json = save_of(run_won()).to_json().unwrap();
+        let mut value: Value = serde_json::from_str(&json).unwrap();
+        let reward = value["run"]["run_state"]["contract_reward"]
+            .as_i64()
+            .unwrap();
+        value["run"]["run_state"]["contract_reward"] = json!(reward * 2);
+
+        assert!(matches!(
+            SaveGame::from_json(&value.to_string()),
+            Err(SaveError::InvalidRun(_))
+        ));
+    }
+
+    #[test]
+    fn a_won_save_without_its_reward_is_refused() {
+        let json = save_of(run_won()).to_json().unwrap();
+        let mut value: Value = serde_json::from_str(&json).unwrap();
+        value["run"]["run_state"]["contract_reward"] = Value::Null;
+
+        assert!(matches!(
+            SaveGame::from_json(&value.to_string()),
+            Err(SaveError::InvalidRun(_))
+        ));
+    }
+
+    /// Version 1 kept a claimed flag and a separate payout instead of the
+    /// recorded reward. Such a file is refused before its run is read.
+    #[test]
+    fn a_version_1_save_is_refused_as_incompatible() {
+        let json = save_of(run_won()).to_json().unwrap();
+        let mut value: Value = serde_json::from_str(&json).unwrap();
+        value["version"] = json!(1);
+        let run_state = value["run"]["run_state"].as_object_mut().unwrap();
+        run_state.remove("contract_reward");
+        run_state.insert("contract_reward_claimed".to_string(), json!(true));
+        value["run"]["screen"]["contract_payout"] =
+            json!({ "credits": 500, "balance_before": 100, "balance_after": 600 });
+
+        assert_eq!(
+            SaveGame::from_json(&value.to_string()),
+            Err(SaveError::IncompatibleVersion {
+                found: 1,
+                expected: SAVE_VERSION,
+            })
+        );
+    }
+
     #[test]
     fn a_save_records_its_version() {
         let value = save_json_value();
@@ -476,7 +597,7 @@ mod tests {
     /// enough to panic, so each is refused.
     #[test]
     fn a_save_describing_an_impossible_run_is_refused() {
-        let tamperings: [Tampering; 9] = [
+        let tamperings: [Tampering; 11] = [
             ("current node off the map", |value| {
                 value["run"]["run_state"]["contract_map"]["current_node"] = json!(999);
             }),
@@ -506,6 +627,13 @@ mod tests {
             }),
             ("an offer paying more than its shape", |value| {
                 value["run"]["run_state"]["contract_offers"][0]["credit_reward"] = json!(1_000_000);
+            }),
+            ("a contract reward on a contract not won", |value| {
+                value["run"]["run_state"]["contract_reward"] = json!(500);
+            }),
+            // Change contract would then replace a map with progress on it.
+            ("progress on a contract marked as not started", |value| {
+                value["run"]["run_state"]["contract_started"] = json!(false);
             }),
         ];
 
