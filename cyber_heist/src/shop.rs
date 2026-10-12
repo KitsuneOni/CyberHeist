@@ -1,38 +1,58 @@
 //! The dark web shop a player can visit between encounters (Trello #38).
 //!
-//! Covers two of its stories:
+//! Covers four of its stories:
 //!
 //! - **S1, shop stock and pricing (#104):** entering a shop node rolls a fixed
-//!   stock of [`STOCK_SIZE`] cards, each priced by its rarity. The stock stays
-//!   the same for the whole visit; a bought slot is marked sold rather than
-//!   removed, so the other cards keep their places.
-//! - **S2, buying with credits (#105):** [`ShopVisit::buy`] is the one
-//!   operation that spends credits. It checks the slot and the balance first
-//!   and only then takes the price and adds the card to the run's deck, so a
-//!   refused purchase changes nothing and credits can never go negative.
+//!   stock of [`STOCK_SIZE`] cards, each priced by its rarity. A bought slot is
+//!   marked sold rather than removed, so the other cards keep their places.
+//! - **S2, buying with credits (#105):** [`ShopVisit::buy`] checks the slot
+//!   and the balance first and only then takes the price and adds the card to
+//!   the run's deck, so a refused purchase changes nothing and credits can
+//!   never go negative.
+//! - **S3, Scrub Logs (#106):** [`ShopVisit::scrub_logs`] is a once-per-visit
+//!   service that lowers the shared noise meter by [`SCRUB_LOGS_NOISE_REDUCTION`]
+//!   for [`SCRUB_LOGS_PRICE`] credits. Once bought it is sold out for the rest
+//!   of the visit.
+//! - **S4, rerolling the stock (#107):** [`ShopVisit::reroll`] replaces every
+//!   card still for sale with a fresh roll. Sold slots stay sold. Each reroll
+//!   in a visit costs [`REROLL_PRICE_STEP`] more than the one before, starting
+//!   from [`REROLL_BASE_PRICE`].
 //!
-//! A [`ShopVisit`] is the state of one visit. Later shop stories extend it
-//! rather than restructure it:
+//! Every paid action spends credits through the one private [`charge`] step,
+//! and every check happens before it, so a refused action changes nothing and
+//! the balance can never be taken below zero.
 //!
-//! - A once-per-visit **Scrub Logs** service (#106) is another paid action on
-//!   the visit: a `scrub_logs_used` flag beside `slots`, and a method that
-//!   charges through [`charge`] before lowering noise.
-//! - A paid **reroll** of unsold stock (#107) charges through [`charge`] too,
-//!   then refills only the slots still for sale with [`roll_slots`]. Sold slots
-//!   stay sold, which is why a slot carries its own sold state instead of
-//!   being taken out of the stock.
-//!
-//! Plain Rust with no Godot types, so the rules stay unit testable per
-//! docs/rust-godot-setup.md. `ShopNode` in `shop_node.rs` is the Godot side.
+//! A [`ShopVisit`] is the state of one visit. Plain Rust with no Godot types,
+//! so the rules stay unit testable per docs/rust-godot-setup.md. `ShopNode` in
+//! `shop_node.rs` is the Godot side.
 
 use rand::Rng;
 use rand::seq::SliceRandom;
 
 use crate::card_data::Rarity;
+use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 
 /// How many cards a shop has for sale on each visit.
 pub const STOCK_SIZE: usize = 5;
+
+/// What Scrub Logs costs, in credits.
+///
+/// More than a common card, since 20 noise is two plays of a common recovery
+/// card such as VPN without spending a turn on them, but well short of a rare.
+pub const SCRUB_LOGS_PRICE: i64 = 60;
+
+/// How much noise Scrub Logs takes off the shared meter.
+pub const SCRUB_LOGS_NOISE_REDUCTION: i32 = 20;
+
+/// What the first reroll in a visit costs, in credits: one zone 1 combat's pay,
+/// half the price of the cheapest card.
+pub const REROLL_BASE_PRICE: i64 = 25;
+
+/// How much more each later reroll in the same visit costs than the one
+/// before it, so the second is 50, the third 75 and so on. Rerolling is a way
+/// to look for one card, not to see the whole pool for a flat fee.
+pub const REROLL_PRICE_STEP: i64 = 25;
 
 /// What a card of `rarity` costs in the shop, in credits.
 ///
@@ -87,16 +107,44 @@ pub struct Purchase {
     pub credits_left: i64,
 }
 
-/// Why a purchase was refused. A refusal never changes credits, the deck or
-/// the stock.
+/// A Scrub Logs service the player has just paid for, for the screen to report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrubbedLogs {
+    pub price: i64,
+    /// How much noise actually came off, which is less than
+    /// [`SCRUB_LOGS_NOISE_REDUCTION`] when the meter was already lower.
+    pub noise_removed: i32,
+    /// The noise left on the meter afterwards.
+    pub noise_left: i32,
+    /// The player's credits after paying.
+    pub credits_left: i64,
+}
+
+/// A reroll the player has just paid for, for the screen to report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reroll {
+    pub price: i64,
+    /// What the next reroll in this visit will cost.
+    pub next_price: i64,
+    /// The player's credits after paying.
+    pub credits_left: i64,
+}
+
+/// Why a shop action was refused. A refusal never changes credits, the deck,
+/// the noise meter or the stock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShopError {
     /// There is no slot with that index in this shop.
     NoSuchSlot,
-    /// The card in that slot has already been bought this visit.
+    /// The card in that slot, or the once-per-visit Scrub Logs service, has
+    /// already been bought this visit.
     AlreadySold,
     /// The player has fewer credits than the price.
     NotEnoughCredits,
+    /// Noise is already at zero, so Scrub Logs would take credits for nothing.
+    NothingToScrub,
+    /// Every card has been bought, so a reroll would take credits for nothing.
+    NothingToReroll,
 }
 
 impl ShopError {
@@ -106,6 +154,8 @@ impl ShopError {
             ShopError::NoSuchSlot => "no_such_slot",
             ShopError::AlreadySold => "already_sold",
             ShopError::NotEnoughCredits => "not_enough_credits",
+            ShopError::NothingToScrub => "nothing_to_scrub",
+            ShopError::NothingToReroll => "nothing_to_reroll",
         }
     }
 }
@@ -113,7 +163,12 @@ impl ShopError {
 /// Everything about one visit to a shop node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShopVisit {
+    /// The distinct cards this shop can stock, sorted by id so the same seed
+    /// always rolls the same cards. Kept for rerolls.
+    pool: Vec<(String, Rarity)>,
     slots: Vec<ShopSlot>,
+    scrub_logs_sold: bool,
+    rerolls: u32,
 }
 
 impl ShopVisit {
@@ -121,8 +176,13 @@ impl ShopVisit {
     /// priced by its rarity. A pool with fewer distinct cards than that gives
     /// a smaller stock rather than repeating a card.
     pub fn open(pool: &[(String, Rarity)], rng: &mut impl Rng) -> Self {
+        let pool = distinct_sorted(pool);
+        let slots = roll_slots(&pool, STOCK_SIZE, rng);
         Self {
-            slots: roll_slots(pool, STOCK_SIZE, rng),
+            pool,
+            slots,
+            scrub_logs_sold: false,
+            rerolls: 0,
         }
     }
 
@@ -166,6 +226,128 @@ impl ShopVisit {
             credits_left: *credits,
         })
     }
+
+    /// Whether Scrub Logs has already been bought this visit.
+    pub fn scrub_logs_sold(&self) -> bool {
+        self.scrub_logs_sold
+    }
+
+    /// Whether `credits` would cover Scrub Logs. False once it is sold out.
+    pub fn can_afford_scrub_logs(&self, credits: i64) -> bool {
+        !self.scrub_logs_sold && credits >= SCRUB_LOGS_PRICE
+    }
+
+    /// Buys the Scrub Logs service: takes [`SCRUB_LOGS_PRICE`] from `credits`
+    /// and lowers `noise` by [`SCRUB_LOGS_NOISE_REDUCTION`], clamped at zero by
+    /// the meter itself. It can be bought once per visit.
+    ///
+    /// Refused, with nothing changed, when it is sold out, when there is no
+    /// noise to scrub or when the player cannot afford it.
+    pub fn scrub_logs(
+        &mut self,
+        credits: &mut i64,
+        noise: &mut NoiseLevel,
+    ) -> Result<ScrubbedLogs, ShopError> {
+        if self.scrub_logs_sold {
+            return Err(ShopError::AlreadySold);
+        }
+        if noise.noise() <= 0 {
+            return Err(ShopError::NothingToScrub);
+        }
+
+        charge(credits, SCRUB_LOGS_PRICE)?;
+        let change = noise.add(-SCRUB_LOGS_NOISE_REDUCTION);
+        self.scrub_logs_sold = true;
+
+        Ok(ScrubbedLogs {
+            price: SCRUB_LOGS_PRICE,
+            noise_removed: -change,
+            noise_left: noise.noise(),
+            credits_left: *credits,
+        })
+    }
+
+    /// What the next reroll in this visit costs.
+    pub fn reroll_price(&self) -> i64 {
+        REROLL_BASE_PRICE + REROLL_PRICE_STEP * i64::from(self.rerolls)
+    }
+
+    /// Whether there is any card left for a reroll to replace.
+    pub fn has_unsold_stock(&self) -> bool {
+        self.slots.iter().any(|slot| !slot.sold)
+    }
+
+    /// Whether `credits` would cover the next reroll. False when every card
+    /// has been sold, since there is nothing left to reroll.
+    pub fn can_afford_reroll(&self, credits: i64) -> bool {
+        self.has_unsold_stock() && credits >= self.reroll_price()
+    }
+
+    /// Rerolls the stock: takes [`ShopVisit::reroll_price`] from `credits` and
+    /// replaces the card in every unsold slot with a fresh one, priced by its
+    /// rarity. Sold slots stay sold and every slot keeps its place, so the
+    /// stock is the same size afterwards. The next reroll then costs
+    /// [`REROLL_PRICE_STEP`] more.
+    ///
+    /// A replacement is always a card that was not in the stock before the
+    /// reroll, as long as the pool has enough of them. Only a pool too small
+    /// to fill every slot with a new card offers some of the old ones again.
+    /// The stock never holds the same card twice.
+    ///
+    /// Refused, with nothing changed, when every card has been sold or when
+    /// the player cannot afford it.
+    pub fn reroll(&mut self, credits: &mut i64, rng: &mut impl Rng) -> Result<Reroll, ShopError> {
+        if !self.has_unsold_stock() {
+            return Err(ShopError::NothingToReroll);
+        }
+
+        let price = self.reroll_price();
+        charge(credits, price)?;
+        self.refill_unsold_slots(rng);
+        self.rerolls += 1;
+
+        Ok(Reroll {
+            price,
+            next_price: self.reroll_price(),
+            credits_left: *credits,
+        })
+    }
+
+    /// Puts a fresh card in every unsold slot. New cards come first; the
+    /// cards being replaced are only offered again if the pool runs out of
+    /// new ones, which keeps every slot filled.
+    fn refill_unsold_slots(&mut self, rng: &mut impl Rng) {
+        let stocked: Vec<&str> = self.slots.iter().map(|slot| slot.card_id()).collect();
+        let mut fresh: Vec<(String, Rarity)> = self
+            .pool
+            .iter()
+            .filter(|(card_id, _)| !stocked.contains(&card_id.as_str()))
+            .cloned()
+            .collect();
+        fresh.shuffle(rng);
+
+        let mut replaced: Vec<(String, Rarity)> = self
+            .pool
+            .iter()
+            .filter(|(card_id, _)| {
+                self.slots
+                    .iter()
+                    .any(|slot| !slot.sold && slot.card_id == *card_id)
+            })
+            .cloned()
+            .collect();
+        replaced.shuffle(rng);
+
+        // `fresh` is drawn from the front and `replaced` only after it, so a
+        // pool with enough new cards never offers an old one again. There are
+        // always enough between them: `replaced` alone has one per unsold slot.
+        let mut replacements = fresh.into_iter().chain(replaced);
+        for slot in self.slots.iter_mut().filter(|slot| !slot.sold) {
+            if let Some((card_id, rarity)) = replacements.next() {
+                *slot = ShopSlot::for_sale(card_id, rarity);
+            }
+        }
+    }
 }
 
 /// Takes `price` from `credits`, or refuses without touching them when the
@@ -179,13 +361,20 @@ fn charge(credits: &mut i64, price: i64) -> Result<(), ShopError> {
     Ok(())
 }
 
-/// Picks up to `count` distinct cards from `pool` and prices each for sale.
+/// The pool with each card once, sorted by id. Sorted before any shuffling so
+/// the same seed always gives the same stock, whatever order the card
+/// database handed the pool over in.
+fn distinct_sorted(pool: &[(String, Rarity)]) -> Vec<(String, Rarity)> {
+    let mut distinct: Vec<(String, Rarity)> = pool.to_vec();
+    distinct.sort_by(|a, b| a.0.cmp(&b.0));
+    distinct.dedup_by(|a, b| a.0 == b.0);
+    distinct
+}
+
+/// Picks up to `count` cards from a pool of distinct cards and prices each
+/// for sale.
 fn roll_slots(pool: &[(String, Rarity)], count: usize, rng: &mut impl Rng) -> Vec<ShopSlot> {
     let mut candidates: Vec<(String, Rarity)> = pool.to_vec();
-    // Sorted before shuffling so the same seed always gives the same stock,
-    // whatever order the card database handed the pool over in.
-    candidates.sort_by(|a, b| a.0.cmp(&b.0));
-    candidates.dedup_by(|a, b| a.0 == b.0);
     candidates.shuffle(rng);
     candidates.truncate(count);
 
@@ -223,11 +412,14 @@ mod tests {
     /// buying scenarios that name a price.
     fn shop_selling(card_id: &str, price: i64) -> ShopVisit {
         ShopVisit {
+            pool: Vec::new(),
             slots: vec![ShopSlot {
                 card_id: card_id.to_string(),
                 price,
                 sold: false,
             }],
+            scrub_logs_sold: false,
+            rerolls: 0,
         }
     }
 
@@ -474,15 +666,343 @@ mod tests {
 
     #[test]
     fn every_refusal_has_a_distinct_code() {
-        let codes: HashSet<&str> = [
+        let refusals = [
             ShopError::NoSuchSlot,
             ShopError::AlreadySold,
             ShopError::NotEnoughCredits,
-        ]
-        .iter()
-        .map(|error| error.code())
-        .collect();
+            ShopError::NothingToScrub,
+            ShopError::NothingToReroll,
+        ];
+        let codes: HashSet<&str> = refusals.iter().map(|error| error.code()).collect();
 
-        assert_eq!(codes.len(), 3);
+        assert_eq!(codes.len(), refusals.len());
+    }
+
+    // --- S3: Scrub Logs ---------------------------------------------------
+
+    fn noise_at(noise: i32) -> NoiseLevel {
+        let mut level = NoiseLevel::new(100);
+        level.add(noise);
+        level
+    }
+
+    /// S3 scenario 1: at 70 noise with enough credits, Scrub Logs takes noise
+    /// down by 20 to 50 and credits down by its price.
+    #[test]
+    fn scrub_logs_lowers_noise_by_twenty_and_takes_its_price() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(8));
+        let mut noise = noise_at(70);
+        let mut credits = 100;
+
+        assert!(shop.can_afford_scrub_logs(credits));
+        let scrubbed = shop
+            .scrub_logs(&mut credits, &mut noise)
+            .expect("affordable");
+
+        assert_eq!(noise.noise(), 50);
+        assert_eq!(credits, 100 - SCRUB_LOGS_PRICE);
+        assert_eq!(
+            scrubbed,
+            ScrubbedLogs {
+                price: SCRUB_LOGS_PRICE,
+                noise_removed: 20,
+                noise_left: 50,
+                credits_left: 100 - SCRUB_LOGS_PRICE,
+            }
+        );
+        assert_eq!(SCRUB_LOGS_NOISE_REDUCTION, 20);
+    }
+
+    /// S3 scenario 2: once bought, Scrub Logs is sold out for the visit and a
+    /// second attempt charges nothing.
+    #[test]
+    fn scrub_logs_is_sold_out_after_one_use_per_visit() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(9));
+        let mut noise = noise_at(70);
+        let mut credits = 500;
+        shop.scrub_logs(&mut credits, &mut noise)
+            .expect("first use");
+
+        assert!(shop.scrub_logs_sold());
+        assert!(!shop.can_afford_scrub_logs(credits), "not on offer again");
+        assert_eq!(
+            shop.scrub_logs(&mut credits, &mut noise),
+            Err(ShopError::AlreadySold)
+        );
+        assert_eq!(credits, 500 - SCRUB_LOGS_PRICE, "charged only once");
+        assert_eq!(noise.noise(), 50, "lowered only once");
+    }
+
+    #[test]
+    fn scrub_logs_is_on_offer_again_at_the_next_shop() {
+        let mut first = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(10));
+        let mut noise = noise_at(70);
+        let mut credits = 500;
+        first
+            .scrub_logs(&mut credits, &mut noise)
+            .expect("first shop");
+
+        let mut next = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(11));
+
+        assert!(!next.scrub_logs_sold());
+        next.scrub_logs(&mut credits, &mut noise)
+            .expect("a new visit sells it again");
+        assert_eq!(noise.noise(), 30);
+    }
+
+    #[test]
+    fn scrub_logs_never_takes_noise_below_zero() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(12));
+        let mut noise = noise_at(8);
+        let mut credits = 100;
+
+        let scrubbed = shop
+            .scrub_logs(&mut credits, &mut noise)
+            .expect("affordable");
+
+        assert_eq!(noise.noise(), 0);
+        assert_eq!(scrubbed.noise_removed, 8);
+    }
+
+    #[test]
+    fn unaffordable_scrub_logs_changes_nothing() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(13));
+        let before = shop.clone();
+        let mut noise = noise_at(70);
+        let mut credits = SCRUB_LOGS_PRICE - 1;
+
+        assert!(!shop.can_afford_scrub_logs(credits));
+        assert_eq!(
+            shop.scrub_logs(&mut credits, &mut noise),
+            Err(ShopError::NotEnoughCredits)
+        );
+        assert_eq!(credits, SCRUB_LOGS_PRICE - 1);
+        assert_eq!(noise.noise(), 70);
+        assert_eq!(shop, before, "still on offer");
+
+        let mut debt = -30;
+        assert_eq!(
+            shop.scrub_logs(&mut debt, &mut noise),
+            Err(ShopError::NotEnoughCredits)
+        );
+        assert_eq!(debt, -30, "credits never go further negative");
+    }
+
+    #[test]
+    fn scrub_logs_will_not_charge_when_there_is_no_noise_to_scrub() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(14));
+        let mut noise = noise_at(0);
+        let mut credits = 100;
+
+        assert_eq!(
+            shop.scrub_logs(&mut credits, &mut noise),
+            Err(ShopError::NothingToScrub)
+        );
+        assert_eq!(credits, 100);
+        assert!(
+            !shop.scrub_logs_sold(),
+            "still on offer once there is noise"
+        );
+    }
+
+    // --- S4: rerolling the stock ------------------------------------------
+
+    /// S4 scenario 1: with 50 credits and a 25 credit reroll, rerolling
+    /// replaces every unsold card with a new one and leaves 25 credits.
+    #[test]
+    fn a_reroll_replaces_every_unsold_card_and_takes_its_price() {
+        // Enough cards that all five can be replaced by ones not yet stocked.
+        let mut large_pool = pool();
+        for extra in ["vpn", "proxy", "keylogger"] {
+            large_pool.push((extra.to_string(), Rarity::Common));
+        }
+        let mut shop = ShopVisit::open(&large_pool, &mut StdRng::seed_from_u64(15));
+        let before: Vec<String> = shop
+            .slots()
+            .iter()
+            .map(|slot| slot.card_id().to_string())
+            .collect();
+        let mut credits = 50;
+
+        assert_eq!(shop.reroll_price(), 25);
+        assert!(shop.can_afford_reroll(credits));
+        let reroll = shop
+            .reroll(&mut credits, &mut StdRng::seed_from_u64(16))
+            .expect("affordable");
+
+        assert_eq!(credits, 25);
+        assert_eq!(reroll.price, 25);
+        assert_eq!(reroll.credits_left, 25);
+        assert_eq!(shop.slots().len(), STOCK_SIZE);
+        for slot in shop.slots() {
+            assert!(
+                !before.iter().any(|old| old == slot.card_id()),
+                "{} was in the stock before the reroll",
+                slot.card_id()
+            );
+            assert!(!slot.is_sold());
+        }
+    }
+
+    #[test]
+    fn a_reroll_leaves_sold_slots_sold_and_in_place() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(17));
+        let mut credits = 1_000;
+        let mut deck = RunDeck::default();
+        shop.buy(1, &mut credits, &mut deck).expect("affordable");
+        shop.buy(3, &mut credits, &mut deck).expect("affordable");
+        let before = shop.slots().to_vec();
+
+        shop.reroll(&mut credits, &mut StdRng::seed_from_u64(18))
+            .expect("affordable");
+
+        for (index, (now, was)) in shop.slots().iter().zip(&before).enumerate() {
+            if was.is_sold() {
+                assert_eq!(now, was, "sold slot {index} changed");
+            } else {
+                assert!(!now.is_sold(), "slot {index} is for sale");
+                assert_ne!(
+                    now.card_id(),
+                    was.card_id(),
+                    "slot {index} was not rerolled"
+                );
+            }
+        }
+        assert_eq!(deck.card_ids().len(), 2, "a reroll adds no cards");
+    }
+
+    #[test]
+    fn rerolled_cards_are_priced_by_rarity_and_never_repeat() {
+        let pool = pool();
+        let rarity_of: HashMap<&str, Rarity> = pool
+            .iter()
+            .map(|(id, rarity)| (id.as_str(), *rarity))
+            .collect();
+        for seed in 0..50 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let mut shop = ShopVisit::open(&pool, &mut rng);
+            let mut credits = 1_000;
+            let mut deck = RunDeck::default();
+            shop.buy(0, &mut credits, &mut deck).expect("affordable");
+
+            shop.reroll(&mut credits, &mut rng).expect("affordable");
+
+            let stocked: HashSet<&str> = shop.slots().iter().map(|slot| slot.card_id()).collect();
+            assert_eq!(stocked.len(), STOCK_SIZE, "seed {seed}: repeated a card");
+            for slot in shop.slots() {
+                let rarity = rarity_of[slot.card_id()];
+                assert_eq!(slot.price(), price_for(rarity), "seed {seed}");
+            }
+        }
+    }
+
+    /// S4 scenario 2: each reroll in a visit costs more than the last.
+    #[test]
+    fn each_reroll_in_a_visit_costs_more_than_the_last() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(19));
+        let mut rng = StdRng::seed_from_u64(20);
+        let mut credits = 1_000;
+
+        let first = shop.reroll(&mut credits, &mut rng).expect("first");
+        let second = shop.reroll(&mut credits, &mut rng).expect("second");
+
+        assert_eq!(first.price, REROLL_BASE_PRICE);
+        assert_eq!(first.next_price, second.price);
+        assert!(second.price > first.price);
+        assert_eq!(second.price, REROLL_BASE_PRICE + REROLL_PRICE_STEP);
+        assert_eq!(
+            shop.reroll_price(),
+            REROLL_BASE_PRICE + 2 * REROLL_PRICE_STEP
+        );
+        assert_eq!(credits, 1_000 - first.price - second.price);
+    }
+
+    #[test]
+    fn the_next_shop_starts_rerolls_at_the_base_price_again() {
+        let mut first = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(21));
+        let mut credits = 1_000;
+        first
+            .reroll(&mut credits, &mut StdRng::seed_from_u64(22))
+            .expect("affordable");
+
+        let next = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(23));
+
+        assert_eq!(next.reroll_price(), REROLL_BASE_PRICE);
+    }
+
+    #[test]
+    fn an_unaffordable_reroll_changes_nothing() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(24));
+        let before = shop.clone();
+        let mut credits = REROLL_BASE_PRICE - 1;
+
+        assert!(!shop.can_afford_reroll(credits));
+        assert_eq!(
+            shop.reroll(&mut credits, &mut StdRng::seed_from_u64(25)),
+            Err(ShopError::NotEnoughCredits)
+        );
+        assert_eq!(credits, REROLL_BASE_PRICE - 1);
+        assert_eq!(shop, before, "same stock, same next price");
+    }
+
+    #[test]
+    fn a_sold_out_stock_cannot_be_rerolled() {
+        let mut shop = shop_selling("rootkit", 75);
+        let mut credits = 500;
+        let mut deck = RunDeck::default();
+        shop.buy(0, &mut credits, &mut deck).expect("affordable");
+
+        assert!(!shop.can_afford_reroll(credits));
+        assert_eq!(
+            shop.reroll(&mut credits, &mut StdRng::seed_from_u64(26)),
+            Err(ShopError::NothingToReroll)
+        );
+        assert_eq!(credits, 425, "nothing charged");
+    }
+
+    #[test]
+    fn a_pool_too_small_for_all_new_cards_still_fills_every_slot() {
+        // Six cards and a stock of five leaves one new card for a reroll, so
+        // the other four slots must take back cards from before.
+        let small: Vec<(String, Rarity)> = pool().into_iter().take(6).collect();
+        let mut shop = ShopVisit::open(&small, &mut StdRng::seed_from_u64(27));
+        let before: HashSet<String> = shop
+            .slots()
+            .iter()
+            .map(|slot| slot.card_id().to_string())
+            .collect();
+        let mut credits = 100;
+
+        shop.reroll(&mut credits, &mut StdRng::seed_from_u64(28))
+            .expect("affordable");
+
+        let after: HashSet<&str> = shop.slots().iter().map(|slot| slot.card_id()).collect();
+        assert_eq!(after.len(), STOCK_SIZE, "every slot is filled, no repeats");
+        let new_cards = after.iter().filter(|id| !before.contains(**id)).count();
+        assert_eq!(new_cards, 1, "the one card not in stock was brought in");
+    }
+
+    #[test]
+    fn services_and_cards_share_one_balance_that_never_goes_negative() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(29));
+        let mut rng = StdRng::seed_from_u64(30);
+        let mut noise = noise_at(90);
+        let mut credits = 160;
+        let mut deck = RunDeck::default();
+
+        shop.scrub_logs(&mut credits, &mut noise)
+            .expect("60 of 160");
+        shop.reroll(&mut credits, &mut rng).expect("25 of 100");
+        shop.reroll(&mut credits, &mut rng).expect("50 of 75");
+
+        assert_eq!(
+            shop.reroll(&mut credits, &mut rng),
+            Err(ShopError::NotEnoughCredits)
+        );
+        for slot in 0..shop.slots().len() {
+            assert!(shop.buy(slot, &mut credits, &mut deck).is_err());
+        }
+        assert_eq!(credits, 160 - SCRUB_LOGS_PRICE - 25 - 50);
+        assert!(credits >= 0);
     }
 }
