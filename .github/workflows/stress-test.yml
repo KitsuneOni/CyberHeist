@@ -140,5 +140,15 @@ jobs:
       - name: Run headless combat credits test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/combat_credits_test.gd
 
+      # Chooses a contract on the hub's offer picker (and changes it once)
+      # and plays it to its final boss: earlier bosses only open the next
+      # zone, the testing shortcut cannot skip the final one, beating it
+      # shows the victory screen, the offer's credit reward is paid once,
+      # counted up on screen and still shown when the screen is rebuilt from
+      # run state, the next contract is chosen on the picker again, and
+      # being caught pays nothing.
+      - name: Run headless contract victory and reward test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/contract_victory_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh
