@@ -4,7 +4,8 @@
 # would, through the screens, and checks what only a running game can show.
 #
 #   S1 Scenario: Shop generates stock on entry
-#     Given I select a shop node on the contract map
+#     Given I have accepted a contract on the offer picker
+#     And I select a shop node on the contract map
 #     When the shop screen opens
 #     Then I see 5 cards for sale with their full details
 #     And each card's price is set by its rarity
@@ -95,14 +96,37 @@ func _settle() -> void:
 	await process_frame
 
 
-# Walks the first zone of the current run until the map offers a shop, then
-# clicks it on the map like a player would. Encounters on the way are completed
-# without being played. Returns the shop's node id, or -1 if this run's first
-# zone had none.
+# A new run opens the hub on the offer picker with the map hidden, so accept
+# the offer it shows first, as a player must before the map appears. Returns
+# whether the hub is showing the map.
+func _accept_shown_offer(hub: Node) -> bool:
+	if not hub.is_choosing_contract():
+		return true
+	hub.offer_picker.accept_button.pressed.emit()
+	await _settle()
+	if hub.is_choosing_contract():
+		push_error(
+			"accepting the shown offer left the picker up: %s"
+			% hub.offer_picker.status_label.text
+		)
+		return false
+	return true
+
+
+# Accepts a contract on the offer picker, then walks the first zone of the run
+# until the map offers a shop and clicks it on the map like a player would.
+# Encounters on the way are completed without being played. Returns the shop's
+# node id, or -1 if this run's first zone had none.
 func _walk_to_first_zone_shop() -> int:
+	var first_hub := _screen()
+	if first_hub == null or first_hub.name != "ContractHub":
+		return -1
+	if not await _accept_shown_offer(first_hub):
+		return -1
+
 	for step in 10:
 		var hub := _screen()
-		if hub == null or hub.name != "ContractHub":
+		if hub == null or hub.name != "ContractHub" or hub.is_choosing_contract():
 			return -1
 
 		var options: Array = _flow.selectable_encounters()
@@ -373,7 +397,10 @@ func _run() -> void:
 	shop.get_node("%LeaveButton").pressed.emit()
 	await _settle()
 	var hub := _screen()
-	_check(hub != null and hub.name == "ContractHub", "Leave returns to the contract map")
+	_check(
+		hub != null and hub.name == "ContractHub" and not hub.is_choosing_contract(),
+		"Leave returns to the contract map, not the offer picker"
+	)
 	_check(_flow.run_snapshot().phase == "hub", "no encounter is active after leaving")
 	_check(_node_status(shop_id) == "completed", "the shop node is marked completed")
 
