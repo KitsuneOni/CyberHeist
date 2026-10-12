@@ -474,7 +474,7 @@ mod tests {
     /// enough to panic, so each is refused.
     #[test]
     fn a_save_describing_an_impossible_run_is_refused() {
-        let tamperings: [Tampering; 6] = [
+        let tamperings: [Tampering; 9] = [
             ("current node off the map", |value| {
                 value["run"]["run_state"]["contract_map"]["current_node"] = json!(999);
             }),
@@ -492,6 +492,18 @@ mod tests {
             }),
             ("negative noise", |value| {
                 value["run"]["noise"] = json!(-5);
+            }),
+            // Sizing a map this long overflows, so it must never reach the
+            // hub, which lists every offer.
+            ("an offer with endless zones", |value| {
+                value["run"]["run_state"]["contract_offers"][0]["shape"]["zone_length"] =
+                    json!(u64::MAX);
+            }),
+            ("an offer with more zones than there are bosses", |value| {
+                value["run"]["run_state"]["contract_offers"][0]["shape"]["zone_count"] = json!(99);
+            }),
+            ("an offer paying more than its shape", |value| {
+                value["run"]["run_state"]["contract_offers"][0]["credit_reward"] = json!(1_000_000);
             }),
         ];
 

@@ -406,7 +406,8 @@ impl RunState {
     /// handed a run that breaks them.
     ///
     /// The map must hold together on its own (`ContractMap::validate_restored`),
-    /// an accepted offer must be one of the offers, and the phase must agree
+    /// every offer must be one `generate_offers` could have rolled, an
+    /// accepted offer must be one of the offers, and the phase must agree
     /// with the active encounter: one is under way while an encounter is
     /// active or the player has just been caught in it, and none otherwise.
     /// An active encounter must also be the node the map has under way, with
@@ -416,6 +417,11 @@ impl RunState {
             .validate_restored()
             .map_err(RunStateError::ContractMap)?;
 
+        if !self.contract_offers.iter().all(ContractOffer::is_offerable) {
+            return Err(RunStateError::InconsistentRun(
+                "a contract offer has a shape or reward no contract is offered with",
+            ));
+        }
         if let Some(index) = self.accepted_offer_index
             && index >= self.contract_offers.len()
         {
