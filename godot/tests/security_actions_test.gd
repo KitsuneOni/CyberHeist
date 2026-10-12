@@ -21,8 +21,8 @@ const MALWARE_NAME := "Injected Malware"
 # the engine would then sit there until CI's job timeout. The watchdog turns
 # that into a fast failure instead.
 const WATCHDOG_SECONDS := 60.0
-# Contracts rolled looking for an ordinary combat node in the first column.
-const MAX_RUN_ROLLS := 20
+
+const CombatFixture := preload("res://tests/combat_fixture.gd")
 
 var _flow: Node
 var _combat: Node
@@ -259,7 +259,14 @@ func _check_malware_stays_behind() -> void:
 	if after != null and after.name == "CardReward":
 		_check(_flow.finish_reward().get("ok", false), "the card reward can be skipped")
 		await process_frame
-	var selected: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	# The fixture never replaces a run part-way through, so when the next
+	# column only offers elites or the boss, move to a fresh contract on
+	# purpose. The run's deck is what is being checked, and rolling the
+	# contract leaves it alone.
+	if not CombatFixture.offers_standard_security(_flow):
+		print("  note  the next column only offers elites or the boss; rolling a fresh contract")
+		CombatFixture.roll_new_contract(_flow)
+	var selected: Dictionary = CombatFixture.enter(_flow)
 	_check(selected.get("ok", false), "the next encounter can be entered")
 	await process_frame
 	await process_frame
@@ -268,20 +275,6 @@ func _check_malware_stays_behind() -> void:
 		_check(false, "the next encounter is a combat screen")
 		return
 	_check(_malware_in_encounter() == 0, "the next encounter's deck has no Malware")
-
-
-# Rolls fresh contracts until the first column offers an ordinary combat node,
-# then enters it. The shared combat fixture can land on an elite, and this
-# test is about standard security, so it picks the node itself.
-func _enter_standard_combat() -> bool:
-	for attempt in MAX_RUN_ROLLS:
-		for option: Dictionary in _flow.selectable_encounters():
-			if str(option.get("type", "")) == "combat":
-				return _flow.select_encounter(option.id).get("ok", false)
-		if not _flow.start_new_run().get("ok", false):
-			return false
-		await process_frame
-	return false
 
 
 func _run() -> void:
@@ -300,7 +293,10 @@ func _run() -> void:
 
 	_check(_flow.start_new_contract().get("ok", false), "New contract leaves the main menu")
 	await process_frame
-	_check(await _enter_standard_combat(), "a first-zone combat node can be entered")
+	# Nothing has been entered on this contract, so the fixture enters a real
+	# combat node, guarded by standard security, rolling contracts if it must.
+	var entered: Dictionary = CombatFixture.enter(_flow)
+	_check(entered.get("ok", false), "a first-zone combat node can be entered (%s)" % entered)
 	await process_frame
 	await process_frame
 
