@@ -112,6 +112,13 @@ func contract_offers() -> Array:
 	return _run_state.contract_offers()
 
 
+# Whether an encounter on the current contract has been entered, even one the
+# player was caught in and so never completed. From then on the run is
+# committed to the contract and accept_contract_offer refuses.
+func contract_started() -> bool:
+	return _run_state.contract_started()
+
+
 # Takes on the offer at `index` and rebuilds the contract map from it. Returns
 # {ok: true} or {ok: false, error}; a rejection changes nothing. Allowed only
 # from the hub before any encounter on the contract has been entered.

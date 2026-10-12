@@ -193,6 +193,15 @@ impl RunState {
             .and_then(|index| self.contract_offers.get(index))
     }
 
+    /// Whether an encounter on the current contract has been entered, whether
+    /// it was then completed or the player was caught in it. This is what
+    /// separates a contract nobody has touched from one whose first encounter
+    /// failed: neither has completed anything, but only the first can still
+    /// be swapped for another offer.
+    pub fn contract_started(&self) -> bool {
+        self.contract_started
+    }
+
     /// Takes on the offer at `index`, replacing the contract map with the one
     /// it describes.
     ///
@@ -692,6 +701,30 @@ mod tests {
         );
         assert_eq!(state, before);
         assert_eq!(state.accepted_offer_index(), Some(1));
+    }
+
+    /// Being caught in the first encounter completes nothing, so progress
+    /// alone cannot tell that contract apart from an untouched one.
+    #[test]
+    fn a_contract_counts_as_started_from_its_first_encounter_even_when_caught() {
+        let mut state = generated_run(5);
+        assert!(!state.contract_started(), "a new run has entered nothing");
+
+        enter_first_encounter(&mut state);
+        assert!(state.contract_started(), "entering an encounter starts it");
+
+        state.report_caught().expect("the encounter is active");
+        state.finish_caught().expect("the run was caught");
+        assert_eq!(state.progress().completed, 0);
+        assert!(
+            state.contract_started(),
+            "being caught does not undo the start"
+        );
+
+        state
+            .start_new_run(&mut StdRng::seed_from_u64(3))
+            .expect("a new run can start from the hub");
+        assert!(!state.contract_started(), "a new run starts afresh");
     }
 
     /// Getting caught does not complete anything, but the run has still

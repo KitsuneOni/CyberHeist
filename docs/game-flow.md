@@ -134,12 +134,18 @@ FlowCoordinator.accept_contract_offer(1)
 
 FlowCoordinator.accepted_contract_offer()
 # the accepted offer's fields plus "ok": true, or {"ok": false}
+
+FlowCoordinator.contract_started()
+# true once an encounter on this contract has been entered
 ```
 
-Offers are listed shortest first. Accepting only changes run state; it does
-not navigate. The selection or details screen decides where to go next, and
-the hub reads the new map when it is next shown. The accepted offer's
-`credit_reward` is kept on the run for the victory payout to read.
+Offers are listed shortest first. An offer can be swapped for another until
+`contract_started()` turns true, when the first encounter is entered. That
+stays true if the player is caught in it, even though nothing has been
+completed. Accepting only changes run state; it does not navigate. The
+selection or details screen decides where to go next, and the hub reads the
+new map when it is next shown. The accepted offer's `credit_reward` is kept on
+the run for the victory payout to read.
 
 Run the headless check with a built extension:
 
@@ -461,13 +467,15 @@ wrap and the final clamped +1. Both run in the stress workflow.
 
 The generated contract does not guarantee an opening combat option. The shared
 `tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle and only
-enters from the hub. On a contract with nothing completed yet it always enters a
-real combat node, rolling fresh contracts in place (`RunStateNode.start_new_run`)
-until column one offers one. Part-way through a contract it never replaces the
-run: it prefers a combat node, otherwise mounts combat content on an event or
-shop node, and fails if only elites or the boss are offered, since those field
-their own construct rather than WARDEN-7. These tests exercise combat, not the
-random encounter scene registry. The shared noise test moves to a fresh contract
+enters from the hub. On a contract where nothing has been entered yet
+(`contract_started()` is false) it always enters a real combat node, rolling
+fresh contracts in place (`RunStateNode.start_new_run`) until column one offers
+one. Once an encounter has been entered it never replaces the run, even after
+being caught in the first one, so re-entering is that encounter's retry. It
+prefers a combat node, otherwise mounts combat content on an event or shop
+node, and fails if only elites or the boss are offered, since those field their
+own construct rather than WARDEN-7. These tests exercise combat, not the random
+encounter scene registry. The shared noise test moves to a fresh contract
 explicitly when the column after its first encounter holds only elites.
 
 For the zone boss slice, run:
@@ -541,6 +549,7 @@ ordinary encounter progression still carries noise forward.
 FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
+FlowCoordinator.contract_started()
 FlowCoordinator.run_summary()
 FlowCoordinator.change_credits(amount: int)
 FlowCoordinator.add_card_to_deck(card_id: String)

@@ -16,11 +16,13 @@ const MAX_CONTRACTS := 60
 # coordinator and Rust lifecycle. Returns select_encounter's result, or
 # {ok: false, error} when there is nothing suitable to enter.
 #
-# On a contract with nothing completed yet, this always enters a real combat
-# node, rolling fresh contracts until column one offers one. Rolling replaces
-# the run's contract and stats, but not the deck, credits or meters.
+# On a contract where no encounter has been entered yet, this always enters a
+# real combat node, rolling fresh contracts until column one offers one.
+# Rolling replaces the run's contract and stats, but not the deck, credits or
+# meters.
 #
-# Part-way through a contract the run is never replaced. A real combat is
+# Once an encounter has been entered the run is never replaced, even if the
+# player was caught in it and so completed nothing. A real combat is
 # preferred; failing that, combat content is mounted on an event or shop node,
 # whose completion then pays and routes like that node type rather than a
 # combat. If the column only offers elites or the boss, this fails, and a
@@ -35,7 +37,7 @@ static func enter(flow: Node) -> Dictionary:
 		return _failure("the fixture enters from the hub, but the run is in phase '%s'" % phase)
 
 	var option := {}
-	if _contract_is_untouched(flow):
+	if not flow.contract_started():
 		option = find_combat(flow)
 		if option.is_empty():
 			return _failure("no contract offered a combat within %d rolls" % MAX_CONTRACTS)
@@ -78,10 +80,6 @@ static func offers_standard_security(flow: Node) -> bool:
 # changes.
 static func roll_new_contract(flow: Node) -> Dictionary:
 	return flow.get_node("RunState").start_new_run()
-
-
-static func _contract_is_untouched(flow: Node) -> bool:
-	return int(flow.contract_progress().get("completed", -1)) == 0
 
 
 static func _offered_combat(flow: Node) -> Dictionary:

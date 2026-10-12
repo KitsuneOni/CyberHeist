@@ -8,6 +8,10 @@
 #   - Earn credits for a win
 #   - No credits when caught
 #
+# It also checks that the shared combat fixture keeps a run whose first
+# encounter the player was caught in, since this is where that fixture's
+# misuse checks live.
+#
 # Run: godot --headless --path godot -s res://tests/combat_credits_test.gd
 extends SceneTree
 
@@ -260,4 +264,80 @@ func _run() -> void:
 			"the reward screen shows the payout (got '%s')" % reward.status_label.text
 		)
 
+	await _check_fixture_retries_a_failed_first_encounter()
 	_finish()
+
+
+# The shared fixture, not the payout. Being caught in a contract's first
+# encounter completes nothing, so the contract's progress reads the same as an
+# untouched one. The fixture has to treat it as started all the same: entering
+# again is the caught encounter's retry, never a reason to roll a new contract.
+# An event is used because it is the case that went wrong: the fixture rolls
+# for a real combat on an untouched contract, and a caught event leaves no
+# combat on offer.
+func _check_fixture_retries_a_failed_first_encounter() -> void:
+	var left_reward: Dictionary = _flow.finish_reward()
+	_check(left_reward.get("ok", false), "the reward screen returns to the hub")
+	var event := _roll_contract_offering("event")
+	_check(
+		not event.is_empty(),
+		"a contract offers an opening event within %d rolls" % CombatFixture.MAX_CONTRACTS
+	)
+	if event.is_empty():
+		return
+
+	# Something for a rolled run to lose: a new run starts its stats at zero.
+	_flow.change_credits(7)
+	var map_before := _map_layout()
+
+	var selected: Dictionary = _flow.select_encounter(event.id)
+	var caught: Dictionary = _flow.report_caught()
+	var finished: Dictionary = _flow.finish_caught()
+	_check(
+		selected.get("ok", false) and caught.get("ok", false) and finished.get("ok", false),
+		"the player is caught in the opening event and continues to the hub"
+	)
+	_check(
+		int(_flow.contract_progress()["completed"]) == 0 and _flow.contract_started(),
+		"the contract has completed nothing but counts as started"
+	)
+
+	var retried: Dictionary = CombatFixture.enter(_flow)
+	await process_frame
+	_check(retried.get("ok", false), "the fixture enters again after being caught")
+	var active = _flow.run_snapshot().get("active_encounter")
+	_check(
+		typeof(active) == TYPE_DICTIONARY and active.id == str(event.id) and active.type == "event",
+		"what it enters is the caught event's retry (got %s)" % [active]
+	)
+	_check(
+		_map_layout() == map_before and _credits_earned() == 7,
+		"the run is kept rather than replaced with a fresh contract"
+	)
+	var screen := _screen()
+	_check(
+		screen != null and screen.name == "CombatScreen",
+		"with combat content mounted on the event node"
+	)
+
+
+# The first node of `encounter_type` the hub offers, rolling fresh contracts
+# until one does. Empty if none turned up.
+func _roll_contract_offering(encounter_type: String) -> Dictionary:
+	for attempt in CombatFixture.MAX_CONTRACTS:
+		if not _flow.contract_started():
+			for option: Dictionary in _flow.selectable_encounters():
+				if option.type == encounter_type:
+					return option
+		var rolled: Dictionary = CombatFixture.roll_new_contract(_flow)
+		if not rolled.get("ok", false):
+			return {}
+	return {}
+
+
+# Every node's id and type, which a freshly rolled contract would not share.
+func _map_layout() -> Array:
+	var layout := []
+	for node: Dictionary in _flow.map_progress():
+		layout.append([int(node.id), node.type])
+	return layout
