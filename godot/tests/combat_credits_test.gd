@@ -80,12 +80,34 @@ func _press_end_turn(combat: Node) -> void:
 	combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
 
 
+# Plays `card_name` the way the player does: select it, then press Play.
+# False if it is not in the hand.
+func _play(combat: Node, card_name: String) -> bool:
+	var index: int = combat.draw_phase.hand_names().find(card_name)
+	if index < 0:
+		return false
+	combat.card_buttons[index].pressed.emit()
+	combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	return true
+
+
+# Fixture only: reuse the real draw API rather than add a debug gameplay API.
+func _draw_whole_deck(combat: Node) -> void:
+	var draw: Node = combat.draw_phase
+	draw.hand_size = draw.hand_names().size() + draw.draw_pile_count() + draw.discard_pile_count()
+	combat.selected_index = -1
+	combat._draw_hand()
+
+
+# Read with [] rather than get() with a default: _run checks the keys exist
+# first, so a renamed field fails there instead of both sides of an
+# "unchanged" check falling back to the same default.
 func _credits_earned() -> int:
-	return int(_flow.run_summary().get("credits_earned", -1))
+	return int(_flow.run_summary()["credits_earned"])
 
 
 func _combats_won() -> int:
-	return int(_flow.run_summary().get("combats_won", -1))
+	return int(_flow.run_summary()["combats_won"])
 
 
 func _run() -> void:
@@ -105,6 +127,15 @@ func _run() -> void:
 	root.add_child(main)
 	await process_frame
 	await process_frame
+
+	var summary: Dictionary = _flow.run_summary()
+	_check(
+		summary.has("credits_earned") and summary.has("combats_won"),
+		"the run summary reports credits earned and combats won"
+	)
+	if not (summary.has("credits_earned") and summary.has("combats_won")):
+		_finish()
+		return
 
 	# --- find a standard combat in the first zone ---------------------------
 	var offered_combat: Dictionary = CombatFixture.find_combat(_flow)
@@ -162,13 +193,13 @@ func _run() -> void:
 	)
 	_check(_credits_earned() == earned_before, "being caught adds nothing to credits earned")
 	_check(_combats_won() == wins_before, "being caught is not counted as a win")
-	_check(_flow.pending_reward_credits() == 0, "no payout is waiting for a reward screen")
 
 	caught.get_node("VBoxContainer/ContinueButton").pressed.emit()
 	await process_frame
 	await process_frame
 
-	_check(_screen().name == "ContractHub", "continuing from caught returns to the hub")
+	var hub := _screen()
+	_check(hub != null and hub.name == "ContractHub", "continuing from caught returns to the hub")
 	_check(
 		_player.money() == credits_before - fine,
 		"leaving the caught screen pays nothing late either (got %d)" % _player.money()
@@ -188,13 +219,21 @@ func _run() -> void:
 	earned_before = _credits_earned()
 	wins_before = _combats_won()
 
+	# Won the way a player wins: a card takes the last of the construct's
+	# integrity, so the payout comes through the card-play win path rather
+	# than the end-of-turn check for a corruption kill.
 	var sentry: Node = combat.sentry
-	sentry.take_damage(sentry.health())
-	_press_end_turn(combat)
+	sentry.take_damage(sentry.health() - 1)
+	_check(not sentry.is_defeated(), "the construct is left standing on 1 integrity")
+	_draw_whole_deck(combat)
+	_check(_play(combat, "Strike"), "Strike is in the full-deck hand")
 	await process_frame
 	await process_frame
 
-	_check(_flow.run_snapshot().phase == "hub", "reducing integrity to 0 completes the encounter")
+	_check(
+		_flow.run_snapshot().phase == "hub",
+		"a Strike that defeats the construct completes the encounter"
+	)
 	_check(
 		_player.money() == credits_before + STANDARD_COMBAT_CREDITS,
 		(

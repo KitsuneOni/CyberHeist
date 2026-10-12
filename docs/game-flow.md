@@ -506,8 +506,9 @@ godot --headless --path godot -s res://tests/combat_credits_test.gd
 It fills the meter during a first-zone standard combat and checks that being
 caught pays nothing: only the fine comes off, credits earned and wins are
 unchanged, and nothing is paid when leaving the caught screen. It then retries
-and wins the same fight to check that it pays 25 credits, counts them in the
-run's stats and shows them on the reward screen.
+the same fight and wins it by playing a Strike, the card-play win path, to check
+that it pays 25 credits, counts them in the run's stats and shows them on the
+reward screen.
 
 For cross-component sharing and the authored social threshold (50), run:
 
