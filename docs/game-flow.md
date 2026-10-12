@@ -692,7 +692,7 @@ regained as `integrity_restored` in the turn outcome. There is nothing for the
 combat screen to apply, unlike a lockdown; it only says so.
 
 Payouts live in `cyber_heist/src/encounter_reward.rs`. `FlowCoordinator`
-reads `RunStateNode.active_encounter_reward()` before completing an encounter
+reads `RunStateNode.active_encounter_completion()` before completing an encounter
 (completing clears it), and adds the credits to `PlayerStateGlobal` only once
 the transition succeeds. The card reward screen then reads the guarantee
 through `offer_card_reward()` and shows the payout with

@@ -89,8 +89,9 @@ func _show_reward(reward: Dictionary) -> void:
 		reward_label.text = "This contract carried no reward."
 
 	# The final boss pays its own encounter credits on top, the same as any
-	# boss. Those were already in the balance before the count starts. Only
-	# known straight after the fight, so a rebuilt screen leaves this line out.
+	# boss. Those were already in the balance before the count starts. Continue
+	# restores them from the save's pending reward, so a resumed screen shows
+	# this line too. It is left out only when no pending reward is held.
 	var boss_credits: int = FlowCoordinator.pending_reward_credits()
 	if boss_credits > 0:
 		reward_label.text += "\nFinal boss payout: +%d credits" % boss_credits
