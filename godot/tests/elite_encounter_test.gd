@@ -19,6 +19,8 @@ const REINFORCE := 8
 # many attempts failing would mean elites had stopped being generated at all.
 const MAX_CONTRACTS := 60
 
+const CombatFixture := preload("res://tests/combat_fixture.gd")
+
 var _flow: Node
 var _combat: Node
 var _noise_meter: Node
@@ -59,23 +61,12 @@ func _finish() -> void:
 		quit(1)
 
 
-# Fixture only: replaces the coordinator's run with a freshly generated
-# contract, the same thing a new launch does. The node keeps its name, so the
-# SentryNode on a combat screen still finds it at /root/FlowCoordinator/RunState.
-func _roll_new_contract() -> void:
-	var old: Node = _flow.get_node("RunState")
-	_flow.remove_child(old)
-	old.free()
-	var fresh: Node = ClassDB.instantiate("RunStateNode")
-	fresh.name = "RunState"
-	_flow.add_child(fresh)
-	_flow._run_state = fresh
-
-
 # Walks the first zone of the current contract, stepping into an elite the
 # moment one is offered. Encounters on the way are completed without being
 # played; a standard combat cleared on the way records what it paid.
-# Returns the elite's id once it is entered, or -1 if the zone had none.
+# Returns the elite's id once it is entered, or -1 if the zone had none or
+# offered it before any standard combat to measure against. On -1 the run is
+# left at the hub, so a fresh contract can be rolled in its place.
 func _walk_to_first_zone_elite() -> int:
 	for step in 10:
 		var options: Array = _flow.selectable_encounters()
@@ -97,6 +88,10 @@ func _walk_to_first_zone_elite() -> int:
 			return -1
 
 		var kind := str(chosen.get("type", ""))
+		# Entering it now would leave nothing to compare its payout against.
+		if kind == "elite" and _standard_combat_credits < 0:
+			return -1
+
 		var selected: Dictionary = _flow.select_encounter(chosen.id)
 		if not selected.get("ok", false):
 			push_error("could not enter %s: %s" % [chosen, selected])
@@ -144,14 +139,13 @@ func _run() -> void:
 	var elite_id := -1
 	for attempt in MAX_CONTRACTS:
 		if attempt > 0:
-			_roll_new_contract()
+			var rolled: Dictionary = CombatFixture.roll_new_contract(_flow)
+			if not rolled.get("ok", false):
+				_check(false, "a fresh contract can be rolled (%s)" % rolled.get("error", ""))
+				break
 		elite_id = await _walk_to_first_zone_elite()
-		if elite_id >= 0 and _standard_combat_credits >= 0:
-			break
 		if elite_id >= 0:
-			# Found the elite before any standard combat to measure against.
-			# Back out to a fresh contract rather than playing this one.
-			elite_id = -1
+			break
 	_check(elite_id >= 0, "a first-zone route offers an elite within %d contracts" % MAX_CONTRACTS)
 	_check(_standard_combat_credits > 0, "a standard combat pays credits to compare against")
 	if elite_id < 0:

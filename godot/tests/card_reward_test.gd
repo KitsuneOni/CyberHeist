@@ -104,15 +104,18 @@ func _run() -> void:
 	)
 
 	# --- acceptance test 2, part two: it is there in the next encounter ---
-	var expected_type: String = ""
+	# Nothing on this contract has been completed, so the fixture enters a real
+	# combat node rather than mounting combat on an event or shop.
 	var selected: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
 	_check(selected.get("ok", false), "the next encounter loads through the real flow")
 	if not selected.get("ok", false):
 		_finish()
 		return
 	var active = _flow.run_snapshot().get("active_encounter")
+	var entered_type: String = ""
 	if typeof(active) == TYPE_DICTIONARY:
-		expected_type = active.get("type", "")
+		entered_type = active.get("type", "")
+	_check(entered_type == "combat", "the encounter is a combat node (got '%s')" % entered_type)
 	await process_frame
 	await process_frame
 
@@ -143,34 +146,30 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 
+	# Elite rewards, with their guaranteed Rare, are covered by
+	# elite_encounter_test.gd.
 	var after := _screen()
-	if expected_type == "combat" or expected_type == "elite":
+	_check(
+		after != null and after.name == "CardReward",
+		"clearing a combat encounter offers a card reward"
+	)
+	if after != null and after.name == "CardReward":
 		_check(
-			after != null and after.name == "CardReward",
-			"clearing a %s encounter offers a card reward" % expected_type
+			after.offered.size() > 0,
+			"the reward screen presents cards to choose from"
 		)
-		if after != null and after.name == "CardReward":
-			_check(
-				after.offered.size() > 0,
-				"the reward screen presents cards to choose from"
-			)
-			# Skipping is allowed and must still return to the hub.
-			after._on_skip_pressed()
-			await process_frame
-			await process_frame
-			var hub := _screen()
-			_check(
-				hub != null and hub.name == "ContractHub",
-				"skipping the reward returns to the contract hub"
-			)
-			_check(
-				_flow.run_deck_size() == owned_before + 1,
-				"skipping a reward adds nothing to the deck"
-			)
-	else:
+		# Skipping is allowed and must still return to the hub.
+		after._on_skip_pressed()
+		await process_frame
+		await process_frame
+		var hub := _screen()
 		_check(
-			after != null and after.name == "ContractHub",
-			"clearing a %s encounter goes straight back to the hub" % expected_type
+			hub != null and hub.name == "ContractHub",
+			"skipping the reward returns to the contract hub"
+		)
+		_check(
+			_flow.run_deck_size() == owned_before + 1,
+			"skipping a reward adds nothing to the deck"
 		)
 
 	_finish()
