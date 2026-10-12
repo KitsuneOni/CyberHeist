@@ -9,9 +9,11 @@
 # Exits non-zero on the first failed expectation, so it works as a CI gate.
 extends SceneTree
 
-const EXPECTED_NOISE := [91, 93, 96, 97, 99, 100]
-const ACTION_NAMES := ["Packet Sniff", "Trace Sweep", "Lockdown Probe"]
-const ACTION_NOISE := [1, 2, 3]
+const EXPECTED_NOISE := [89, 90, 92, 95, 96, 97, 99, 100]
+const ACTION_NAMES := ["Packet Sniff", "Firewall Up", "Trace Sweep", "Lockdown Probe"]
+const ACTION_NOISE := [1, 1, 2, 3]
+# What each action announces beside its noise, or "" when it only makes noise.
+const ACTION_ABILITY := ["", "blocks 8 damage", "", ""]
 const EXPECTED_FINE := 50
 
 # A script error inside _run kills the coroutine part way through, so the run
@@ -76,15 +78,21 @@ func _on_turn_resolved(outcome: Dictionary) -> void:
 func _check_intent(combat: Node, action_index: int) -> void:
 	var action: String = ACTION_NAMES[action_index]
 	var noise: int = ACTION_NOISE[action_index]
+	var ability: String = ACTION_ABILITY[action_index]
 	_check(
 		combat.sentry.queued_action_name() == action
-		and combat.sentry.queued_action_noise() == noise,
+		and combat.sentry.queued_action_noise() == noise
+		and combat.sentry.queued_action_ability() == ability,
 		"the queued action is %s with authored noise %d" % [action, noise]
 	)
+	var expected_intent := "WARDEN-7 will: %s (+%d noise)" % [action, noise]
+	if ability != "":
+		expected_intent = "WARDEN-7 will: %s (+%d noise, %s)" % [action, noise, ability]
 	_check(
 		combat.intent_label.is_visible_in_tree()
-		and combat.intent_label.text == "WARDEN-7 will: %s (+%d noise)" % [action, noise],
-		"the visible intent includes the next action name and value"
+		and combat.intent_label.text == expected_intent,
+		"the visible intent includes the next action name and value (got '%s')"
+		% combat.intent_label.text
 	)
 
 
@@ -159,12 +167,12 @@ func _run() -> void:
 	_check_intent(combat, 0)
 	_check(combat.draw_phase.hand_names().size() == 3, "intent is shown with a playable hand")
 
-	# Use a real near-cap shared value so six turns cover differing actions,
+	# Use a real near-cap shared value so the turns cover differing actions,
 	# queue wrap and the final authored +3 clamped to an actual +1.
-	root.get_node("NoiseMeterGlobal").add_noise(90)
+	root.get_node("NoiseMeterGlobal").add_noise(88)
 	combat._refresh_status_labels()
 
-	# --- six turns, playing no cards ---
+	# --- a turn per expected value, playing no cards ---
 	var detected_on_turn := -1
 	for i in EXPECTED_NOISE.size():
 		var turn_number := i + 1

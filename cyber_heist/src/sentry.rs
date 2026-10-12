@@ -699,11 +699,11 @@ mod tests {
         assert_eq!(sentry.perform_queued_action(), None);
     }
 
-    /// The zone-1 construct is WARDEN-7 exactly as it was authored. The
-    /// smoke test drives a real encounter against these numbers, so a change
-    /// here is a change to what CI is checking.
+    /// The zone-1 construct is WARDEN-7 as authored. The smoke test drives a
+    /// real encounter against these numbers, so a change here is a change to
+    /// what CI is checking.
     #[test]
-    fn the_first_zone_still_fields_warden_7_unchanged() {
+    fn the_first_zone_fields_warden_7_as_authored() {
         let standard = Sentry::standard_for_zone(0);
 
         assert_eq!(standard.name(), "WARDEN-7");
@@ -714,11 +714,71 @@ mod tests {
             standard.script,
             vec![
                 SentryAction::new("Packet Sniff", 1),
+                SentryAction::with_ability("Firewall Up", 1, SentryAbility::Firewall(8)),
                 SentryAction::new("Trace Sweep", 2),
                 SentryAction::new("Lockdown Probe", 3),
             ]
         );
         assert_eq!(standard, Sentry::warden_7());
+    }
+
+    /// Runs `sentry`'s turns until `name` is the queued action, then performs
+    /// it and applies its firewall the way `SentryNode` does. Panics if the
+    /// script never reaches it.
+    fn perform_until(sentry: &mut Sentry, name: &str) -> SentryAction {
+        for _ in 0..sentry.script.len() {
+            if sentry.queued_action().map(|action| action.name.as_str()) == Some(name) {
+                let action = sentry.perform_queued_action().unwrap();
+                sentry.raise_firewall(action.ability.firewall_raised());
+                return action;
+            }
+            sentry.perform_queued_action();
+        }
+        panic!("{} never queues {name}", sentry.name());
+    }
+
+    /// Varied security card E4a: standard security shields itself, so even an
+    /// ordinary node asks the player for more than outlasting the meter. It
+    /// is the same firewall BLACK MONOLITH raises, smaller, in every zone.
+    #[test]
+    fn standard_security_raises_a_firewall_up_for_8() {
+        for zone in 0..4 {
+            let standard = Sentry::standard_for_zone(zone);
+            let firewall_up = standard
+                .script
+                .iter()
+                .find(|action| action.name == "Firewall Up")
+                .unwrap_or_else(|| panic!("zone {zone}: no Firewall Up"));
+
+            assert_eq!(
+                firewall_up.ability,
+                SentryAbility::Firewall(8),
+                "zone {zone}"
+            );
+            assert_eq!(firewall_up.ability.describe(), "blocks 8 damage");
+        }
+    }
+
+    /// Varied security card E4a, scenarios 1 and 2 as the card words them:
+    /// Firewall Up leaves 8 standing, and a 10-damage hit spends all 8 before
+    /// taking 2 off 30 integrity.
+    #[test]
+    fn firewall_up_is_used_up_before_integrity() {
+        let mut warden = Sentry::warden_7();
+        warden.take_damage(warden.max_health() - 30);
+
+        perform_until(&mut warden, "Firewall Up");
+        assert_eq!(warden.firewall(), 8);
+
+        assert_eq!(
+            warden.take_blockable_damage(10),
+            BlockedDamage {
+                blocked: 8,
+                dealt: 2
+            }
+        );
+        assert_eq!(warden.firewall(), 0);
+        assert_eq!(warden.health(), 28);
     }
 
     /// Card scenario 1: the boss generates more noise than the standard
@@ -771,24 +831,36 @@ mod tests {
     }
 
     /// Card scenario 1: at least one ability the player will not have met in
-    /// a regular encounter.
+    /// a regular encounter. Standard security has abilities of its own since
+    /// E4, so the boss's signature is checked against them rather than
+    /// against standard security doing nothing at all.
     #[test]
-    fn only_a_boss_carries_an_ability() {
+    fn a_boss_carries_one_signature_ability_standard_security_does_not() {
         for zone in 0..4 {
-            assert!(
-                !Sentry::standard_for_zone(zone).has_ability(),
-                "zone {zone}: standard security only makes noise"
-            );
-
             let boss = Sentry::boss_for_zone(zone);
             assert!(boss.has_ability(), "zone {zone}: the boss needs an ability");
 
-            let abilities = boss
+            let abilities: Vec<SentryAbility> = boss
                 .script
                 .iter()
-                .filter(|action| !action.ability.is_none())
-                .count();
-            assert_eq!(abilities, 1, "zone {zone}: one signature ability per boss");
+                .map(|action| action.ability)
+                .filter(|ability| !ability.is_none())
+                .collect();
+            assert_eq!(
+                abilities.len(),
+                1,
+                "zone {zone}: one signature ability per boss"
+            );
+
+            let standard = Sentry::standard_for_zone(zone);
+            assert!(
+                standard
+                    .script
+                    .iter()
+                    .all(|action| action.ability != abilities[0]),
+                "zone {zone}: {:?} is already met on an ordinary node",
+                abilities[0]
+            );
         }
     }
 
@@ -882,24 +954,32 @@ mod tests {
         assert_eq!(elite.max_health(), 60);
         assert!(elite.max_health() > Sentry::warden_7().max_health());
         assert!(elite.has_ability());
-        assert!(!Sentry::warden_7().has_ability());
+    }
+
+    /// Every ability in `sentry`'s script, in order, leaving out plain noise.
+    fn abilities(sentry: &Sentry) -> Vec<SentryAbility> {
+        sentry
+            .script
+            .iter()
+            .map(|action| action.ability)
+            .filter(|ability| !ability.is_none())
+            .collect()
     }
 
     /// Elite card scenario 1: an ability standard constructs do not have.
-    /// Reinforce is the elite's alone; the boss has its lockdown instead.
+    /// Reinforce is the elite's alone; the boss has its lockdown instead. An
+    /// elite is built from the standard script, so it also runs everything
+    /// standard security does (E4).
     #[test]
     fn only_an_elite_reinforces() {
         for zone in 0..4 {
-            let abilities: Vec<SentryAbility> = Sentry::elite_for_zone(zone)
-                .script
-                .iter()
-                .map(|action| action.ability)
-                .filter(|ability| !ability.is_none())
-                .collect();
+            let mut expected = abilities(&Sentry::standard_for_zone(zone));
+            expected.push(SentryAbility::RestoreIntegrity(8 + 4 * zone as i32));
             assert_eq!(
-                abilities,
-                vec![SentryAbility::RestoreIntegrity(8 + 4 * zone as i32)],
-                "zone {zone}: one Reinforce, restoring more the deeper the zone"
+                abilities(&Sentry::elite_for_zone(zone)),
+                expected,
+                "zone {zone}: the standard abilities, then one Reinforce restoring \
+                 more the deeper the zone"
             );
 
             for other in [Sentry::standard_for_zone(zone), Sentry::boss_for_zone(zone)] {
