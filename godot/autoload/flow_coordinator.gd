@@ -1,6 +1,7 @@
 extends Node
 
 const MAIN_MENU_SCENE_PATH := "res://scenes/main_menu.tscn"
+const SETTINGS_SCENE_PATH := "res://scenes/settings_menu.tscn"
 const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const PLACEHOLDER_ENCOUNTER_SCENE_PATH := "res://scenes/placeholder_encounter.tscn"
@@ -67,6 +68,19 @@ func continue_run() -> Dictionary:
 	return _show_current_run_screen()
 
 
+# Opens the settings screen from the main menu. Settings only change audio and
+# display preferences, never the run, so this makes no run state transition.
+func open_settings() -> Dictionary:
+	return _show_screen(SETTINGS_SCENE_PATH)
+
+
+# Leaves the settings screen. It is only reachable from the main menu for now,
+# so this always goes back there; the pause menu story (G2) can return to the
+# run instead once settings open from inside one.
+func close_settings() -> Dictionary:
+	return _show_screen(MAIN_MENU_SCENE_PATH)
+
+
 # Shows whichever screen the run's current phase belongs on: the map, the
 # active encounter, or the caught screen.
 func _show_current_run_screen() -> Dictionary:
@@ -74,7 +88,13 @@ func _show_current_run_screen() -> Dictionary:
 	if not destination.get("ok", false):
 		return destination
 
-	var prepared := _prepare_screen(destination["path"])
+	return _show_screen(destination["path"])
+
+
+# Swaps to a screen that needs no run state transition first, such as the
+# main menu or settings.
+func _show_screen(path: String) -> Dictionary:
+	var prepared := _prepare_screen(path)
 	if not prepared.get("ok", false):
 		return prepared
 
