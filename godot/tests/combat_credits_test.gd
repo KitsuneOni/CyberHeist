@@ -15,10 +15,7 @@ extends SceneTree
 # "Elite encounters" in docs/game-flow.md.
 const STANDARD_COMBAT_CREDITS := 25
 
-# Generated contracts do not guarantee a combat among the first options, so
-# the test rolls fresh ones until one is offered. A run of failures this long
-# would mean combats had stopped being generated at all.
-const MAX_CONTRACTS := 60
+const CombatFixture := preload("res://tests/combat_fixture.gd")
 
 var _flow: Node
 var _noise_meter: Node
@@ -55,27 +52,6 @@ func _finish() -> void:
 		for failure in _failures:
 			print("  - %s" % failure)
 		quit(1)
-
-
-# Fixture only: replaces the coordinator's run with a freshly generated
-# contract, the same thing a new launch does. The node keeps its name, so the
-# SentryNode on a combat screen still finds it at /root/FlowCoordinator/RunState.
-func _roll_new_contract() -> void:
-	var old: Node = _flow.get_node("RunState")
-	_flow.remove_child(old)
-	old.free()
-	var fresh: Node = ClassDB.instantiate("RunStateNode")
-	fresh.name = "RunState"
-	_flow.add_child(fresh)
-	_flow._run_state = fresh
-
-
-# The id of a standard combat the hub is offering right now, or -1 if none.
-func _offered_combat_id() -> int:
-	for option: Dictionary in _flow.selectable_encounters():
-		if str(option.get("type", "")) == "combat":
-			return int(option.id)
-	return -1
 
 
 func _is_offered(node_id: int) -> bool:
@@ -131,16 +107,15 @@ func _run() -> void:
 	await process_frame
 
 	# --- find a standard combat in the first zone ---------------------------
-	var combat_id := _offered_combat_id()
-	for attempt in MAX_CONTRACTS:
-		if combat_id >= 0:
-			break
-		_roll_new_contract()
-		combat_id = _offered_combat_id()
-	_check(combat_id >= 0, "a contract offers a standard combat within %d rolls" % MAX_CONTRACTS)
-	if combat_id < 0:
+	var offered_combat: Dictionary = CombatFixture.find_combat(_flow)
+	_check(
+		not offered_combat.is_empty(),
+		"a contract offers a standard combat within %d rolls" % CombatFixture.MAX_CONTRACTS
+	)
+	if offered_combat.is_empty():
 		_finish()
 		return
+	var combat_id: int = offered_combat.id
 
 	# --- scenario: no credits when caught -----------------------------------
 	var combat: Node = await _enter_combat(combat_id)
@@ -148,6 +123,16 @@ func _run() -> void:
 	if combat == null:
 		_finish()
 		return
+
+	# The shared fixture is only for entering from the hub. Misused during an
+	# encounter it has to fail rather than swap the run out from under the
+	# screen that is playing it.
+	var misused: Dictionary = CombatFixture.enter(_flow)
+	_check(not misused.get("ok", false), "the fixture refuses to enter during an encounter")
+	_check(
+		_screen() == combat and _flow.run_snapshot().phase == "encounter_active",
+		"and leaves the combat in progress untouched"
+	)
 
 	var credits_before: int = _player.money()
 	var earned_before := _credits_earned()

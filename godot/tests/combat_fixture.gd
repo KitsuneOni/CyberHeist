@@ -1,33 +1,50 @@
 extends RefCounted
 
-# Encounter types whose combat screen fields a construct with first-zone
-# standard security, which is what the fixture's callers are written against.
-# An elite or boss node loads its own construct (BASTION, a zone boss), with a
-# different script, integrity and resistance, so it is never a stand-in.
+# Encounter types whose node fields first-zone standard security (WARDEN-7),
+# which is what the fixture's callers are written against. An elite or boss
+# node loads its own construct (BASTION, a zone boss), with a different script,
+# integrity and resistance, so it is never a stand-in.
 const STANDARD_SECURITY_TYPES := ["combat", "event", "shop"]
 
-# Generated contracts are random, so a column can occasionally offer nothing
-# but elites. A run of this many such contracts would mean standard nodes had
-# stopped being generated at all.
+# Generated contracts are random, so column one does not always offer a combat.
+# A run of this many contracts without one would mean combats had stopped being
+# generated at all.
 const MAX_CONTRACTS := 60
 
 
-# Generated contracts do not guarantee a combat option (even in column one).
-# Keep the actual Rust lifecycle and coordinator, but mount combat content for
-# the chosen node when it would otherwise load an event or shop scene.
-# This tests combat, not random graph generation or the scene registry.
+# Enters a fight against standard security from the hub, through the real
+# coordinator and Rust lifecycle. Returns select_encounter's result, or
+# {ok: false, error} when there is nothing suitable to enter.
 #
-# The choice is deterministic for a given set of options, so a caller that
-# re-enters after being caught gets the same node back as its retry.
+# On a contract with nothing completed yet, this always enters a real combat
+# node, rolling fresh contracts until column one offers one. Rolling replaces
+# the run's contract and stats, but not the deck, credits or meters.
+#
+# Part-way through a contract the run is never replaced. A real combat is
+# preferred; failing that, combat content is mounted on an event or shop node,
+# whose completion then pays and routes like that node type rather than a
+# combat. If the column only offers elites or the boss, this fails, and a
+# caller that is happy to move to a fresh contract does so with
+# roll_new_contract.
+#
+# The choice depends only on what is on offer, and after being caught the
+# failed node is the only one offered, so re-entering is always its retry.
 static func enter(flow: Node) -> Dictionary:
-	var option := _standard_security_option(flow)
-	for attempt in MAX_CONTRACTS:
-		if not option.is_empty():
-			break
-		_roll_new_contract(flow)
+	var phase: String = flow.run_snapshot().get("phase", "")
+	if phase != "hub":
+		return _failure("the fixture enters from the hub, but the run is in phase '%s'" % phase)
+
+	var option := {}
+	if _contract_is_untouched(flow):
+		option = find_combat(flow)
+		if option.is_empty():
+			return _failure("no contract offered a combat within %d rolls" % MAX_CONTRACTS)
+	else:
 		option = _standard_security_option(flow)
-	if option.is_empty():
-		return {"ok": false, "error": "fixture needs a reachable standard-security encounter"}
+		if option.is_empty():
+			return _failure(
+				"the next column only offers elites or the boss; call roll_new_contract first"
+			)
 
 	var result: Dictionary = flow.select_encounter(option.id)
 	if result.get("ok", false) and option.type != "combat":
@@ -35,27 +52,56 @@ static func enter(flow: Node) -> Dictionary:
 	return result
 
 
-# A real combat if one is offered, otherwise the first event or shop, or an
-# empty dictionary when only elites or a boss are on offer.
-static func _standard_security_option(flow: Node) -> Dictionary:
-	var options: Array = flow.selectable_encounters()
-	for candidate: Dictionary in options:
+# A combat node the hub offers on this contract or, failing that, on one of
+# the fresh contracts rolled in its place. Empty if none turned up, or if the
+# run could not be rolled because an encounter is active.
+static func find_combat(flow: Node) -> Dictionary:
+	for attempt in MAX_CONTRACTS:
+		var combat := _offered_combat(flow)
+		if not combat.is_empty():
+			return combat
+		var rolled := roll_new_contract(flow)
+		if not rolled.get("ok", false):
+			return {}
+	return _offered_combat(flow)
+
+
+# Whether the hub offers a node enter() can use part-way through a contract.
+static func offers_standard_security(flow: Node) -> bool:
+	return not _standard_security_option(flow).is_empty()
+
+
+# Replaces the run with a freshly generated contract, offers and stats, in
+# place, through RunStateNode.start_new_run. The deck, credits and meters are
+# left alone, unlike FlowCoordinator.start_new_run, and no screen changes.
+# Returns {ok: true}, or {ok: false, error} during an encounter, when nothing
+# changes.
+static func roll_new_contract(flow: Node) -> Dictionary:
+	return flow.get_node("RunState").start_new_run()
+
+
+static func _contract_is_untouched(flow: Node) -> bool:
+	return int(flow.contract_progress().get("completed", -1)) == 0
+
+
+static func _offered_combat(flow: Node) -> Dictionary:
+	for candidate: Dictionary in flow.selectable_encounters():
 		if candidate.type == "combat":
 			return candidate
-	for candidate: Dictionary in options:
+	return {}
+
+
+# A real combat if one is offered, otherwise the first event or shop, or an
+# empty dictionary when only elites or the boss are on offer.
+static func _standard_security_option(flow: Node) -> Dictionary:
+	var combat := _offered_combat(flow)
+	if not combat.is_empty():
+		return combat
+	for candidate: Dictionary in flow.selectable_encounters():
 		if candidate.type in STANDARD_SECURITY_TYPES:
 			return candidate
 	return {}
 
 
-# Replaces the coordinator's run with a freshly generated contract, the same
-# thing a new launch does. Only reached when the current contract offers no
-# usable node, which is before the caller has entered anything on it.
-static func _roll_new_contract(flow: Node) -> void:
-	var old: Node = flow.get_node("RunState")
-	flow.remove_child(old)
-	old.free()
-	var fresh: Node = ClassDB.instantiate("RunStateNode")
-	fresh.name = "RunState"
-	flow.add_child(fresh)
-	flow._run_state = fresh
+static func _failure(error: String) -> Dictionary:
+	return {"ok": false, "error": error}

@@ -460,12 +460,15 @@ The smoke test seeds 90/100, then checks six announced actions through queue
 wrap and the final clamped +1. Both run in the stress workflow.
 
 The generated contract does not guarantee an opening combat option. The shared
-`tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle, selecting
-a reachable node and mounting combat content if that node has another type.
-These tests exercise combat, not the random encounter scene registry. It only
-picks a combat, event or shop node, because an elite or boss node fields its
-own construct rather than WARDEN-7. If a contract offers nothing else, it rolls
-a fresh one.
+`tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle and only
+enters from the hub. On a contract with nothing completed yet it always enters a
+real combat node, rolling fresh contracts in place (`RunStateNode.start_new_run`)
+until column one offers one. Part-way through a contract it never replaces the
+run: it prefers a combat node, otherwise mounts combat content on an event or
+shop node, and fails if only elites or the boss are offered, since those field
+their own construct rather than WARDEN-7. These tests exercise combat, not the
+random encounter scene registry. The shared noise test moves to a fresh contract
+explicitly when the column after its first encounter holds only elites.
 
 For the zone boss slice, run:
 

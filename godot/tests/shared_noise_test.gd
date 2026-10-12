@@ -2,6 +2,8 @@
 # authored social cards without changing the game's starter deck or Rust code.
 extends SceneTree
 
+const CombatFixture := preload("res://tests/combat_fixture.gd")
+
 var _flow: Node
 var _combat: Node
 var _meter: Node
@@ -92,7 +94,7 @@ func _run() -> void:
 	_meter = root.get_node("NoiseMeterGlobal")
 	root.add_child(load("res://scenes/main.tscn").instantiate())
 	await process_frame
-	var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	var entered: Dictionary = CombatFixture.enter(_flow)
 	_check(entered.get("ok", false), "combat loads with the real lifecycle")
 	if not entered.get("ok", false):
 		_finish()
@@ -172,7 +174,15 @@ func _run() -> void:
 
 	var completed: Dictionary = _flow.complete_active_encounter()
 	_check(completed.ok and _meter.noise == 65, "normal completion preserves shared noise on the hub")
-	entered = preload("res://tests/combat_fixture.gd").enter(_flow)
+	# The fixture never replaces a run part-way through, and about one contract
+	# in twenty follows this node with nothing but elites, whose resistance
+	# would throw off the noise below. Move to a fresh contract on purpose
+	# then: the meter lives on NoiseMeterGlobal, which rolling the run leaves
+	# alone, so the carry-over checked next still means the same thing.
+	if not CombatFixture.offers_standard_security(_flow):
+		print("  note  the next column only offers elites or the boss; rolling a fresh contract")
+		CombatFixture.roll_new_contract(_flow)
+	entered = CombatFixture.enter(_flow)
 	_check(entered.get("ok", false), "the next normal encounter loads")
 	if not entered.get("ok", false):
 		_finish()
@@ -197,7 +207,7 @@ func _run() -> void:
 	_check(_flow.run_snapshot().phase == "caught" and _meter.noise == 100, "loud card catches at the global cap")
 	var finished: Dictionary = _flow.finish_caught()
 	_check(finished.ok and _meter.noise == 0, "finishing caught resets shared noise to zero on the hub")
-	entered = preload("res://tests/combat_fixture.gd").enter(_flow)
+	entered = CombatFixture.enter(_flow)
 	_check(entered.get("ok", false), "the failed encounter remains retryable")
 	if entered.get("ok", false):
 		_combat = _screen()
