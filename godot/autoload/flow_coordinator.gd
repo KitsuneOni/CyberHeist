@@ -135,11 +135,16 @@ func accepted_contract_offer() -> Dictionary:
 # screen, starts here, so the reward for winning is always an offer's reward.
 #
 # An authored run has no offers and goes straight to the map, and so does a
-# run that has already started on its contract.
+# run that has already accepted an offer or started on its contract.
 func needs_contract_choice() -> bool:
-	if not _run_state.can_accept_contract_offer():
-		return false
-	return not accepted_contract_offer().get("ok", false)
+	return _run_state.needs_contract_choice()
+
+
+# Whether the player can still swap the accepted contract for another offer:
+# true at the hub until any encounter on the contract has been entered. The
+# hub shows Change contract on the map while it is.
+func can_change_contract() -> bool:
+	return _run_state.can_accept_contract_offer()
 
 
 func select_encounter(node_id: int) -> Dictionary:

@@ -7,6 +7,8 @@
 # A new run first asks the player which contract to take (the offer picker),
 # and only shows the map once one is accepted. The accepted offer is what
 # winning the contract pays, so every run the player starts carries a reward.
+# Until they enter an encounter, Change contract on the map brings the picker
+# back so they can swap to another offer.
 extends Control
 
 const CHOOSING_TITLE := "Choose your contract"
@@ -28,6 +30,8 @@ const MAX_LAYOUT_FRAMES := 8
 @onready var map_scroll: ScrollContainer = $Page/VBox/MapPanel/MapMargin/MapContent/MapScroll
 @onready var map_graph: Control = $Page/VBox/MapPanel/MapMargin/MapContent/MapScroll/MapGraph
 @onready var instruction_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/InstructionLabel
+@onready
+var change_contract_button: Button = $Page/VBox/MapPanel/MapMargin/MapContent/ChangeContractButton
 @onready var key_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/KeyLabel
 @onready var status_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/StatusLabel
 
@@ -37,6 +41,7 @@ func _ready() -> void:
 	# comes from the graph rather than a separate row of buttons.
 	map_graph.node_selected.connect(_on_encounter_selected)
 	offer_picker.offer_chosen.connect(_on_offer_chosen)
+	change_contract_button.pressed.connect(_on_change_contract_pressed)
 	_build_key()
 
 	if FlowCoordinator.needs_contract_choice():
@@ -55,7 +60,10 @@ func _show_contract_choice() -> void:
 	subtitle_label.text = CHOOSING_SUBTITLE
 	map_panel.visible = false
 	offer_picker.visible = true
-	offer_picker.show_offers(FlowCoordinator.contract_offers())
+	# Opens on the contract already accepted, if any, so Accept straight away
+	# keeps it.
+	var accepted_index := int(FlowCoordinator.accepted_contract_offer().get("index", -1))
+	offer_picker.show_offers(FlowCoordinator.contract_offers(), accepted_index)
 
 
 func _show_map() -> void:
@@ -63,6 +71,7 @@ func _show_map() -> void:
 	subtitle_label.text = MAP_SUBTITLE
 	offer_picker.visible = false
 	map_panel.visible = true
+	change_contract_button.visible = FlowCoordinator.can_change_contract()
 	_show_available_encounters()
 
 
@@ -173,6 +182,13 @@ func _on_offer_chosen(index: int) -> void:
 		)
 		return
 	_show_map()
+
+
+func _on_change_contract_pressed() -> void:
+	if not FlowCoordinator.can_change_contract():
+		change_contract_button.visible = false
+		return
+	_show_contract_choice()
 
 
 func _on_encounter_selected(node_id: int) -> void:

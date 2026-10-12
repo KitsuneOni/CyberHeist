@@ -120,7 +120,8 @@ accepted. Accepting an offer by index replaces the run's contract map with the
 one that offer describes. It is rejected, without changing anything, for an
 index that is not on offer, outside the hub, or once any encounter on the
 current contract has been entered (completed or caught). Before then the
-player may change their mind and accept a different offer.
+player may change their mind and accept a different offer, which the hub's
+**Change contract** button lets them do (below).
 
 A run is still created on a playable **default contract** (three zones of two
 columns), so headless tests that drive `FlowCoordinator` directly keep working
@@ -135,8 +136,8 @@ contract first (below).
 While `FlowCoordinator.needs_contract_choice()` is true, the contract hub shows
 the **offer picker** (`scenes/contract_offer_picker.tscn`) in place of the map.
 That is a new run at the hub with offers on the table, none accepted yet and
-no encounter entered (`RunState::can_accept_contract_offer`), which covers
-both **New contract** on the main menu and **Take another contract** on the
+no encounter entered (`RunState::needs_contract_choice`), which covers both
+**New contract** on the main menu and **Take another contract** on the
 victory screen. An authored run has no offers, so it goes straight to the map.
 
 The picker follows sheet 3 of the UI mockups: one offer on screen at a time
@@ -145,6 +146,13 @@ cycle through the offers, and **Accept contract** commits. The picker only
 reports the chosen offer's `index`; the hub accepts it through
 `accept_contract_offer` and then draws the new map. A rejected acceptance
 leaves the picker up with the reason under the offer.
+
+Accepting does not lock the contract in. Until the player enters an encounter,
+the map shows **Change contract** (`FlowCoordinator.can_change_contract()`,
+which is `RunState::can_accept_contract_offer`). It brings the picker back,
+opened on the contract already accepted, so Accept keeps it and choosing
+another offer swaps the run onto that one. The button disappears once the
+first encounter is entered and the run is committed to its contract.
 
 ```gdscript
 FlowCoordinator.contract_offers()
@@ -156,6 +164,9 @@ FlowCoordinator.accept_contract_offer(1)
 
 FlowCoordinator.needs_contract_choice()
 # true while the hub should show the offer picker instead of the map
+
+FlowCoordinator.can_change_contract()
+# true while the map should offer Change contract
 
 FlowCoordinator.accepted_contract_offer()
 # the accepted offer's fields plus "ok": true, or {"ok": false}
@@ -321,9 +332,10 @@ godot --headless --path godot -s res://tests/contract_victory_test.gd
 
 It checks a new run opens on the offer picker with the map hidden, cycles the
 picker to the offer with the most zones and accepts it there, as a player
-would, then walks it without playing the ordinary encounters, checking that
-each earlier boss returns to the map with the next zone open and no contract
-reward. On the final boss it checks the Complete Encounter
+would, then uses Change contract to swap to another offer and back. It walks
+the contract without playing the ordinary encounters, checking that each
+earlier boss returns to the map with the next zone open, no contract reward
+and Change contract gone. On the final boss it checks the Complete Encounter
 shortcut is disabled and does nothing when pressed anyway, then beats the boss
 with a real Trojan play. It checks the victory screen replaces the map, the
 offer's reward is paid exactly once and counted as earned, the balance counts
@@ -637,6 +649,7 @@ FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
 FlowCoordinator.needs_contract_choice()
+FlowCoordinator.can_change_contract()
 FlowCoordinator.active_encounter_wins_contract()
 FlowCoordinator.contract_reward()
 FlowCoordinator.run_summary()

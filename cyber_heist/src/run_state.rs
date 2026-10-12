@@ -206,12 +206,20 @@ impl RunState {
 
     /// Whether `accept_contract_offer` would currently take an offer: the run
     /// is at the hub, has offers to choose from and has not yet entered an
-    /// encounter on its contract. The hub reads this to decide whether to show
-    /// the contract choice before the map.
+    /// encounter on its contract. That stays true after an offer is accepted,
+    /// because the player can still change their mind until they enter an
+    /// encounter; the hub reads it to offer Change contract on the map.
     pub fn can_accept_contract_offer(&self) -> bool {
         self.phase == ContractPhase::Hub
             && !self.contract_started
             && !self.contract_offers.is_empty()
+    }
+
+    /// Whether the hub should ask for a contract before showing the map: an
+    /// offer could be accepted and none has been yet. False for an authored
+    /// run, which has no offers, and once the contract is under way.
+    pub fn needs_contract_choice(&self) -> bool {
+        self.can_accept_contract_offer() && self.accepted_offer_index.is_none()
     }
 
     /// Takes on the offer at `index`, replacing the contract map with the one
@@ -783,7 +791,7 @@ mod tests {
         assert_eq!(state, before);
     }
 
-    /// The hub asks this before drawing the map, so it has to agree with
+    /// The hub asks this to offer Change contract, so it has to agree with
     /// what `accept_contract_offer` actually allows.
     #[test]
     fn an_offer_can_be_accepted_only_before_the_contract_starts() {
@@ -795,6 +803,10 @@ mod tests {
             state.can_accept_contract_offer(),
             "the player can still change their mind before entering anything"
         );
+        state
+            .accept_contract_offer(0)
+            .expect("so changing to another offer is accepted");
+        assert_eq!(state.accepted_offer_index(), Some(0));
 
         enter_first_encounter(&mut state);
         assert!(
@@ -821,7 +833,44 @@ mod tests {
 
     #[test]
     fn an_authored_run_has_no_offer_choice_to_make() {
-        assert!(!RunState::new().can_accept_contract_offer());
+        let state = RunState::new();
+
+        assert!(!state.can_accept_contract_offer());
+        assert!(!state.needs_contract_choice());
+    }
+
+    /// The hub opens on the offer picker exactly while this is true, so a
+    /// new run asks once and then shows the map.
+    #[test]
+    fn a_contract_choice_is_needed_only_until_an_offer_is_accepted() {
+        let mut state = generated_run(5);
+        assert!(
+            state.needs_contract_choice(),
+            "a new run asks for a contract"
+        );
+
+        state.accept_contract_offer(2).expect("third offer");
+        assert!(
+            !state.needs_contract_choice(),
+            "an accepted offer goes straight to the map"
+        );
+        assert!(
+            state.can_accept_contract_offer(),
+            "while Change contract stays available"
+        );
+    }
+
+    #[test]
+    fn no_contract_choice_is_needed_once_the_default_contract_is_under_way() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        assert!(!state.needs_contract_choice(), "not during an encounter");
+
+        state.complete_encounter().expect("the encounter is active");
+        assert!(
+            !state.needs_contract_choice(),
+            "the run is committed to the contract it started on"
+        );
     }
 
     #[test]
@@ -1307,6 +1356,10 @@ mod tests {
             state.contract_reward(),
             None,
             "the new contract has not been won yet"
+        );
+        assert!(
+            state.needs_contract_choice(),
+            "the new run asks for a contract"
         );
         state
             .accept_contract_offer(0)

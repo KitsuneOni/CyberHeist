@@ -6,6 +6,7 @@
 #
 #   - a new run asks for a contract before showing the map, and accepting one
 #     through the picker puts the run on that contract,
+#   - Change contract brings the picker back until an encounter is entered,
 #   - an earlier zone's boss only opens the next zone and returns to the map,
 #   - the Complete Encounter testing shortcut cannot skip the final boss,
 #   - beating the final zone's boss in real combat shows the victory screen
@@ -158,6 +159,36 @@ func _check_offer_picker(hub: Node, context: String) -> void:
 	_check(picker.shown_position == 0, "%s cycles back to the first offer" % context)
 
 
+# Change contract on the map brings the picker back on the accepted offer, and
+# choosing another offer there swaps the run onto it. Ends back on the map with
+# `offer` accepted again.
+func _check_change_contract(hub: Node, offer: Dictionary) -> void:
+	var offer_index := int(offer.get("index", -1))
+	_check(hub.change_contract_button.visible, "the map offers Change contract before any encounter")
+
+	hub.change_contract_button.pressed.emit()
+	_check(hub.is_choosing_contract(), "Change contract brings the offer picker back")
+	_check(not hub.map_panel.visible, "the map is hidden while choosing again")
+	_check(
+		int(hub.offer_picker.shown_offer().get("index", -1)) == offer_index,
+		"the picker opens on the contract already accepted"
+	)
+
+	var other_index := 0 if offer_index != 0 else 1
+	_check(_choose_offer_on_picker(hub, other_index), "another offer can be chosen instead")
+	_check(
+		int(_flow.accepted_contract_offer().get("index", -1)) == other_index,
+		"changing contract puts the run on the new offer"
+	)
+
+	hub.change_contract_button.pressed.emit()
+	_check(_choose_offer_on_picker(hub, offer_index), "the original offer can be chosen again")
+	_check(
+		int(_flow.accepted_contract_offer().get("index", -1)) == offer_index,
+		"the run is back on the original offer"
+	)
+
+
 # Enters the next node on the route, preferring a boss so the walk is short.
 # Returns the selection result, which carries the node's type and zone.
 func _enter_next_encounter() -> Dictionary:
@@ -244,6 +275,10 @@ func _check_earlier_boss(zone: int) -> void:
 		"the player returns to the contract map after an earlier boss"
 	)
 	_check(not _flow.selectable_encounters().is_empty(), "the next zone is on offer")
+	_check(
+		screen != null and not screen.change_contract_button.visible,
+		"Change contract is gone once the contract is under way"
+	)
 
 
 # The combat screen's Complete Encounter button is a testing shortcut. On the
@@ -341,6 +376,8 @@ func _run() -> void:
 		map_hub != null and map_hub.map_panel.visible and not map_hub.is_choosing_contract(),
 		"accepting a contract shows its map"
 	)
+	if map_hub != null:
+		_check_change_contract(map_hub, offer)
 	var credit_reward := int(offer.get("credit_reward", 0))
 	var total_zones := int(_flow.zone_progress().get("total_zones", 0))
 	_check(credit_reward > 0, "the accepted contract carries a credit reward")
