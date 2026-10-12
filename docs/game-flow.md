@@ -321,14 +321,15 @@ Run the headless check with a built extension:
 godot --headless --path godot -s res://tests/shop_test.gd
 ```
 
-It starts from the main menu and rolls new runs until a first-zone route
-offers a shop, then clicks the shop on the map with 120 credits. It checks the
-five rows and their details and prices, buys through the buy buttons until a
-card is out of reach, and checks the exact deduction, the sold slot, the
-unchanged stock, and that the out-of-reach card's button is disabled, its price
-red and a forced attempt changes nothing. Then it presses Leave and checks the
-map and the completed node. Finally it enters the next encounter and draws the
-whole deck to find every card it bought.
+It starts from the main menu, accepts a contract on the hub's offer picker, and
+rolls new runs until a first-zone route offers a shop, then clicks the shop on
+the map with 120 credits. It checks the five rows and their details and prices,
+buys through the buy buttons until a card is out of reach, and checks the exact
+deduction, the sold slot, the unchanged stock, and that the out-of-reach card's
+button is disabled, its price red and a forced attempt changes nothing. Then it
+presses Leave and checks the map, not the offer picker, and the completed node.
+Finally it enters the next encounter and draws the whole deck to find every
+card it bought.
 
 ## Winning a contract (stories #89 and #23)
 
