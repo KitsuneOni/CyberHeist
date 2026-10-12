@@ -34,8 +34,39 @@ ln -s "$library" "$fixture/cyber_heist/target/debug/libcyber_heist.so"
 printf 'res://cyber_heist.gdextension\n' > "$fixture/godot/.godot/extension_list.cfg"
 export TMPDIR="$fixture/tmp"
 
-timeout 30s "$engine" --headless --path "$fixture/godot" \
-    --log-file "$fixture/import.log" --import
+# Godot 4.7.1 itself intermittently dies during a headless --import before any
+# test code runs: "double free or corruption" (SIGABRT, exit 134), a
+# segmentation fault while reimporting a font (exit 139), or a hang until the
+# timeout (exit 124). A fresh attempt continues the import and normally
+# succeeds, so retry a bounded number of times. Each failure is reported with
+# its exit code and log tail, and every attempt's log is kept in the fixture, so
+# a consistently failing import still fails here and stays diagnosable.
+# Only the import is retried; the test run below gets exactly one attempt.
+import_attempts=3
+import_fixture() {
+    local attempt log status
+    for ((attempt = 1; attempt <= import_attempts; attempt++)); do
+        log="$fixture/import-attempt-$attempt.log"
+        status=0
+        timeout 30s "$engine" --headless --path "$fixture/godot" \
+            --log-file "$log" --import || status=$?
+        if [[ $status -eq 0 ]]; then
+            # The error scan below checks the import that succeeded, not the
+            # crash output of attempts that were already reported.
+            cp "$log" "$fixture/import.log"
+            return 0
+        fi
+        echo "Fixture import attempt $attempt/$import_attempts failed with exit $status (124 = timeout)." >&2
+        if [[ -f "$log" ]]; then
+            echo "Last lines of $log:" >&2
+            tail -n 20 "$log" >&2
+        fi
+    done
+    echo "Fixture import failed on all $import_attempts attempts." >&2
+    return 1
+}
+
+import_fixture
 timeout 30s "$engine" --headless --path "$fixture/godot" \
     --log-file "$fixture/test.log" -s res://tests/shared_noise_test.gd
 
