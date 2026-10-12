@@ -1,7 +1,8 @@
 # Real scene/extension coverage for the dark web shop (Trello #38), through
-# its two stories S1 shop stock and pricing (#104) and S2 buying with credits
-# (#105). The Rust tests own the rules; this plays a shop visit the way a player
-# would, through the screens, and checks what only a running game can show.
+# its stories S1 shop stock and pricing (#104), S2 buying with credits (#105),
+# S3 Scrub Logs (#106) and S4 rerolling the stock (#107). The Rust tests own
+# the rules; this plays a shop visit the way a player would, through the
+# screens, and checks what only a running game can show.
 #
 #   S1 Scenario: Shop generates stock on entry
 #     Given I select a shop node on the contract map
@@ -26,6 +27,28 @@
 #     And the price is shown in red
 #     And my credits and deck do not change
 #
+#   S3 Scenario: Pay to lower noise
+#     Given my noise is 70 out of 100
+#     And I have enough credits for the "Scrub Logs" service
+#     When I buy Scrub Logs
+#     Then my noise drops by 20 to 50
+#     And my credits are reduced by its price
+#
+#   S3 Scenario: Service has a limit
+#     Given I have already bought Scrub Logs at this shop
+#     Then Scrub Logs is shown as sold out for this visit
+#
+#   S4 Scenario: Reroll the stock
+#     Given I am in a shop with 50 credits
+#     And a reroll costs 25 credits
+#     When I press Reroll
+#     Then every unsold card is replaced with a new random card
+#     And my credits drop to 25
+#
+#   S4 Scenario: Reroll cost increases
+#     Given I have rerolled once at this shop
+#     Then the next reroll costs more than the first
+#
 #   S1 Scenario: Leaving the shop completes the node
 #     When I press Leave
 #     Then I return to the contract map
@@ -44,6 +67,10 @@ const PRICE_BY_RARITY := {
 	"Legendary": 150,
 }
 const STOCK_SIZE := 5
+# Mirror the service prices in cyber_heist/src/shop.rs.
+const SCRUB_LOGS_PRICE := 60
+const SCRUB_LOGS_NOISE_REDUCTION := 20
+const REROLL_BASE_PRICE := 25
 # The S2 scenario's balance. Every card costs at least 50, so a couple of
 # purchases always leaves something the player cannot afford.
 const STARTING_CREDITS := 120
@@ -56,6 +83,7 @@ const MAX_RUNS := 60
 
 var _flow: Node
 var _player: Node
+var _noise_meter: Node
 var _failures: Array[String] = []
 
 
@@ -184,6 +212,25 @@ func _press_buy(shop: Node, slot: int, card_name: String) -> bool:
 	return true
 
 
+# Presses a service button the way a player could: only when it is enabled.
+# Returns whether the button could be pressed.
+func _press_service(button: Button, service: String) -> bool:
+	_check(not button.disabled, "the %s button is enabled" % service)
+	if button.disabled:
+		return false
+	button.pressed.emit()
+	return true
+
+
+# Sets the balance and noise directly, then redraws the screen, as if the
+# player had walked in with them. The screen only re-reads its state after an
+# action, so it needs telling about a change made from outside it.
+func _set_credits_and_noise(shop: Node, credits: int, noise: int) -> void:
+	_player.add_credits(credits - _player.money())
+	_noise_meter.add_noise(noise - _noise_meter.noise)
+	shop._refresh()
+
+
 func _count_in(names: PackedStringArray, card_name: String) -> int:
 	var count := 0
 	for drawn_name in names:
@@ -197,9 +244,11 @@ func _run() -> void:
 
 	_flow = root.get_node_or_null("/root/FlowCoordinator")
 	_player = root.get_node_or_null("/root/PlayerStateGlobal")
+	_noise_meter = root.get_node_or_null("/root/NoiseMeterGlobal")
 	_check(_flow != null, "FlowCoordinator autoload is present")
 	_check(_player != null, "PlayerStateGlobal autoload is present")
-	if _flow == null or _player == null:
+	_check(_noise_meter != null, "NoiseMeterGlobal autoload is present")
+	if _flow == null or _player == null or _noise_meter == null:
 		_finish()
 		return
 
@@ -360,6 +409,9 @@ func _run() -> void:
 		)
 		_check(_player.money() >= 0, "credits never go negative")
 
+	_play_scrub_logs(shop, shop_node)
+	_play_reroll(shop, shop_node, run_deck, copies_before, bought)
+
 	_check(
 		_flow.run_summary().cards_added == cards_added_before + bought.size(),
 		"bought cards count as cards added in the run summary"
@@ -378,6 +430,10 @@ func _run() -> void:
 	_check(_node_status(shop_id) == "completed", "the shop node is marked completed")
 
 	# --- #38: bought cards are drawable in a later encounter ------------------
+	# Scrub Logs left noise at 50, where some cards show their weak-side name.
+	# The shop lists every card by its strong-side name, so draw at zero noise
+	# to find them by the same names.
+	_noise_meter.add_noise(-_noise_meter.noise)
 	var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
 	_check(entered.get("ok", false), "the next encounter loads")
 	await _settle()
@@ -408,3 +464,147 @@ func _run() -> void:
 		)
 
 	_finish()
+
+
+# S3: Scrub Logs lowers noise by 20 for its price, once per visit, and is
+# refused with nothing changed when the player cannot afford it.
+func _play_scrub_logs(shop: Node, shop_node: Node) -> void:
+	var scrub_button: Button = shop.get_node("%ScrubLogsButton")
+	var scrub_price: Label = shop.get_node("%ScrubLogsPriceLabel")
+	var scrub_details: Label = shop.get_node("%ScrubLogsDetails")
+
+	# One credit short first.
+	_set_credits_and_noise(shop, SCRUB_LOGS_PRICE - 1, 70)
+	_check(scrub_details.text.contains("SCRUB LOGS"), "the shop offers Scrub Logs")
+	_check(scrub_details.text.contains("now 70/100"), "Scrub Logs shows the noise it would scrub")
+	_check(scrub_price.text == "%d cr" % SCRUB_LOGS_PRICE, "Scrub Logs shows its price")
+	_check(scrub_button.disabled, "Scrub Logs cannot be bought one credit short")
+	_check(
+		scrub_price.get_theme_color("font_color") == UNAFFORDABLE_COLOUR,
+		"an unaffordable Scrub Logs has its price in red"
+	)
+	# Force the attempt past the disabled button, as a stale click would.
+	shop._on_scrub_logs_pressed()
+	_check(_noise_meter.noise == 70, "a refused Scrub Logs leaves noise alone")
+	_check(_player.money() == SCRUB_LOGS_PRICE - 1, "a refused Scrub Logs leaves credits alone")
+	_check(not shop_node.scrub_logs_offer().sold, "a refused Scrub Logs is still for sale")
+
+	# S3 scenario 1: noise 70 with enough credits.
+	var credits_before := SCRUB_LOGS_PRICE + 40
+	_set_credits_and_noise(shop, credits_before, 70)
+	if not _press_service(scrub_button, "Scrub Logs"):
+		return
+	_check(
+		_noise_meter.noise == 70 - SCRUB_LOGS_NOISE_REDUCTION,
+		"Scrub Logs drops noise by 20 to 50 (now %d)" % _noise_meter.noise
+	)
+	_check(
+		_player.money() == credits_before - SCRUB_LOGS_PRICE,
+		"Scrub Logs takes exactly its price (%d -> %d)" % [credits_before, _player.money()]
+	)
+	_check(
+		shop.get_node("%CreditsLabel").text.contains(str(_player.money())),
+		"the credits shown drop with Scrub Logs"
+	)
+	_check(scrub_details.text.contains("now 50/100"), "Scrub Logs shows the lowered noise")
+
+	# S3 scenario 2: sold out for the rest of the visit.
+	_check(scrub_price.text == "SOLD OUT", "Scrub Logs is shown as sold out")
+	_check(scrub_button.disabled, "a sold-out Scrub Logs cannot be pressed")
+	var credits_after: int = _player.money()
+	var again: Dictionary = shop_node.scrub_logs()
+	_check(again.get("error", "") == "already_sold", "the shop refuses a second Scrub Logs")
+	_check(_noise_meter.noise == 50, "a second Scrub Logs does not lower noise again")
+	_check(_player.money() == credits_after, "a second Scrub Logs charges nothing")
+
+
+# S4: a reroll replaces every unsold card, leaves sold ones sold, takes its
+# price and costs more next time. Ends by buying one of the rerolled cards.
+func _play_reroll(
+	shop: Node,
+	shop_node: Node,
+	run_deck: Node,
+	copies_before: Dictionary,
+	bought: Array[String],
+) -> void:
+	var reroll_button: Button = shop.get_node("%RerollButton")
+	var reroll_price: Label = shop.get_node("%RerollPriceLabel")
+
+	# S4 scenario 1: 50 credits and a 25 credit reroll.
+	_set_credits_and_noise(shop, 50, _noise_meter.noise)
+	_check(reroll_price.text == "%d cr" % REROLL_BASE_PRICE, "the first reroll costs 25")
+	var before: Array = shop_node.stock()
+	var before_ids := _stock_ids(before)
+	var sold_before := 0
+	for card: Dictionary in before:
+		if card.get("sold", false):
+			sold_before += 1
+	_check(sold_before > 0, "some cards were sold before the reroll")
+	if not _press_service(reroll_button, "reroll"):
+		return
+
+	var after: Array = shop_node.stock()
+	_check(_player.money() == 25, "a reroll from 50 credits leaves 25 (got %d)" % _player.money())
+	_check(after.size() == before.size(), "a reroll keeps every slot")
+	var distinct := {}
+	for index in after.size():
+		var was: Dictionary = before[index]
+		var now: Dictionary = after[index]
+		distinct[now.id] = true
+		if was.get("sold", false):
+			_check(
+				now.get("sold", false) and now.id == was.id,
+				"sold slot %d stays sold with the same card" % index
+			)
+			continue
+		_check(
+			not now.get("sold", false) and not before_ids.has(String(now.id)),
+			"unsold slot %d now offers a new card (%s -> %s)" % [index, was.id, now.id]
+		)
+		_check(
+			shop._rows[index].get_child(0).text.contains(String(now.name).to_upper()),
+			"slot %d shows its new card" % index
+		)
+		_check(
+			int(now.price) == PRICE_BY_RARITY.get(now.rarity, -1),
+			"slot %d's new card is priced by its rarity" % index
+		)
+	_check(distinct.size() == after.size(), "a reroll never stocks the same card twice")
+
+	# S4 scenario 2: the next reroll costs more than the first, and is out of
+	# reach on the 25 credits left.
+	var next_price := int(shop_node.reroll_offer().price)
+	_check(next_price > REROLL_BASE_PRICE, "the next reroll costs more (%d)" % next_price)
+	_check(reroll_price.text == "%d cr" % next_price, "the screen shows the higher reroll price")
+	_check(reroll_button.disabled, "an unaffordable reroll's button is disabled")
+	_check(
+		reroll_price.get_theme_color("font_color") == UNAFFORDABLE_COLOUR,
+		"an unaffordable reroll has its price in red"
+	)
+	shop._on_reroll_pressed()
+	_check(_stock_ids(shop_node.stock()) == _stock_ids(after), "a refused reroll keeps the stock")
+	_check(_player.money() == 25, "a refused reroll leaves the credits alone")
+
+	# With the money for it, the second reroll takes the higher price.
+	_set_credits_and_noise(shop, 200, _noise_meter.noise)
+	if not _press_service(reroll_button, "second reroll"):
+		return
+	_check(
+		_player.money() == 200 - next_price,
+		"the second reroll takes its higher price (%d left)" % _player.money()
+	)
+
+	# A rerolled card is for sale like any other.
+	var stock: Array = shop_node.stock()
+	var slot := _cheapest_affordable_slot(stock)
+	_check(slot >= 0, "a rerolled card is affordable with %d credits" % _player.money())
+	if slot < 0:
+		return
+	var card: Dictionary = stock[slot]
+	var card_name := String(card.name)
+	if not copies_before.has(card_name):
+		copies_before[card_name] = int(run_deck.count_of(String(card.id)))
+	var deck_before: int = _flow.run_deck_size()
+	if _press_buy(shop, slot, card_name):
+		bought.append(card_name)
+		_check(_flow.run_deck_size() == deck_before + 1, "a rerolled card can be bought")
