@@ -9,7 +9,8 @@
 #     starts from the beginning
 #
 #   Scenario: A corrupt or incompatible save starts safely
-#     Given the save file is corrupt, or from another save version
+#     Given the save file is corrupt, or from another save version, including
+#     version 1, which kept a claimed flag and a separate contract payout
 #     When the game opens
 #     Then nothing from it is loaded, Continue run is unavailable and the
 #     menu says the save could not be loaded
@@ -29,6 +30,20 @@
 #     And the same holds on the caught screen, where the fine is not charged
 #     a second time, in a shop after buying a card, and on a fight's card
 #     reward, which offers the same cards rather than rerolling them
+#
+#   Scenario: A contract can still be changed after continuing
+#     Given the player accepted a contract, changed it, and entered nothing
+#     When the game is closed and Continue run is pressed
+#     Then the map shows the changed contract with Change contract offered,
+#     and changing again works and is saved
+#     And once an encounter has been played, Continue no longer offers it
+#
+#   Scenario: Continuing on the victory screen pays nothing twice
+#     Given the player beat the final boss and was paid the contract reward
+#     When the game is closed and Continue run is pressed
+#     Then the victory screen shows the same contract reward and boss payout
+#     and counts up to the same balance, the balance does not grow, and
+#     Take another contract starts a new run at the offer picker
 #
 #   Scenario: Starting a new contract replaces the saved run
 #
@@ -54,8 +69,14 @@ const RESUME_TIMEOUT_SECONDS := 60.0
 const MAX_SHOP_ROLLS := 60
 # Fresh runs to roll looking for a fight on the first step, which most offer.
 const MAX_FIGHT_ROLLS := 60
+# Shops to pass through when nothing else is on offer after two encounters.
+const MAX_SHOPS_IN_A_ROW := 4
 # Credits to walk into the shop with, enough for any card on sale.
 const SHOP_CREDITS := 200
+# The save layout this build writes (SAVE_VERSION in save_game.rs).
+const SAVE_VERSION := 2
+# How long the resumed victory screen may take to count its balance up.
+const BALANCE_COUNT_TIMEOUT_SECONDS := 5.0
 
 var _flow: Node
 var _player: Node
@@ -169,7 +190,15 @@ func _capture_state() -> Dictionary:
 	}
 
 	var screen := _screen()
-	if state.screen == "ShopScreen":
+	if state.screen == "ContractHub":
+		state["choosing_contract"] = screen.is_choosing_contract()
+		state["change_contract_offered"] = screen.change_contract_button.visible
+	elif state.screen == "VictoryScreen":
+		state["contract_reward"] = _flow.contract_reward()
+		state["victory_contract"] = screen.contract_label.text
+		state["victory_reward"] = screen.reward_label.text
+		state["victory_target_balance"] = screen.target_balance
+	elif state.screen == "ShopScreen":
 		state["shop_stock"] = screen.shop_node.stock()
 	elif state.screen == "CaughtScreen":
 		state["caught_fine"] = screen.get_node("VBoxContainer/FineLabel").text
@@ -216,6 +245,14 @@ func _run() -> void:
 	if not await _start_and_accept_a_contract():
 		_finish("")
 		return
+
+	print("-- resuming at the map after changing contract, before any encounter")
+	if not await _change_contract_on_the_map():
+		_finish("")
+		return
+	_write_expected_state("contract_chosen")
+	_resume_in_a_new_process("contract_chosen")
+
 	if not await _play_two_encounters():
 		_finish("")
 		return
@@ -235,6 +272,9 @@ func _run() -> void:
 
 	print("-- resuming on a fight's card reward")
 	await _check_card_reward_resume()
+
+	print("-- resuming on the victory screen")
+	await _check_victory_resume()
 
 	_remove_test_files()
 	_finish("save continue test: PASSED")
@@ -291,6 +331,29 @@ func _check_unreadable_saves() -> void:
 	)
 	_check(not _flow.has_saved_run(), "an incompatible save leaves no run to continue")
 	_check(_player.money() == credits_before, "nothing from a refused save is applied")
+
+	# Version 1 kept whether the contract reward was claimed, and the payout
+	# beside the screen, rather than the reward run state now records.
+	_write_file(
+		SAVE_PATH,
+		JSON.stringify({
+			"version": 1,
+			"meta": {"credits": 999},
+			"run": {
+				"run_state": {"phase": "contract_won", "contract_reward_claimed": true},
+				"screen": {
+					"contract_payout": {"credits": 500, "balance_before": 499, "balance_after": 999},
+				},
+			},
+		})
+	)
+	var version_1: Dictionary = _flow.use_save_file(SAVE_PATH)
+	_check(
+		not version_1.get("ok", true) and str(version_1.get("error", "")).contains("version"),
+		"a version 1 save is refused as incompatible"
+	)
+	_check(not _flow.has_saved_run(), "a version 1 save leaves no run to continue")
+	_check(_player.money() == credits_before, "nothing from a version 1 save is applied")
 	await _reopen_menu()
 
 
@@ -308,7 +371,7 @@ func _start_and_accept_a_contract() -> bool:
 	_check(hub != null and hub.name == "ContractHub", "New contract opens the contract hub")
 	var fresh := _saved()
 	_check(
-		int(fresh.get("version", -1)) == 1 and _saved_phase() == "hub",
+		int(fresh.get("version", -1)) == SAVE_VERSION and _saved_phase() == "hub",
 		"New contract replaces the unreadable save with a good one at the current version"
 	)
 	_check(
@@ -329,6 +392,50 @@ func _start_and_accept_a_contract() -> bool:
 		"accepting the offer is saved straight away"
 	)
 	return accepted.get("ok", false)
+
+
+# Cycles the hub's offer picker to the offer with `index` and accepts it.
+func _choose_offer_on_picker(hub: Node, index: int) -> bool:
+	var picker: Node = hub.offer_picker
+	for _press in picker.offers.size():
+		if int(picker.shown_offer().get("index", -1)) == index:
+			break
+		picker.next_button.pressed.emit()
+	if int(picker.shown_offer().get("index", -1)) != index:
+		return false
+
+	picker.accept_button.pressed.emit()
+	return not hub.is_choosing_contract()
+
+
+# Uses Change contract on the map to swap the accepted offer for another one,
+# as the player may until they enter an encounter. The swap is saved at once.
+func _change_contract_on_the_map() -> bool:
+	var hub := _screen()
+	if hub == null or hub.name != "ContractHub":
+		_check(false, "the map is showing after accepting a contract")
+		return false
+	_check(hub.change_contract_button.visible, "the map offers Change contract before any encounter")
+
+	var accepted_index := int(_flow.accepted_contract_offer().get("index", -1))
+	hub.change_contract_button.pressed.emit()
+	_check(
+		int(hub.offer_picker.shown_offer().get("index", -1)) == accepted_index,
+		"Change contract opens the picker on the accepted offer"
+	)
+	var other_index := 1 if accepted_index == 0 else 0
+	_check(_choose_offer_on_picker(hub, other_index), "another offer can be chosen instead")
+	_check(
+		int(_flow.accepted_contract_offer().get("index", -1)) == other_index,
+		"changing contract puts the run on the other offer"
+	)
+	var saved_state: Dictionary = _saved().get("run", {}).get("run_state", {})
+	_check(
+		saved_state.get("accepted_offer_index") == float(other_index)
+		and saved_state.get("contract_started") == false,
+		"the changed contract is saved, still not started"
+	)
+	return hub.change_contract_button.visible
 
 
 # Plays two encounters on the map, away from the zone's boss. A fight picks
@@ -369,7 +476,25 @@ func _play_two_encounters() -> bool:
 			int(saved_run.get("noise", -1)) == _meter.noise,
 			"the save after encounter %d holds the current noise" % (step + 1)
 		)
+	await _pass_through_shops()
 	return _screen_name() == "ContractHub"
+
+
+# A map can offer nothing but shops for a step or two. Passing through them,
+# saved like any completed encounter, leaves a fight or an event to quit
+# partway through next.
+func _pass_through_shops() -> void:
+	for _shop in MAX_SHOPS_IN_A_ROW:
+		if not _first_selectable(["combat", "elite", "boss", "event"]).is_empty():
+			return
+		var shop := _first_selectable(["shop"])
+		if shop.is_empty():
+			return
+		_flow.select_encounter(int(shop.id))
+		await _settle()
+		var left: Dictionary = _flow.complete_active_encounter()
+		_check(left.get("ok", false), "a shop with nothing else on offer is passed through")
+		await _settle()
 
 
 # The first selectable encounter of one of `types`, in the order given.
@@ -499,6 +624,83 @@ func _check_card_reward_resume() -> void:
 	_resume_in_a_new_process("card_reward")
 
 
+# Starts a new run, takes its shortest contract and plays every encounter to
+# the final boss, then resumes on the victory screen. The reward is paid when
+# the boss goes down and saved in the balance; Continue must show it again
+# without paying it a second time.
+func _check_victory_resume() -> void:
+	_flow.start_new_run()
+	await _settle()
+	var hub := _screen()
+	if hub == null or hub.name != "ContractHub" or not _choose_offer_on_picker(hub, 0):
+		_check(false, "the shortest contract is accepted on the picker")
+		return
+	await _settle()
+	var credit_reward := int(_flow.accepted_contract_offer().get("credit_reward", 0))
+	_check(credit_reward > 0, "the accepted contract carries a credit reward")
+
+	if not await _play_to_the_final_boss():
+		return
+	var money_before_boss: int = _player.money()
+	var completed: Dictionary = _flow.complete_active_encounter()
+	await _settle()
+	_check(
+		completed.get("ok", false) and _screen_name() == "VictoryScreen",
+		"beating the final boss opens the victory screen"
+	)
+	if _screen_name() != "VictoryScreen":
+		return
+
+	var boss_credits: int = _flow.pending_reward_credits()
+	var expected_money := money_before_boss + boss_credits + credit_reward
+	_check(_player.money() == expected_money, "the boss and the contract reward are paid once")
+	var reward_text: String = _screen().reward_label.text
+	_check(
+		reward_text.contains("+%d" % credit_reward) and reward_text.contains("+%d" % boss_credits),
+		"the victory screen shows the contract reward and the boss payout (%s)" % reward_text
+	)
+	var saved := _saved()
+	var saved_run: Dictionary = saved.get("run", {})
+	_check(_saved_phase() == "contract_won", "winning the contract is saved")
+	_check(
+		saved_run.get("run_state", {}).get("contract_reward") == float(credit_reward),
+		"the save records the contract reward in run state"
+	)
+	_check(
+		not saved_run.get("screen", {}).has("contract_payout"),
+		"the save keeps no separate contract payout"
+	)
+	_check(
+		int(saved.get("meta", {}).get("credits", -1)) == expected_money,
+		"the saved balance already includes the reward"
+	)
+	_write_expected_state("victory")
+	_resume_in_a_new_process("victory")
+
+
+# Plays the accepted contract from the map up to its final boss, preferring
+# bosses so the walk is short, taking each card reward on the way. Returns
+# whether the final boss is the active encounter.
+func _play_to_the_final_boss() -> bool:
+	var route_length := int(_flow.contract_progress().get("total", 0))
+	for _step in route_length:
+		var next := _first_selectable(["boss", "combat", "elite", "event", "shop"])
+		if next.is_empty():
+			break
+		_flow.select_encounter(int(next.id))
+		await _settle()
+		if _flow.active_encounter_wins_contract():
+			return true
+
+		_flow.complete_active_encounter()
+		await _settle()
+		if _screen_name() == "CardReward":
+			_screen()._on_card_chosen(0)
+			await _settle()
+	_check(false, "the final boss is reached within the contract's route")
+	return false
+
+
 func _cheapest_slot(stock: Array) -> int:
 	var cheapest := -1
 	for card: Dictionary in stock:
@@ -580,14 +782,83 @@ func _resume_and_compare() -> void:
 			JSON.stringify(actual.get(key)) == JSON.stringify(expected[key]),
 			"%s is as it was when the game closed" % key
 		)
-	if scenario == "hub":
-		_check(
-			_completed_encounters(actual.get("map", [])) == 2,
-			"both completed encounters are still marked completed"
-		)
-		await _check_new_run_replaces_the_save()
+	match scenario:
+		"hub":
+			# Two, plus any shops passed through to reach a fight.
+			_check(
+				_completed_encounters(actual.get("map", [])) >= 2,
+				"the completed encounters are still marked completed"
+			)
+			_check(
+				not actual.get("change_contract_offered", true),
+				"Change contract is not offered once an encounter has been played"
+			)
+			await _check_new_run_replaces_the_save()
+		"contract_chosen":
+			await _check_contract_can_still_change()
+		"victory":
+			await _check_resumed_victory(int(expected.get("credits", -1)))
 
 	_finish(RESUME_PASSED_MARKER)
+
+
+# The resumed run has not entered an encounter, so the map still offers
+# Change contract, and changing works and is saved.
+func _check_contract_can_still_change() -> void:
+	var hub := _screen()
+	if hub == null or hub.name != "ContractHub":
+		_check(false, "Continue shows the contract hub")
+		return
+	_check(not hub.is_choosing_contract(), "Continue shows the map, not the offer picker")
+	_check(hub.change_contract_button.visible, "Continue still offers Change contract")
+
+	var accepted_index := int(_flow.accepted_contract_offer().get("index", -1))
+	hub.change_contract_button.pressed.emit()
+	_check(
+		int(hub.offer_picker.shown_offer().get("index", -1)) == accepted_index,
+		"Change contract opens the picker on the contract accepted before closing"
+	)
+	var other_index := 2 if accepted_index != 2 else 0
+	_check(_choose_offer_on_picker(hub, other_index), "the contract can be changed after continuing")
+	_check(
+		_saved().get("run", {}).get("run_state", {}).get("accepted_offer_index")
+		== float(other_index),
+		"the change after continuing is saved"
+	)
+
+
+# The resumed victory screen counts up to the balance the reward was already
+# added to, and finishing the count pays nothing more.
+func _check_resumed_victory(expected_money: int) -> void:
+	var victory := _screen()
+	if victory == null or victory.name != "VictoryScreen":
+		_check(false, "Continue shows the victory screen")
+		return
+	var reward := int(_flow.contract_reward().get("credits", 0))
+	_check(reward > 0, "the resumed run still knows what the contract paid")
+
+	var deadline := Time.get_ticks_msec() + int(BALANCE_COUNT_TIMEOUT_SECONDS * 1000)
+	while victory.is_counting() and Time.get_ticks_msec() < deadline:
+		await process_frame
+	_check(not victory.is_counting(), "the resumed victory screen finishes counting")
+	_check(
+		victory.displayed_balance == expected_money and _player.money() == expected_money,
+		"the count ends on the saved balance, so the reward is not paid twice"
+	)
+
+	victory.new_contract_button.pressed.emit()
+	await _settle()
+	var hub := _screen()
+	_check(
+		hub != null and hub.name == "ContractHub" and hub.is_choosing_contract(),
+		"Take another contract after continuing asks for a new contract"
+	)
+	var saved_state: Dictionary = _saved().get("run", {}).get("run_state", {})
+	_check(
+		_saved_phase() == "hub" and saved_state.get("contract_reward") == null,
+		"the new run replaces the won one in the save"
+	)
+	_check(_player.money() == expected_money, "starting a new run pays nothing more")
 
 
 func _check_new_run_replaces_the_save() -> void:
