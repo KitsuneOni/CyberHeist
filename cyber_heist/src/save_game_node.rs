@@ -21,8 +21,8 @@ use crate::run_deck_node::RunDeckNode;
 use crate::run_state::ContractPhase;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
 use crate::save_game::{
-    CaughtPenalty, ContractPayout, MetaProgress, PendingCardReward, SaveGame, SavedRun,
-    ScreenState, read_save_file, write_save_file,
+    CaughtPenalty, MetaProgress, PendingCardReward, SaveGame, SavedRun, ScreenState,
+    read_save_file, write_save_file,
 };
 use crate::shop::ShopVisit;
 use crate::{PlayerState, RUN_DECK_PATH};
@@ -108,9 +108,10 @@ impl SaveGameNode {
 
     /// Puts the saved run back: run state, deck, upgrades, noise, knowledge
     /// and, in a shop, its stock. Returns `{ok: true, pending_reward,
-    /// contract_payout, caught_penalty}` with the screen results the
-    /// coordinator was holding, each an empty dictionary when there was none,
-    /// or `{ok: false, error}` with nothing changed.
+    /// caught_penalty}` with the screen results the coordinator was holding,
+    /// each an empty dictionary when there was none, or `{ok: false, error}`
+    /// with nothing changed. A won contract's reward needs neither: it is
+    /// part of the run state.
     #[func]
     fn restore_saved_run(&mut self) -> VarDictionary {
         let Some(saved) = self.saved_run.take() else {
@@ -152,8 +153,8 @@ impl SaveGameNode {
 
     /// Saves the run as it stands now, with the player's meta progress, to
     /// `path`, replacing whatever was there. `screen` holds the coordinator's
-    /// screen results, `{pending_reward, contract_payout, caught_penalty}`,
-    /// each empty when there is none.
+    /// screen results, `{pending_reward, caught_penalty}`, each empty when
+    /// there is none.
     ///
     /// Returns `{ok: true}`, or `{ok: false, error}` with nothing written.
     /// Refused outside a safe point, i.e. during a fight or an event.
@@ -309,14 +310,6 @@ fn screen_state_dictionary(screen: &ScreenState) -> VarDictionary {
         }
         None => VarDictionary::new(),
     };
-    let contract_payout = match &screen.contract_payout {
-        Some(payout) => vdict! {
-            "credits" => payout.credits,
-            "balance_before" => payout.balance_before,
-            "balance_after" => payout.balance_after,
-        },
-        None => VarDictionary::new(),
-    };
     let caught_penalty = match &screen.caught_penalty {
         Some(penalty) => {
             let lost: Array<GString> = penalty
@@ -334,7 +327,6 @@ fn screen_state_dictionary(screen: &ScreenState) -> VarDictionary {
 
     vdict! {
         "pending_reward" => &pending_reward,
-        "contract_payout" => &contract_payout,
         "caught_penalty" => &caught_penalty,
     }
 }
@@ -354,14 +346,6 @@ fn screen_state_from(screen: &VarDictionary) -> Result<ScreenState, String> {
         }),
         None => None,
     };
-    let contract_payout = match sub_dictionary(screen, "contract_payout")? {
-        Some(payout) => Some(ContractPayout {
-            credits: field(&payout, "credits")?,
-            balance_before: field(&payout, "balance_before")?,
-            balance_after: field(&payout, "balance_after")?,
-        }),
-        None => None,
-    };
     let caught_penalty = match sub_dictionary(screen, "caught_penalty")? {
         Some(penalty) => Some(CaughtPenalty {
             fine: field(&penalty, "fine")?,
@@ -372,7 +356,6 @@ fn screen_state_from(screen: &VarDictionary) -> Result<ScreenState, String> {
 
     Ok(ScreenState {
         pending_card_reward,
-        contract_payout,
         caught_penalty,
     })
 }

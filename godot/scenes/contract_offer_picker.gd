@@ -35,10 +35,12 @@ func _ready() -> void:
 	accept_button.pressed.connect(_on_accept_pressed)
 
 
-# Fills the panel with a fresh set of offers, starting from the first.
-func show_offers(new_offers: Array) -> void:
+# Fills the panel with a fresh set of offers. It starts on the offer whose
+# index is `first_index`, such as the one already accepted, or on the first
+# offer when that is not among them.
+func show_offers(new_offers: Array, first_index: int = -1) -> void:
 	offers = new_offers
-	shown_position = 0
+	shown_position = _position_of_offer(first_index)
 	status_label.text = ""
 	_render_shown_offer()
 	accept_button.grab_focus()
@@ -65,6 +67,14 @@ func show_previous_offer() -> void:
 		return
 	shown_position = (shown_position - 1 + offers.size()) % offers.size()
 	_render_shown_offer()
+
+
+# Where the offer with `index` sits in `offers`, or 0 when it is not there.
+func _position_of_offer(index: int) -> int:
+	for offer_position in offers.size():
+		if int(offers[offer_position].get("index", -1)) == index:
+			return offer_position
+	return 0
 
 
 # Shown under the offer when accepting it fails, so the player can try again.

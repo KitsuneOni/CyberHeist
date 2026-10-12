@@ -6,11 +6,14 @@
 #
 #   - a new run asks for a contract before showing the map, and accepting one
 #     through the picker puts the run on that contract,
+#   - Change contract brings the picker back until an encounter is entered,
 #   - an earlier zone's boss only opens the next zone and returns to the map,
+#   - the Complete Encounter testing shortcut cannot skip the final boss,
 #   - beating the final zone's boss in real combat shows the victory screen
 #     instead of the map,
 #   - the accepted offer's credit reward lands in the balance exactly once,
 #     and the victory screen counts the balance up to it in steps,
+#   - the victory screen shows the same reward when rebuilt from run state,
 #   - Take another contract starts a clean new run at the hub's offer picker,
 #     where the next contract is chosen, and
 #   - a contract the player is caught on pays no contract reward.
@@ -26,7 +29,6 @@ const MAX_RUN_ROLLS := 10
 const BALANCE_COUNT_TIMEOUT_SECONDS := 5.0
 
 var _flow: Node
-var _run_state: Node
 var _player_state: Node
 var _failures: Array[String] = []
 var _counted_balances: Array[int] = []
@@ -72,6 +74,10 @@ func _settle() -> void:
 
 func _phase() -> String:
 	return str(_flow.run_snapshot().get("phase", ""))
+
+
+func _contract_is_won() -> bool:
+	return _flow.contract_reward().get("ok", false)
 
 
 # Accepts the offer with the most zones through the hub's offer picker, so the
@@ -153,6 +159,36 @@ func _check_offer_picker(hub: Node, context: String) -> void:
 	_check(picker.shown_position == 0, "%s cycles back to the first offer" % context)
 
 
+# Change contract on the map brings the picker back on the accepted offer, and
+# choosing another offer there swaps the run onto it. Ends back on the map with
+# `offer` accepted again.
+func _check_change_contract(hub: Node, offer: Dictionary) -> void:
+	var offer_index := int(offer.get("index", -1))
+	_check(hub.change_contract_button.visible, "the map offers Change contract before any encounter")
+
+	hub.change_contract_button.pressed.emit()
+	_check(hub.is_choosing_contract(), "Change contract brings the offer picker back")
+	_check(not hub.map_panel.visible, "the map is hidden while choosing again")
+	_check(
+		int(hub.offer_picker.shown_offer().get("index", -1)) == offer_index,
+		"the picker opens on the contract already accepted"
+	)
+
+	var other_index := 0 if offer_index != 0 else 1
+	_check(_choose_offer_on_picker(hub, other_index), "another offer can be chosen instead")
+	_check(
+		int(_flow.accepted_contract_offer().get("index", -1)) == other_index,
+		"changing contract puts the run on the new offer"
+	)
+
+	hub.change_contract_button.pressed.emit()
+	_check(_choose_offer_on_picker(hub, offer_index), "the original offer can be chosen again")
+	_check(
+		int(_flow.accepted_contract_offer().get("index", -1)) == offer_index,
+		"the run is back on the original offer"
+	)
+
+
 # Enters the next node on the route, preferring a boss so the walk is short.
 # Returns the selection result, which carries the node's type and zone.
 func _enter_next_encounter() -> Dictionary:
@@ -204,6 +240,11 @@ func _advance_to_final_boss(total_zones: int) -> bool:
 # Acceptance scenario 3 (#89): an earlier zone's boss opens the next zone and
 # leads back to the map, with no contract reward and no victory.
 func _check_earlier_boss(zone: int) -> void:
+	var boss_screen := _screen()
+	_check(
+		boss_screen != null and not boss_screen.complete_encounter_button.disabled,
+		"the testing shortcut stays available on the zone-%d boss" % (zone + 1)
+	)
 	var money_before: int = _player_state.money()
 	var unlocked_before := int(_flow.zone_progress().get("unlocked_zones", -1))
 
@@ -218,7 +259,7 @@ func _check_earlier_boss(zone: int) -> void:
 		_player_state.money() == money_before + _flow.pending_reward_credits(),
 		"an earlier boss pays only its own encounter credits, not the contract reward"
 	)
-	_check(_flow.contract_payout().is_empty(), "an earlier boss does not win the contract")
+	_check(not _contract_is_won(), "an earlier boss does not win the contract")
 
 	var screen := _screen()
 	_check(
@@ -234,6 +275,27 @@ func _check_earlier_boss(zone: int) -> void:
 		"the player returns to the contract map after an earlier boss"
 	)
 	_check(not _flow.selectable_encounters().is_empty(), "the next zone is on offer")
+	_check(
+		screen != null and not screen.change_contract_button.visible,
+		"Change contract is gone once the contract is under way"
+	)
+
+
+# The combat screen's Complete Encounter button is a testing shortcut. On the
+# final boss it would win the contract and its reward without a fight, so it
+# is disabled there and a press that arrives anyway does nothing.
+func _check_shortcut_cannot_skip_final_boss(combat: Node) -> void:
+	var money_before: int = _player_state.money()
+	_check(
+		combat.complete_encounter_button.disabled,
+		"the testing shortcut is disabled on the final boss"
+	)
+
+	combat.complete_encounter_button.pressed.emit()
+	_check(_phase() == "encounter_active", "pressing the shortcut anyway does not end the fight")
+	_check(not _contract_is_won(), "the shortcut does not win the contract")
+	_check(_player_state.money() == money_before, "the shortcut pays nothing on the final boss")
+	_check(_screen() == combat, "the final boss's combat screen stays up")
 
 
 # Brings the boss down to one point of integrity and finishes it with a real
@@ -270,6 +332,15 @@ func _is_strictly_increasing(values: Array[int]) -> bool:
 	return true
 
 
+func _finish_caught_and_check_no_reward() -> void:
+	var money_before: int = _player_state.money()
+	var finished: Dictionary = _flow.finish_caught()
+	_check(finished.get("ok", false), "the caught screen can be left")
+	await _settle()
+	_check(not _contract_is_won(), "a caught contract still has no reward due afterwards")
+	_check(_player_state.money() == money_before, "leaving the caught screen pays nothing")
+
+
 func _run() -> void:
 	await process_frame
 
@@ -280,7 +351,6 @@ func _run() -> void:
 	if not _failures.is_empty():
 		_finish()
 		return
-	_run_state = _flow.get_node("RunState")
 
 	var main: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
@@ -306,6 +376,8 @@ func _run() -> void:
 		map_hub != null and map_hub.map_panel.visible and not map_hub.is_choosing_contract(),
 		"accepting a contract shows its map"
 	)
+	if map_hub != null:
+		_check_change_contract(map_hub, offer)
 	var credit_reward := int(offer.get("credit_reward", 0))
 	var total_zones := int(_flow.zone_progress().get("total_zones", 0))
 	_check(credit_reward > 0, "the accepted contract carries a credit reward")
@@ -330,7 +402,8 @@ func _run() -> void:
 		int(_flow.zone_progress().get("unlocked_zones", -1)) == total_zones - 1,
 		"every earlier zone was opened on the way"
 	)
-	_check(_flow.contract_payout().is_empty(), "nothing has been paid for the contract yet")
+	_check(not _contract_is_won(), "nothing has been paid for the contract yet")
+	_check_shortcut_cannot_skip_final_boss(combat)
 
 	# --- #89 scenario 1: the final boss completes the contract -------------
 	var money_before_boss: int = _player_state.money()
@@ -350,11 +423,11 @@ func _run() -> void:
 
 	# --- #89 scenario 2 and #23: the reward is paid once -------------------
 	var boss_credits: int = _flow.pending_reward_credits()
-	var payout: Dictionary = _flow.contract_payout()
+	var reward: Dictionary = _flow.contract_reward()
 	var expected_balance := money_before_boss + boss_credits + credit_reward
 	_check(
-		int(payout.get("credits", -1)) == credit_reward,
-		"the contract pays the accepted offer's credit reward (%s)" % payout
+		reward.get("ok", false) and int(reward.get("credits", -1)) == credit_reward,
+		"the contract pays the accepted offer's credit reward (%s)" % reward
 	)
 	_check(
 		_player_state.money() == expected_balance,
@@ -362,18 +435,11 @@ func _run() -> void:
 		% [expected_balance, _player_state.money()]
 	)
 	_check(
-		int(payout.get("balance_before", -1)) == money_before_boss + boss_credits
-		and int(payout.get("balance_after", -1)) == expected_balance,
-		"the payout records the balance before and after the reward"
-	)
-	_check(
 		int(_flow.run_summary().get("credits_earned", -1))
 		== earned_before_boss + boss_credits + credit_reward,
 		"the reward counts as credits earned on the run"
 	)
 
-	var second_claim: Dictionary = _run_state.claim_contract_reward()
-	_check(not second_claim.get("ok", true), "a second claim on the reward is refused")
 	var completed_again: Dictionary = _flow.complete_active_encounter()
 	_check(not completed_again.get("ok", true), "the final boss cannot be completed twice")
 	_check(_player_state.money() == expected_balance, "the reward is paid exactly once")
@@ -414,6 +480,40 @@ func _run() -> void:
 		"the screen names the contract (%s)" % victory.contract_label.text
 	)
 
+	# --- the victory screen rebuilt from run state -------------------------
+	# Continue run (#10) and any other route back to the run's current screen
+	# go through here, so the screen must not depend on the original fight.
+	# A relaunched game would not have the final boss's payout in memory
+	# either, so drop it to rebuild the screen from run state alone.
+	_flow._pending_reward = {}
+	var rebuilt: Dictionary = _flow._show_current_run_screen()
+	_check(rebuilt.get("ok", false), "the won run's screen can be shown again (%s)" % rebuilt)
+	# Read before settling, while the new screen's count has not yet moved.
+	victory = _screen()
+	_check(
+		victory != null and victory.name == "VictoryScreen",
+		"a won run comes back to the victory screen"
+	)
+	if victory == null or victory.name != "VictoryScreen":
+		_finish()
+		return
+	_check(
+		victory.reward_label.text.contains("+%d" % credit_reward),
+		"the rebuilt screen shows the same contract reward (%s)" % victory.reward_label.text
+	)
+	_check(
+		not victory.reward_label.text.contains("Final boss payout"),
+		"the rebuilt screen leaves out the boss payout it no longer knows"
+	)
+	_check(
+		victory.displayed_balance == expected_balance - credit_reward,
+		"the rebuilt screen counts up from the balance before the reward"
+	)
+	_check(victory.target_balance == expected_balance, "the rebuilt screen counts to the balance")
+	_check(_player_state.money() == expected_balance, "rebuilding the screen pays nothing more")
+	await _settle()
+	victory = _screen()
+
 	# --- #89 scenario 2: take another contract from the victory screen -----
 	victory.new_contract_button.pressed.emit()
 	await _settle()
@@ -427,9 +527,8 @@ func _run() -> void:
 	)
 	_check(int(_flow.zone_progress().get("unlocked_zones", -1)) == 0, "no zone is open")
 	_check(int(_flow.run_summary().get("credits_earned", -1)) == 0, "the new run has earned nothing")
-	_check(_flow.contract_payout().is_empty(), "the old contract's payout is cleared")
+	_check(not _contract_is_won(), "the new contract has not been won")
 	_check(_player_state.money() == expected_balance, "the credit balance carries over")
-	_check(not _run_state.claim_contract_reward().get("ok", true), "the new contract has not been won")
 
 	# --- a caught contract pays no contract reward -------------------------
 	var next_offer: Dictionary = {}
@@ -454,11 +553,11 @@ func _run() -> void:
 	var caught_screen := _screen()
 	_check(caught_screen != null and caught_screen.name == "CaughtScreen", "the caught screen is shown")
 	var fine: int = caught_screen.fine_amount if caught_screen != null else 0
-	_check(not _run_state.claim_contract_reward().get("ok", true), "a caught contract cannot claim")
+	_check(not _contract_is_won(), "a caught contract has no reward due")
 	_check(
 		_player_state.money() == money_before_caught - fine,
 		"being caught costs the fine and pays no contract reward"
 	)
-	_check(_flow.contract_payout().is_empty(), "a caught contract records no payout")
+	await _finish_caught_and_check_no_reward()
 
 	_finish()

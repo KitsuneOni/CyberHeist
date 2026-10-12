@@ -37,10 +37,6 @@ var _screen_host: Node
 # state before that screen opens. Once the screen rolls its offer, the cards
 # are kept here too, as offered_card_ids, so the save holds them.
 var _pending_reward := {}
-# What winning the contract paid, {credits, balance_before, balance_after}, kept
-# for the victory screen so it can count the balance up from where it was.
-# Empty until a contract is won.
-var _contract_payout := {}
 # What being caught cost, {fine, lost_upgrades}, kept for the caught screen so
 # that reopening it, from Continue for instance, never charges a second time.
 # Empty until the player is caught.
@@ -116,7 +112,6 @@ func continue_run() -> Dictionary:
 		return restored
 
 	_pending_reward = restored.get("pending_reward", {})
-	_contract_payout = restored.get("contract_payout", {})
 	_caught_penalty = restored.get("caught_penalty", {})
 	return _show_current_run_screen()
 
@@ -150,7 +145,6 @@ func save_progress() -> Dictionary:
 
 	var screen_results := {
 		"pending_reward": _pending_reward,
-		"contract_payout": _contract_payout,
 		"caught_penalty": _caught_penalty,
 	}
 	var result: Dictionary = _save_game.write_save(_save_path, screen_results)
@@ -229,11 +223,16 @@ func accepted_contract_offer() -> Dictionary:
 # screen, starts here, so the reward for winning is always an offer's reward.
 #
 # An authored run has no offers and goes straight to the map, and so does a
-# run that has already started on its contract.
+# run that has already accepted an offer or started on its contract.
 func needs_contract_choice() -> bool:
-	if not _run_state.can_accept_contract_offer():
-		return false
-	return not accepted_contract_offer().get("ok", false)
+	return _run_state.needs_contract_choice()
+
+
+# Whether the player can still swap the accepted contract for another offer:
+# true at the hub until any encounter on the contract has been entered. The
+# hub shows Change contract on the map while it is.
+func can_change_contract() -> bool:
+	return _run_state.can_accept_contract_offer()
 
 
 func select_encounter(node_id: int) -> Dictionary:
@@ -269,10 +268,8 @@ func select_encounter(node_id: int) -> Dictionary:
 func complete_active_encounter() -> Dictionary:
 	# Read everything about the encounter before completing, because
 	# completing clears it.
-	var wins_contract: bool = _run_state.active_encounter_wins_contract()
-	var next_scene := _scene_after_completing(wins_contract)
-	var reward: Dictionary = _run_state.active_encounter_reward()
-
+	var completion: Dictionary = _run_state.active_encounter_completion()
+	var next_scene := _scene_after_completing(completion)
 	var prepared := _prepare_screen(next_scene)
 	if not prepared.get("ok", false):
 		return prepared
@@ -288,18 +285,18 @@ func complete_active_encounter() -> Dictionary:
 	#
 	# This does not check that the construct was beaten. The combat screen's
 	# Complete Encounter button is a testing shortcut that comes through here
-	# too, so for now skipping a fight pays the same as winning it. See
-	# _on_complete_encounter_pressed in combat.gd.
+	# too, so for now skipping a fight pays the same as winning it. That
+	# button is disabled on the final boss, so it can never win the contract
+	# reward. See _on_complete_encounter_pressed in combat.gd.
 	_pending_reward = {
-		"credits": int(reward.get("credits", 0)),
-		"guaranteed_rare": bool(reward.get("guaranteed_rare", false)),
+		"credits": int(completion.get("credits", 0)),
+		"guaranteed_rare": bool(completion.get("guaranteed_rare", false)),
 	}
 	# Through change_credits rather than straight onto PlayerStateGlobal, so
 	# the payout also counts as credits earned in the run's stats.
 	change_credits(_pending_reward["credits"])
-	if wins_contract:
-		_pay_contract_reward()
-	elif next_scene == HUB_SCENE_PATH:
+	_pay_contract_reward()
+	if next_scene == HUB_SCENE_PATH:
 		# Nothing is waiting to be chosen after an event or a shop, so a save
 		# made at the hub does not resume on a card reward.
 		_pending_reward = {}
@@ -308,45 +305,40 @@ func complete_active_encounter() -> Dictionary:
 	return transition
 
 
-# The screen to show once the active encounter completes. Winning the contract
-# ends the run, so there is no card reward for a deck about to be reset.
-func _scene_after_completing(wins_contract: bool) -> String:
-	if wins_contract:
+# The screen to show once the encounter described by `completion` (from
+# active_encounter_completion) completes. Winning the contract ends the run, so
+# there is no card reward for a deck about to be reset.
+func _scene_after_completing(completion: Dictionary) -> String:
+	if completion.get("wins_contract", false):
 		return VICTORY_SCENE_PATH
-
-	var active = run_snapshot().get("active_encounter")
-	if typeof(active) == TYPE_DICTIONARY and active.get("type", "") in REWARDING_ENCOUNTERS:
+	if completion.get("type", "") in REWARDING_ENCOUNTERS:
 		return CARD_REWARD_SCENE_PATH
 	return HUB_SCENE_PATH
 
 
-# Pays the reward for the contract just won into the player's balance. Run
-# state only lets the reward be claimed once per contract, and only once it is
-# won, so this can never pay twice or pay for a contract the player was caught
-# on. Set before the victory screen is added, since that screen reads it in its
-# _ready.
+# Pays the reward for a contract the encounter just completed has won.
+# Completing the final boss records the reward in run state, and that can only
+# happen once per contract because the won phase is terminal. Called straight
+# after each successful completion, so it pays exactly once. Any other
+# completion has no reward recorded and pays nothing.
 func _pay_contract_reward() -> void:
-	var claim: Dictionary = _run_state.claim_contract_reward()
-	if not claim.get("ok", false):
-		push_error("Could not pay the contract reward: %s" % claim.get("error", "unknown error"))
-		return
-
-	var player_state: Node = get_node("/root/PlayerStateGlobal")
-	var balance_before: int = player_state.money()
-	var credits := int(claim.get("credits", 0))
-	var balance_after := change_credits(credits)
-	_contract_payout = {
-		"credits": credits,
-		"balance_before": balance_before,
-		"balance_after": balance_after,
-	}
+	var reward: Dictionary = contract_reward()
+	if reward.get("ok", false):
+		change_credits(int(reward.get("credits", 0)))
 
 
-# What winning the contract paid, for the victory screen:
-# {credits, balance_before, balance_after}. The credits are already in
-# PlayerStateGlobal by the time this is read. Empty until a contract is won.
-func contract_payout() -> Dictionary:
-	return _contract_payout.duplicate()
+# Whether completing the active encounter would win the contract, because it
+# is the final zone's boss. False between encounters.
+func active_encounter_wins_contract() -> bool:
+	return _run_state.active_encounter_completion().get("wins_contract", false)
+
+
+# What winning the contract paid: {ok: true, credits} once it has been won,
+# {ok: false} before then. Read from run state rather than kept here, so the
+# victory screen shows the right reward however it is reached. The credits are
+# already in PlayerStateGlobal by the time this can be read.
+func contract_reward() -> Dictionary:
+	return _run_state.contract_reward()
 
 
 # Cards on offer after clearing an encounter. Each is a dictionary of
@@ -509,7 +501,6 @@ func start_new_run() -> Dictionary:
 	# The reward screen sits at the hub phase, so a new run can start from it.
 	# Its payout belongs to the old run and must not reach the next one.
 	_pending_reward = {}
-	_contract_payout = {}
 	_caught_penalty = {}
 	var player_state: Node = get_node("/root/PlayerStateGlobal")
 	player_state.clear_upgrades()

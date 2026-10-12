@@ -58,8 +58,8 @@ pub struct MetaProgress {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedRun {
     /// The contract lifecycle: phase, contract offers and the accepted one,
-    /// the map with its completed and locked nodes and open zones, and the
-    /// run's stats.
+    /// the map with its completed and locked nodes and open zones, the reward
+    /// recorded for a won contract, and the run's stats.
     pub run_state: RunState,
     /// Card ids the run's deck owns, starter cards and gains alike.
     pub deck: Vec<String>,
@@ -80,12 +80,13 @@ pub struct SavedRun {
 /// Results `FlowCoordinator` holds for the screen after an encounter. They
 /// were already applied to the run when it was saved, so a resumed screen
 /// shows them again rather than paying or charging a second time.
+///
+/// A won contract's reward is not among them: run state records it, so it is
+/// saved with the run (see `RunState::contract_reward`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScreenState {
     /// The card reward still waiting to be chosen after a fight.
     pub pending_card_reward: Option<PendingCardReward>,
-    /// What winning the contract paid, for the victory screen.
-    pub contract_payout: Option<ContractPayout>,
     /// The fine taken and upgrades lost on being caught.
     pub caught_penalty: Option<CaughtPenalty>,
 }
@@ -100,13 +101,6 @@ pub struct PendingCardReward {
     /// same ones rather than a free reroll. Empty when no offer was shown,
     /// as on the victory screen, which offers no card.
     pub offered_card_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContractPayout {
-    pub credits: i64,
-    pub balance_before: i64,
-    pub balance_after: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,9 +232,6 @@ impl SavedRun {
         let phase = self.run_state.phase();
         let screen = &self.screen;
 
-        if screen.contract_payout.is_some() && phase != ContractPhase::ContractWon {
-            return Err(invalid("a contract payout is saved for a contract not won"));
-        }
         if screen.caught_penalty.is_some() && phase != ContractPhase::Caught {
             return Err(invalid("a caught penalty is saved for a run not caught"));
         }

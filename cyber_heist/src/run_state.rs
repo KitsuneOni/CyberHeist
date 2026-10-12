@@ -100,9 +100,11 @@ pub struct RunState {
     /// then on the run is committed to it and cannot swap to another offer,
     /// whether that encounter was completed or the player was caught.
     contract_started: bool,
-    /// Whether the reward for winning this contract has been claimed. It is
-    /// paid once per contract, so a second claim is refused.
-    contract_reward_claimed: bool,
+    /// What winning this contract paid, recorded by the one transition into
+    /// `ContractWon`. `None` until the contract is won. Kept on the run, not
+    /// just handed to the caller, so the victory screen can be rebuilt from
+    /// run state alone.
+    contract_reward: Option<i64>,
     /// What this run has achieved, for the end screen. Owned here so that
     /// it starts and ends with the run.
     stats: RunStats,
@@ -117,7 +119,7 @@ impl Default for RunState {
             contract_offers: Vec::new(),
             accepted_offer_index: None,
             contract_started: false,
-            contract_reward_claimed: false,
+            contract_reward: None,
             stats: RunStats::default(),
         }
     }
@@ -151,7 +153,7 @@ impl RunState {
             contract_offers,
             accepted_offer_index: None,
             contract_started: false,
-            contract_reward_claimed: false,
+            contract_reward: None,
             stats: RunStats::default(),
         }
     }
@@ -208,12 +210,20 @@ impl RunState {
 
     /// Whether `accept_contract_offer` would currently take an offer: the run
     /// is at the hub, has offers to choose from and has not yet entered an
-    /// encounter on its contract. The hub reads this to decide whether to show
-    /// the contract choice before the map.
+    /// encounter on its contract. That stays true after an offer is accepted,
+    /// because the player can still change their mind until they enter an
+    /// encounter; the hub reads it to offer Change contract on the map.
     pub fn can_accept_contract_offer(&self) -> bool {
         self.phase == ContractPhase::Hub
             && !self.contract_started
             && !self.contract_offers.is_empty()
+    }
+
+    /// Whether the hub should ask for a contract before showing the map: an
+    /// offer could be accepted and none has been yet. False for an authored
+    /// run, which has no offers, and once the contract is under way.
+    pub fn needs_contract_choice(&self) -> bool {
+        self.can_accept_contract_offer() && self.accepted_offer_index.is_none()
     }
 
     /// Takes on the offer at `index`, replacing the contract map with the one
@@ -296,9 +306,10 @@ impl RunState {
     /// a win; this is the only place that happens, so a win cannot be
     /// recorded twice or for a lost fight.
     ///
-    /// Completing the final zone's boss wins the contract and moves to
-    /// `ContractWon`. Anything else, including an earlier zone's boss, which
-    /// only opens the next zone, returns to the hub.
+    /// Completing the final zone's boss wins the contract: it moves to
+    /// `ContractWon` and records the contract reward (see `contract_reward`).
+    /// Anything else, including an earlier zone's boss, which only opens the
+    /// next zone, returns to the hub.
     pub fn complete_encounter(&mut self) -> Result<(), RunStateError> {
         self.require_phase("complete encounter", ContractPhase::EncounterActive)?;
         // Decided before completing, because completing clears the encounter.
@@ -311,11 +322,12 @@ impl RunState {
             self.stats
                 .record_encounter_completed(completed.encounter_type());
         }
-        self.phase = if wins_contract {
-            ContractPhase::ContractWon
+        if wins_contract {
+            self.phase = ContractPhase::ContractWon;
+            self.contract_reward = Some(self.reward_for_winning());
         } else {
-            ContractPhase::Hub
-        };
+            self.phase = ContractPhase::Hub;
+        }
         Ok(())
     }
 
@@ -337,27 +349,25 @@ impl RunState {
         encounter.is_boss() && encounter.zone() >= final_zone
     }
 
-    /// Claims the reward for winning the contract: the accepted offer's
-    /// `credit_reward`, or 0 for the default contract a run starts on, which
-    /// was never offered and pays no reward.
+    /// What winning this contract paid: `Some(credits)` once it has been won,
+    /// `None` before then and on a contract the player was caught on.
     ///
-    /// Only a won contract pays, and only once: this is refused outside
-    /// `ContractWon` (so a caught contract never pays) and on a second claim.
-    /// It only works out the amount. The caller applies it to the player's
-    /// balance and records it on the run, which `FlowCoordinator` does through
+    /// It is recorded by the transition into `ContractWon`, which can happen
+    /// only once per contract because that phase is terminal, so the reward
+    /// cannot come due twice. Run state only records the amount: the caller
+    /// that completed the encounter applies it to the player's balance and
+    /// records it on the run, which `FlowCoordinator` does through
     /// `change_credits`.
-    pub fn claim_contract_reward(&mut self) -> Result<i64, RunStateError> {
-        self.require_phase("claim the contract reward", ContractPhase::ContractWon)?;
-        if self.contract_reward_claimed {
-            return Err(RunStateError::ContractRewardAlreadyClaimed);
-        }
+    pub fn contract_reward(&self) -> Option<i64> {
+        self.contract_reward
+    }
 
-        self.contract_reward_claimed = true;
-        let reward = self
-            .accepted_offer()
+    /// The accepted offer's `credit_reward`, or 0 for the default contract a
+    /// run starts on, which was never offered and pays no reward.
+    fn reward_for_winning(&self) -> i64 {
+        self.accepted_offer()
             .map(|offer| offer.credit_reward)
-            .unwrap_or(0);
-        Ok(reward)
+            .unwrap_or(0)
     }
 
     /// Records a change the run made to the player's credits, gain or loss.
@@ -501,8 +511,6 @@ pub enum RunStateError {
     /// An encounter on the current contract has already been entered, so the
     /// run is committed to it.
     ContractAlreadyStarted,
-    /// The reward for winning this contract has already been paid.
-    ContractRewardAlreadyClaimed,
     /// A run read back from a save breaks one of the rules its transitions
     /// keep. Says which.
     InconsistentRun(&'static str),
@@ -526,9 +534,6 @@ impl fmt::Display for RunStateError {
             Self::ContractAlreadyStarted => formatter.write_str(
                 "this contract is already under way, so a different one cannot be accepted",
             ),
-            Self::ContractRewardAlreadyClaimed => {
-                formatter.write_str("the reward for this contract has already been paid")
-            }
             Self::InconsistentRun(reason) => {
                 write!(formatter, "the saved run is invalid: {reason}")
             }
@@ -865,7 +870,7 @@ mod tests {
         assert_eq!(state, before);
     }
 
-    /// The hub asks this before drawing the map, so it has to agree with
+    /// The hub asks this to offer Change contract, so it has to agree with
     /// what `accept_contract_offer` actually allows.
     #[test]
     fn an_offer_can_be_accepted_only_before_the_contract_starts() {
@@ -877,6 +882,10 @@ mod tests {
             state.can_accept_contract_offer(),
             "the player can still change their mind before entering anything"
         );
+        state
+            .accept_contract_offer(0)
+            .expect("so changing to another offer is accepted");
+        assert_eq!(state.accepted_offer_index(), Some(0));
 
         enter_first_encounter(&mut state);
         assert!(
@@ -903,7 +912,44 @@ mod tests {
 
     #[test]
     fn an_authored_run_has_no_offer_choice_to_make() {
-        assert!(!RunState::new().can_accept_contract_offer());
+        let state = RunState::new();
+
+        assert!(!state.can_accept_contract_offer());
+        assert!(!state.needs_contract_choice());
+    }
+
+    /// The hub opens on the offer picker exactly while this is true, so a
+    /// new run asks once and then shows the map.
+    #[test]
+    fn a_contract_choice_is_needed_only_until_an_offer_is_accepted() {
+        let mut state = generated_run(5);
+        assert!(
+            state.needs_contract_choice(),
+            "a new run asks for a contract"
+        );
+
+        state.accept_contract_offer(2).expect("third offer");
+        assert!(
+            !state.needs_contract_choice(),
+            "an accepted offer goes straight to the map"
+        );
+        assert!(
+            state.can_accept_contract_offer(),
+            "while Change contract stays available"
+        );
+    }
+
+    #[test]
+    fn no_contract_choice_is_needed_once_the_default_contract_is_under_way() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        assert!(!state.needs_contract_choice(), "not during an encounter");
+
+        state.complete_encounter().expect("the encounter is active");
+        assert!(
+            !state.needs_contract_choice(),
+            "the run is committed to the contract it started on"
+        );
     }
 
     #[test]
@@ -1207,11 +1253,8 @@ mod tests {
             .collect();
         assert_eq!(selectable, vec![4, 5], "the next zone is open");
         assert_eq!(
-            state.claim_contract_reward(),
-            Err(RunStateError::InvalidTransition {
-                action: "claim the contract reward",
-                phase: ContractPhase::Hub,
-            }),
+            state.contract_reward(),
+            None,
             "clearing a zone is not finishing the contract"
         );
     }
@@ -1283,25 +1326,44 @@ mod tests {
         assert_eq!(state, before);
     }
 
-    /// Acceptance (#23 and #89 scenario 2): winning pays the accepted
-    /// contract's difficulty-derived reward, and pays it once.
+    /// Acceptance (#23 and #89 scenario 2): winning records the accepted
+    /// contract's difficulty-derived reward, on the transition itself.
     #[test]
-    fn winning_pays_the_accepted_offers_credit_reward_exactly_once() {
+    fn winning_records_the_accepted_offers_credit_reward() {
         let mut state = generated_run(5);
         state.accept_contract_offer(2).expect("third offer");
         let reward = state.accepted_offer().unwrap().credit_reward;
+
         play_to_victory(&mut state);
-        assert!(!state.contract_reward_claimed);
 
-        assert_eq!(state.claim_contract_reward(), Ok(reward));
-        assert!(state.contract_reward_claimed);
+        assert_eq!(state.contract_reward(), Some(reward));
+    }
 
-        let after_first_claim = state.clone();
-        assert_eq!(
-            state.claim_contract_reward(),
-            Err(RunStateError::ContractRewardAlreadyClaimed)
-        );
-        assert_eq!(state, after_first_claim, "a refused claim changes nothing");
+    /// The reward is recorded by the transition into `ContractWon`, and that
+    /// phase is terminal, so nothing can make it come due a second time.
+    #[test]
+    fn the_contract_reward_can_only_come_due_once() {
+        let mut state = generated_run(5);
+        state.accept_contract_offer(0).expect("first offer");
+        play_to_victory(&mut state);
+        let won = state.clone();
+
+        assert!(state.complete_encounter().is_err());
+        assert!(state.select_encounter(1).is_err());
+        assert_eq!(state, won, "a refused transition changes nothing");
+    }
+
+    #[test]
+    fn no_contract_reward_is_recorded_before_the_contract_is_won() {
+        let mut state = generated_run(5);
+        state.accept_contract_offer(1).expect("second offer");
+        assert_eq!(state.contract_reward(), None, "at the hub");
+
+        enter_first_encounter(&mut state);
+        assert_eq!(state.contract_reward(), None, "during an encounter");
+
+        state.complete_encounter().expect("the encounter is active");
+        assert_eq!(state.contract_reward(), None, "after an ordinary fight");
     }
 
     /// Each offer pays its own reward, so a longer, harder contract pays
@@ -1313,7 +1375,7 @@ mod tests {
             let mut state = generated_run(11);
             state.accept_contract_offer(index).expect("offer");
             play_to_victory(&mut state);
-            rewards.push(state.claim_contract_reward().expect("won"));
+            rewards.push(state.contract_reward().expect("won"));
         }
 
         assert!(
@@ -1330,35 +1392,22 @@ mod tests {
         play_to_victory(&mut state);
 
         assert_eq!(state.phase(), ContractPhase::ContractWon);
-        assert_eq!(state.claim_contract_reward(), Ok(0));
-        assert_eq!(
-            state.claim_contract_reward(),
-            Err(RunStateError::ContractRewardAlreadyClaimed)
-        );
+        assert_eq!(state.contract_reward(), Some(0));
     }
 
     /// Getting caught fails the encounter rather than the reward ever coming
-    /// due, so there is nothing to claim while caught or after it.
+    /// due, so nothing is recorded while caught or after it.
     #[test]
     fn a_caught_contract_pays_no_contract_reward() {
         let mut state = generated_run(5);
         state.accept_contract_offer(0).expect("first offer");
         enter_first_encounter(&mut state);
-        state.report_caught().unwrap();
-        let caught = state.clone();
 
-        assert!(matches!(
-            state.claim_contract_reward(),
-            Err(RunStateError::InvalidTransition {
-                phase: ContractPhase::Caught,
-                ..
-            })
-        ));
-        assert_eq!(state, caught);
+        state.report_caught().unwrap();
+        assert_eq!(state.contract_reward(), None, "while caught");
 
         state.finish_caught().unwrap();
-        assert!(state.claim_contract_reward().is_err());
-        assert!(!state.contract_reward_claimed);
+        assert_eq!(state.contract_reward(), None, "after being caught");
     }
 
     /// Acceptance scenario 2 (#89): from the victory screen the player takes
@@ -1368,7 +1417,7 @@ mod tests {
         let mut state = generated_run(5);
         state.accept_contract_offer(1).expect("second offer");
         play_to_victory(&mut state);
-        state.claim_contract_reward().expect("won");
+        assert!(state.contract_reward().is_some(), "the contract was won");
         state.record_credit_change(500);
 
         state
@@ -1381,22 +1430,19 @@ mod tests {
             "a new run is exactly a freshly generated one"
         );
         assert_eq!(state.phase(), ContractPhase::Hub);
-        assert!(!state.contract_reward_claimed);
         assert_eq!(state.summary().stats, RunStats::default());
-        assert!(
-            state.claim_contract_reward().is_err(),
+        assert_eq!(
+            state.contract_reward(),
+            None,
             "the new contract has not been won yet"
+        );
+        assert!(
+            state.needs_contract_choice(),
+            "the new run asks for a contract"
         );
         state
             .accept_contract_offer(0)
             .expect("the new run can take another contract");
-    }
-
-    #[test]
-    fn a_repeated_reward_claim_explains_itself() {
-        let message = RunStateError::ContractRewardAlreadyClaimed.to_string();
-
-        assert!(message.contains("already been paid"), "{message}");
     }
 
     // --- Restoring a saved run (story #10) ---------------------------------
@@ -1425,9 +1471,11 @@ mod tests {
         );
 
         play_to_victory(&mut state);
-        assert_eq!(state.validate_restored(), Ok(()), "a contract won");
-        state.claim_contract_reward().unwrap();
-        assert_eq!(state.validate_restored(), Ok(()), "its reward claimed");
+        assert_eq!(
+            state.validate_restored(),
+            Ok(()),
+            "a contract won, with its reward recorded"
+        );
     }
 
     #[test]

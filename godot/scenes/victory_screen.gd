@@ -6,6 +6,12 @@
 # to the new total, so the payout reads as money arriving rather than a number
 # that silently changed.
 #
+# The contract, run summary, reward and balance all come from run state and
+# the player's balance rather than anything FlowCoordinator keeps in memory,
+# so the screen is the same whether it opens straight after the fight or is
+# rebuilt later from the run (Continue run, once saving lands). Only the final
+# boss's own payout line needs the fight to have just happened.
+#
 # Navigation goes through FlowCoordinator like every other screen.
 extends Control
 
@@ -36,9 +42,9 @@ func _ready() -> void:
 	_show_contract(FlowCoordinator.accepted_contract_offer())
 	_show_summary(FlowCoordinator.run_summary())
 
-	var payout: Dictionary = FlowCoordinator.contract_payout()
-	_show_reward(payout)
-	_count_balance(payout)
+	var reward: Dictionary = FlowCoordinator.contract_reward()
+	_show_reward(reward)
+	_count_balance(int(reward.get("credits", 0)))
 
 	new_contract_button.pressed.connect(_on_new_contract_pressed)
 	new_contract_button.grab_focus()
@@ -69,27 +75,32 @@ func _show_summary(summary: Dictionary) -> void:
 	)
 
 
-func _show_reward(payout: Dictionary) -> void:
-	var credits := int(payout.get("credits", 0))
-	if credits > 0:
+func _show_reward(reward: Dictionary) -> void:
+	var credits := int(reward.get("credits", 0))
+	if not reward.get("ok", false):
+		# Only reachable if this screen is opened on a run that has not won its
+		# contract, which is a bug elsewhere. Say so rather than claim the
+		# contract paid nothing.
+		reward_label.text = "Could not find the reward for this contract."
+	elif credits > 0:
 		reward_label.text = "Contract reward: +%d credits" % credits
 	else:
 		reward_label.text = "This contract carried no reward."
 
 	# The final boss pays its own encounter credits on top, the same as any
-	# boss. Those were already in the balance before the count starts.
+	# boss. Those were already in the balance before the count starts. Only
+	# known straight after the fight, so a rebuilt screen leaves this line out.
 	var boss_credits: int = FlowCoordinator.pending_reward_credits()
 	if boss_credits > 0:
 		reward_label.text += "\nFinal boss payout: +%d credits" % boss_credits
 
 
-# Counts the balance up from before the reward to the new total. Without a
-# payout to show, for example if this screen is opened on its own, it simply
-# shows the current balance.
-func _count_balance(payout: Dictionary) -> void:
-	var current_balance: int = PlayerStateGlobal.money()
-	var start_balance := int(payout.get("balance_before", current_balance))
-	target_balance = int(payout.get("balance_after", current_balance))
+# Counts the balance up from before the reward to the new total. The reward is
+# already in the balance, so the count starts that many credits below it. With
+# no reward it simply shows the current balance.
+func _count_balance(reward_credits: int) -> void:
+	target_balance = PlayerStateGlobal.money()
+	var start_balance := target_balance - reward_credits
 	_render_balance(start_balance)
 
 	if start_balance == target_balance:
