@@ -142,5 +142,13 @@ jobs:
       - name: Run headless dark web shop test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/shop_test.gd
 
+      # Chooses a contract on the hub's offer picker and plays it to its
+      # final boss: earlier bosses only open the next zone, the final one
+      # shows the victory screen, the offer's credit reward is paid once and
+      # counted up on screen, the next contract is chosen on the picker
+      # again, and being caught pays nothing.
+      - name: Run headless contract victory and reward test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/contract_victory_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh

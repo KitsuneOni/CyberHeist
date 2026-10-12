@@ -3,13 +3,26 @@
 #
 # Layout, status and connections all come from contract_map.rs; this script
 # only wires them to the screen, and MapGraph does the drawing.
+#
+# A new run first asks the player which contract to take (the offer picker),
+# and only shows the map once one is accepted. The accepted offer is what
+# winning the contract pays, so every run the player starts carries a reward.
 extends Control
+
+const CHOOSING_TITLE := "Choose your contract"
+const CHOOSING_SUBTITLE := "Longer contracts take more zones and pay more when you win."
+const MAP_TITLE := "Choose your next breach"
+const MAP_SUBTITLE := "Each route changes which encounters remain available for this contract."
 
 # How many frames to give the map graph to reach the width it asked for before
 # scrolling anyway. Layout normally settles in one or two; the bound just stops
 # a contract that never grows from waiting forever.
 const MAX_LAYOUT_FRAMES := 8
 
+@onready var title_label: Label = $Page/VBox/Title
+@onready var subtitle_label: Label = $Page/VBox/Subtitle
+@onready var offer_picker: PanelContainer = $Page/VBox/OfferPicker
+@onready var map_panel: PanelContainer = $Page/VBox/MapPanel
 @onready var credits_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/CreditsLabel
 @onready var progress_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/ProgressLabel
 @onready var map_scroll: ScrollContainer = $Page/VBox/MapPanel/MapMargin/MapContent/MapScroll
@@ -23,7 +36,33 @@ func _ready() -> void:
 	# The nodes on the map are the only way to choose a route, so selection
 	# comes from the graph rather than a separate row of buttons.
 	map_graph.node_selected.connect(_on_encounter_selected)
+	offer_picker.offer_chosen.connect(_on_offer_chosen)
 	_build_key()
+
+	if FlowCoordinator.needs_contract_choice():
+		_show_contract_choice()
+	else:
+		_show_map()
+
+
+# Whether the player is choosing a contract rather than looking at the map.
+func is_choosing_contract() -> bool:
+	return offer_picker.visible
+
+
+func _show_contract_choice() -> void:
+	title_label.text = CHOOSING_TITLE
+	subtitle_label.text = CHOOSING_SUBTITLE
+	map_panel.visible = false
+	offer_picker.visible = true
+	offer_picker.show_offers(FlowCoordinator.contract_offers())
+
+
+func _show_map() -> void:
+	title_label.text = MAP_TITLE
+	subtitle_label.text = MAP_SUBTITLE
+	offer_picker.visible = false
+	map_panel.visible = true
 	_show_available_encounters()
 
 
@@ -122,6 +161,18 @@ func _boss_is_next(available: Array) -> bool:
 		if str(encounter.get("type", "")) != "boss":
 			return false
 	return not available.is_empty()
+
+
+# Accepting rebuilds the run's map from the offer, so the map is drawn only
+# after the acceptance has gone through.
+func _on_offer_chosen(index: int) -> void:
+	var result: Dictionary = FlowCoordinator.accept_contract_offer(index)
+	if not result.get("ok", false):
+		offer_picker.show_error(
+			"Could not accept the contract: %s" % result.get("error", "unknown error")
+		)
+		return
+	_show_map()
 
 
 func _on_encounter_selected(node_id: int) -> void:

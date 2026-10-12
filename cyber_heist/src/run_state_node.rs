@@ -189,6 +189,15 @@ impl RunStateNode {
         offers
     }
 
+    /// Whether `accept_contract_offer` would currently take an offer: at the
+    /// hub, with offers to choose from, before any encounter on the contract
+    /// has been entered. The hub reads this to decide whether to show the
+    /// contract choice before the map.
+    #[func]
+    fn can_accept_contract_offer(&self) -> bool {
+        self.state.can_accept_contract_offer()
+    }
+
     /// Takes on the offer at `index` and rebuilds the contract map from it.
     /// `{ok: true}`, or `{ok: false, error}` for an index that is not on offer,
     /// outside the hub, or once an encounter on the contract has been entered.
@@ -294,6 +303,32 @@ impl RunStateNode {
     #[func]
     fn complete_encounter(&mut self) -> VarDictionary {
         transition_result(self.state.complete_encounter())
+    }
+
+    /// Whether completing the active encounter would win the contract,
+    /// because it is the boss of the final zone. Read by `FlowCoordinator`
+    /// before it completes, to choose the victory screen over the card reward.
+    #[func]
+    fn active_encounter_wins_contract(&self) -> bool {
+        self.state.active_encounter_wins_contract()
+    }
+
+    /// Claims the reward for the contract just won: `{ok: true, credits}`,
+    /// where `credits` is the accepted offer's `credit_reward` (0 on the
+    /// default contract). `{ok: false, error}` unless the contract has been
+    /// won, and on any claim after the first, so it pays exactly once.
+    ///
+    /// This only works out the amount. `FlowCoordinator` applies it with
+    /// `change_credits`, which also records it on the run's stats.
+    #[func]
+    fn claim_contract_reward(&mut self) -> VarDictionary {
+        match self.state.claim_contract_reward() {
+            Ok(credits) => vdict! {
+                "ok" => true,
+                "credits" => credits,
+            },
+            Err(error) => transition_error(&error.to_string()),
+        }
     }
 
     #[func]
