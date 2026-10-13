@@ -13,15 +13,19 @@
 #
 # There is no audio device in a headless run, and AudioDirector does not start
 # its players without one, so this checks the routing rather than listening:
-# which stream each card type puts on the SFX player, which bus each player
+# that each card type plays on its own effects player, whose stream never
+# changes (so one card's sound cannot cut off another's), which bus each player
 # feeds, that the music loops, and that a volume of 0 mutes its bus. It also
-# checks the settings persist, using a scratch settings file so a developer's
-# real settings are never touched.
+# checks the settings persist, are saved once the sliders settle rather than on
+# every step, and that an unreadable settings file is kept rather than
+# overwritten, using scratch settings files so a developer's real settings are
+# never touched.
 #
 # Run: godot --headless --path godot -s res://tests/audio_test.gd
 extends SceneTree
 
 const TEST_SETTINGS_PATH := "user://audio_test_settings.cfg"
+const BROKEN_SETTINGS_SUFFIX := ".broken"
 
 # Every card type the combat screen can show, and the sound cue it should make.
 const CUES_BY_CARD_TYPE := {
@@ -76,7 +80,7 @@ func _finish() -> void:
 		for setting: String in _original_volumes:
 			_audio.set_volume(setting, _original_volumes[setting])
 		_audio.settings_path = _audio.SETTINGS_PATH
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_SETTINGS_PATH))
+	_remove_scratch_settings()
 
 	if _failures.is_empty():
 		print("audio test: PASSED")
@@ -99,7 +103,7 @@ func _run() -> void:
 
 	for setting: String in _audio.VOLUME_BUSES:
 		_original_volumes[setting] = _audio.volume(setting)
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_SETTINGS_PATH))
+	_remove_scratch_settings()
 	_audio.settings_path = TEST_SETTINGS_PATH
 	# Start from the default volumes rather than whatever the player last saved,
 	# so a muted Master or SFX setting cannot make the routing checks fail.
@@ -114,9 +118,16 @@ func _run() -> void:
 	_check_music()
 	await _check_settings_screen()
 	_check_persistence()
+	_check_unreadable_settings_are_kept()
 	await _check_card_sounds()
+	_check_settings_only_open_from_the_main_menu()
 
 	_finish()
+
+
+func _remove_scratch_settings() -> void:
+	for path: String in [TEST_SETTINGS_PATH, TEST_SETTINGS_PATH + BROKEN_SETTINGS_SUFFIX]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 
 func _check_bus_layout() -> void:
@@ -210,11 +221,20 @@ func _check_settings_screen() -> void:
 	master_slider.value = 90
 	_check(not AudioServer.is_bus_mute(_bus_index("master")), "raising master unmutes it")
 
+	# Saving waits for the sliders to settle, so a drag is not a write per step.
+	_check(settings.has_unsaved_changes(), "the latest slider change is waiting to be saved")
 	_check(
-		FileAccess.file_exists(TEST_SETTINGS_PATH),
-		"moving a slider saves the settings"
+		not FileAccess.file_exists(TEST_SETTINGS_PATH),
+		"moving a slider does not rewrite the settings file on every step"
 	)
+	await create_timer(settings.SAVE_DELAY_SECONDS + 0.2).timeout
+	_check(not settings.has_unsaved_changes(), "the change is saved once the sliders settle")
+	_check(FileAccess.file_exists(TEST_SETTINGS_PATH), "settled sliders save the settings")
 
+	# Leaving straight after a change still saves it.
+	sfx_slider.value = 60
+	sfx_slider.value = 70
+	_check(settings.has_unsaved_changes(), "a last change is waiting when Back is pressed")
 	settings.get_node("%BackButton").pressed.emit()
 	await process_frame
 	var back := _screen()
@@ -239,6 +259,26 @@ func _check_persistence() -> void:
 	_audio.set_volume("music", 40)
 
 
+# A settings file that exists but does not parse must not be silently replaced
+# by one holding only the volumes: it is copied aside, then a fresh file saved.
+func _check_unreadable_settings_are_kept() -> void:
+	var unreadable := "[display]\nfullscreen = tru e (\n"
+	var file := FileAccess.open(TEST_SETTINGS_PATH, FileAccess.WRITE)
+	file.store_string(unreadable)
+	file.close()
+
+	_check(_audio.save_settings() == OK, "saving over an unreadable settings file still works")
+	var broken_path := TEST_SETTINGS_PATH + BROKEN_SETTINGS_SUFFIX
+	_check(
+		FileAccess.file_exists(broken_path)
+		and FileAccess.get_file_as_string(broken_path) == unreadable,
+		"the unreadable settings are kept in a .broken copy"
+	)
+	var saved := ConfigFile.new()
+	_check(saved.load(TEST_SETTINGS_PATH) == OK, "the fresh settings file can be read back")
+	_check(int(saved.get_value("audio", "music", -1)) == 40, "the fresh file has the volumes")
+
+
 func _check_card_sounds() -> void:
 	for card_id: String in EXTRA_CARDS:
 		_check(_flow.add_card_to_deck(card_id), "%s joins the run's deck" % card_id)
@@ -260,7 +300,7 @@ func _check_card_sounds() -> void:
 	combat.selected_index = -1
 	combat._draw_hand()
 
-	var sfx: AudioStreamPlayer = _audio.sfx_player
+	var players_used := {}
 	var streams_heard := {}
 	for card_type: String in CUES_BY_CARD_TYPE:
 		var expected_cue: String = CUES_BY_CARD_TYPE[card_type]
@@ -277,11 +317,17 @@ func _check_card_sounds() -> void:
 			_audio.last_sound_cue == expected_cue,
 			"playing a %s card plays the %s sound" % [card_type, expected_cue]
 		)
+		var sfx: AudioStreamPlayer = _audio.sfx_player_for(expected_cue)
+		_check(sfx != null, "the %s sound has its own effects player" % expected_cue)
+		if sfx == null:
+			continue
 		_check(
-			sfx.stream != null and sfx.stream == _audio.stream_for_cue(expected_cue),
-			"the %s sound is the stream on the effects player" % expected_cue
+			sfx.stream != null and sfx.stream.resource_path.ends_with("%s.wav" % expected_cue),
+			"the %s player holds the %s sound" % [expected_cue, expected_cue]
 		)
 		_check(sfx.bus == &"SFX", "the %s sound plays on the SFX bus" % expected_cue)
+		_check(sfx.max_polyphony > 1, "the %s sound can overlap itself" % expected_cue)
+		players_used[sfx] = true
 		if sfx.stream != null:
 			streams_heard[sfx.stream.resource_path] = true
 
@@ -289,12 +335,34 @@ func _check_card_sounds() -> void:
 		streams_heard.size() == CUES_BY_CARD_TYPE.size(),
 		"each card type plays a different sound"
 	)
+	_check(
+		players_used.size() == CUES_BY_CARD_TYPE.size(),
+		"each card type plays on a different player"
+	)
+	# Swapping a player's stream stops what it was playing, so after every card
+	# type has played, each player must still hold the stream it started with.
+	for card_type: String in CUES_BY_CARD_TYPE:
+		var cue: String = CUES_BY_CARD_TYPE[card_type]
+		var player: AudioStreamPlayer = _audio.sfx_player_for(cue)
+		_check(
+			player != null and player.stream.resource_path.ends_with("%s.wav" % cue),
+			"playing other cards never swaps the %s player's stream" % cue
+		)
 
 	# Effects at 0 are silent too: the card still routes its sound, to a bus
 	# that is muted.
 	_audio.set_volume("sfx", 0)
 	_check(_bus_is_silent("sfx"), "effects volume 0 mutes the SFX bus outright")
 	_check(_audio.is_music_on(), "the music is still on during combat")
+
+
+# Settings always return to the main menu, so opening them from inside a run
+# would lose the screen the player was on. The test is in combat by now.
+func _check_settings_only_open_from_the_main_menu() -> void:
+	var before := _screen()
+	var opened: Dictionary = _flow.open_settings()
+	_check(not opened.get("ok", false), "settings cannot be opened from inside a run")
+	_check(_screen() == before, "a refused settings screen leaves the run's screen showing")
 
 
 func _hand_index_of_type(draw: Node, card_type: String) -> int:

@@ -8,7 +8,3 @@ script = ExtResource("1_audio")
 
 [node name="MusicPlayer" type="AudioStreamPlayer" parent="."]
 bus = &"Music"
-
-[node name="SfxPlayer" type="AudioStreamPlayer" parent="."]
-max_polyphony = 4
-bus = &"SFX"

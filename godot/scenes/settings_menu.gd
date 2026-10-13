@@ -3,13 +3,16 @@
 # story and can be added below them.
 #
 # A slider applies its volume the moment it moves, so the player hears the
-# change straight away, and saves it so the next launch starts the same way.
+# change straight away. Saving rewrites the settings file, so it waits until
+# the sliders have been still for SAVE_DELAY_SECONDS rather than happening on
+# every step of a drag, and leaving the screen saves anything still waiting.
 # Navigation goes through FlowCoordinator like every other screen.
 extends Control
 
 const SELECTED_PREFIX := "> "
 const IDLE_PREFIX := "  "
 const BACK_LABEL := "Back"
+const SAVE_DELAY_SECONDS := 0.4
 
 @onready var master_slider: HSlider = %MasterSlider
 @onready var music_slider: HSlider = %MusicSlider
@@ -22,6 +25,8 @@ const BACK_LABEL := "Back"
 
 # Each slider's volume setting and the label showing its value.
 var _rows := {}
+# Restarted by every slider change; saves once it runs out.
+var _save_timer: Timer
 
 
 func _ready() -> void:
@@ -38,6 +43,14 @@ func _ready() -> void:
 		slider.value = AudioDirector.volume(setting)
 		_show_value(slider)
 		slider.value_changed.connect(_on_slider_changed.bind(slider))
+		# Hovering selects a slider, as it does a menu button.
+		slider.mouse_entered.connect(slider.grab_focus)
+
+	_save_timer = Timer.new()
+	_save_timer.one_shot = true
+	_save_timer.wait_time = SAVE_DELAY_SECONDS
+	_save_timer.timeout.connect(_save_settings)
+	add_child(_save_timer)
 
 	back_button.focus_entered.connect(_render_back_label)
 	back_button.focus_exited.connect(_render_back_label)
@@ -46,6 +59,12 @@ func _ready() -> void:
 	_render_back_label()
 
 	master_slider.grab_focus()
+
+
+func _exit_tree() -> void:
+	if not _save_timer.is_stopped():
+		_save_timer.stop()
+		_save_settings()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -58,7 +77,15 @@ func _on_slider_changed(value: float, slider: HSlider) -> void:
 	var setting: String = _rows[slider]["setting"]
 	AudioDirector.set_volume(setting, int(value))
 	_show_value(slider)
+	_save_timer.start()
 
+
+# Whether the last change has been written to the settings file yet.
+func has_unsaved_changes() -> bool:
+	return not _save_timer.is_stopped()
+
+
+func _save_settings() -> void:
 	if AudioDirector.save_settings() == OK:
 		status_label.text = ""
 	else:

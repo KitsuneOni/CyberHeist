@@ -32,6 +32,11 @@ pub enum SoundCue {
 impl SoundCue {
     /// Every cue, in card type order. The audio director loads one stream for
     /// each of these.
+    ///
+    /// Kept by hand, since Rust cannot list an enum's variants without a
+    /// derive crate. A card type left out would compile but never be loaded,
+    /// so the tests check this against every card type the card data files
+    /// actually use, and that each one has its sound file.
     pub const ALL: [SoundCue; 5] = [
         SoundCue::Attack,
         SoundCue::Defence,
@@ -146,6 +151,7 @@ impl AudioRules {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card_database::parse_cards;
     use std::collections::HashSet;
 
     const ALL_CARD_TYPES: [CardType; 5] = [
@@ -171,6 +177,33 @@ mod tests {
         for card_type in ALL_CARD_TYPES {
             let cue = SoundCue::for_card_type(card_type);
             assert!(SoundCue::ALL.contains(&cue), "{cue:?} is not in ALL");
+        }
+    }
+
+    /// The real card data, not a hand-kept list of types: a new card type
+    /// used by any card must have its cue in `SoundCue::ALL` (or it is never
+    /// loaded) and its sound file on disk.
+    #[test]
+    fn every_card_type_in_the_card_data_has_a_loaded_cue_and_a_sound_file() {
+        let mut card_types_used = Vec::new();
+        for file in ["cards.ron", "cursed_cards.ron"] {
+            let text = std::fs::read_to_string(format!("../godot/data/{file}"))
+                .unwrap_or_else(|error| panic!("could not read {file}: {error}"));
+            card_types_used.extend(parse_cards(&text).values().map(|card| card.card_type));
+        }
+        assert!(!card_types_used.is_empty(), "the card data names no cards");
+
+        for card_type in card_types_used {
+            let cue = SoundCue::for_card_type(card_type);
+            assert!(
+                SoundCue::ALL.contains(&cue),
+                "{card_type:?} plays {cue:?}, which is not in SoundCue::ALL"
+            );
+            let sound = format!("../godot/assets/audio/sfx/{}.wav", cue.id());
+            assert!(
+                std::path::Path::new(&sound).is_file(),
+                "{cue:?} has no sound at {sound}"
+            );
         }
     }
 

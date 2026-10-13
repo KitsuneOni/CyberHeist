@@ -360,7 +360,7 @@ everything the player hears. Sound goes through three buses, defined in
 | --- | --- | --- |
 | `Master` | everything | the output |
 | `Music` | the background loop (`MusicPlayer`) | `Master` |
-| `SFX` | card sounds (`SfxPlayer`) | `Master` |
+| `SFX` | card sounds (one player per cue, `Sfx_<cue>`) | `Master` |
 
 **Card sounds.** Every card type has its own sound. `card_play` reports the
 played card's type, and `DrawPhase.play_card()` adds `type` (the display name,
@@ -377,7 +377,15 @@ screen hands it to `AudioDirector.play_card_sound(cue)`:
 | Social Engineering | `social_engineering` | a sly, voice-like murmur |
 
 Each cue's sound is `godot/assets/audio/sfx/<cue>.wav`, so adding a card type
-means adding a cue in Rust and a file of the same name.
+means adding a cue in Rust (including `SoundCue::ALL`) and a file of the same
+name; a Rust test checks every card type the card data uses has both.
+
+Each cue plays on its own `AudioStreamPlayer`, made when the cues load, whose
+stream never changes. Giving a player a new stream stops whatever it was
+playing, so a single shared player would cut one card's sound off as soon as
+the next card went down. Each player allows four overlapping plays
+(`EFFECT_POLYPHONY`), so the same card twice in quick succession layers rather
+than restarting.
 
 **Music.** An eight-second tense loop (`assets/audio/music/heist_loop.wav`)
 starts when the game launches and keeps going across every screen. It loops
@@ -387,11 +395,19 @@ because its `.import` file sets `edit/loop_mode=2`. The autoload runs with
 **Volume.** There was no settings screen before this story, so it adds a
 minimal one: **Settings** on the main menu opens `settings_menu.tscn`, with a
 slider each for Master, Music and Effects. Moving a slider applies to its bus
-at once and saves to `user://settings.cfg` (section `audio`, keys `master`,
-`music`, `sfx`), which `AudioDirector` loads on every launch. Missing or
-unreadable values fall back to the defaults (80, 60, 80). Display options are
+at once. Saving to `user://settings.cfg` (section `audio`, keys `master`,
+`music`, `sfx`) waits until the sliders have been still for 0.4 seconds, so a
+drag is one write rather than one per step, and leaving the screen saves
+anything still waiting. `AudioDirector` loads the file on every launch.
+Missing or unreadable values fall back to the defaults (80, 60, 80). A file
+that exists but cannot be parsed is copied to `settings.cfg.broken` before a
+fresh one is written, so nothing in it is silently lost. Display options are
 left to the settings menu story, which can add them to the same screen and
 file.
+
+Settings open only from the main menu (`FlowCoordinator.open_settings()`
+refuses anywhere else), because Back always returns there. A pause menu that
+opens settings mid-run will need them to remember where they came from.
 
 A volume is a whole percentage, clamped to 0..100 by `Volume` in
 `audio_mix.rs`. The bus level follows the square of the slider (100% is 0 dB,
@@ -410,20 +426,27 @@ AudioRules.is_silent(0)                    # true
 
 **Headless runs.** With no audio device (the `Dummy` driver that `--headless`
 uses) `AudioDirector` sets streams and buses up exactly as usual but does not
-start the players: nothing could be heard, and a playback still running when
-the engine quits is reported as a leak at exit. `is_music_on()` and
-`last_sound_cue` say what would be playing. The headless test checks the
-routing that way:
+start the players. Nothing could be heard, and Godot 4.7.1 only frees a
+stopped playback on the audio server's next update, which never comes once
+the engine is quitting: a headless playback is reported at exit as leaked
+objects and `ERROR: ... resources still in use`, even when the players are
+stopped in `_exit_tree`. Every suite starts the music, so that line would
+trip the error checks. `is_music_on()` (true only once the music stream has
+loaded) and `last_sound_cue` say what would be playing. The headless test
+checks the routing that way:
 
 ```sh
 godot --headless --path godot -s res://tests/audio_test.gd
 ```
 
-It plays one card of every type and checks each puts its own stream on the
-SFX player, that the music loops on the Music bus, that setting Music, Master
-or Effects to 0 in the settings screen mutes that bus and only that bus, and
-that the settings are saved and load back. It uses a scratch settings file so
-it never overwrites a developer's own.
+It plays one card of every type and checks each plays on its own SFX player
+holding its own stream, and that no player's stream was swapped by the others.
+It checks the music loops on the Music bus, that setting Music, Master or
+Effects to 0 in the settings screen mutes that bus and only that bus, that the
+settings are saved once the sliders settle (not on every step) and on Back,
+that they load back, that an unparseable settings file is kept as `.broken`,
+and that settings refuse to open from inside a run. It uses scratch settings
+files so it never overwrites a developer's own.
 
 The sounds are synthesised by `tools/generate_audio.py` (Python and numpy),
 so there is no third-party audio to license; see `godot/assets/CREDITS.md`.

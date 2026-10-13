@@ -71,15 +71,27 @@ func continue_run() -> Dictionary:
 
 # Opens the settings screen from the main menu. Settings only change audio and
 # display preferences, never the run, so this makes no run state transition.
+#
+# Refused from any other screen. close_settings() always returns to the main
+# menu, so opening settings from inside a run would lose the screen the player
+# was on. The pause menu story (G2) can lift this once settings remember where
+# they were opened from.
 func open_settings() -> Dictionary:
+	if not _is_showing(MAIN_MENU_SCENE_PATH):
+		return _failure("Settings can only be opened from the main menu.")
 	return _show_screen(SETTINGS_SCENE_PATH)
 
 
-# Leaves the settings screen. It is only reachable from the main menu for now,
-# so this always goes back there; the pause menu story (G2) can return to the
-# run instead once settings open from inside one.
+# Leaves the settings screen for the main menu, the only place it opens from.
 func close_settings() -> Dictionary:
 	return _show_screen(MAIN_MENU_SCENE_PATH)
+
+
+# Whether the screen currently showing was loaded from `path`.
+func _is_showing(path: String) -> bool:
+	if not _screen_host_is_ready() or _screen_host.get_child_count() == 0:
+		return false
+	return _screen_host.get_child(0).scene_file_path == path
 
 
 # Shows whichever screen the run's current phase belongs on: the map, the
