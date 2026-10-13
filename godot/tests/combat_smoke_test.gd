@@ -252,14 +252,12 @@ func _run() -> void:
 	)
 
 	if caught != null:
-		var box := caught.get_node_or_null("VBoxContainer")
-		if box:
-			var fine_label := box.get_node_or_null("FineLabel")
-			var upgrades_label := box.get_node_or_null("UpgradesLabel")
-			_check(
-				fine_label != null and fine_label.text == "Fined: $%d" % EXPECTED_FINE,
-				"the fine is shown on the caught screen"
-			)
-			_check(upgrades_label != null, "the upgrades outcome is shown on the caught screen")
+		var fine_label := caught.get_node_or_null("%FineLabel")
+		var upgrades_label := caught.get_node_or_null("%UpgradesLabel")
+		_check(
+			fine_label != null and fine_label.text == "Fined: $%d" % EXPECTED_FINE,
+			"the fine is shown on the caught screen"
+		)
+		_check(upgrades_label != null, "the upgrades outcome is shown on the caught screen")
 
 	_finish()
