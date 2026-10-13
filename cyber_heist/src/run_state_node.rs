@@ -3,11 +3,22 @@
 use godot::builtin::{VarDictionary, Variant};
 use godot::prelude::*;
 
+use crate::card_data::Rarity;
 use crate::contract_map::{EncounterNode, EncounterSelection};
+use crate::contract_offer::ContractOffer;
+use crate::encounter_reward;
 use crate::encounter_text::{
     all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
 };
+use crate::noise_meter::NoiseLevel;
+use crate::run_deck::RunDeck;
 use crate::run_state::{RunState, RunStateError};
+use crate::shop::{Purchase, Reroll, ScrubbedLogs, ShopError, ShopVisit};
+
+/// Where `FlowCoordinator` keeps the run. Other nodes that need the run look
+/// it up here, and treat it as optional so their scenes still run on their
+/// own without a coordinator behind them.
+pub(crate) const RUN_STATE_PATH: &str = "/root/FlowCoordinator/RunState";
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -24,6 +35,42 @@ impl INode for RunStateNode {
             state: RunState::generated(&mut rand::rng()),
             base,
         }
+    }
+}
+
+/// The shop visit lives on the run, so `ShopNode` reaches it through here
+/// rather than holding its own copy. See `RunState::open_shop_visit`.
+impl RunStateNode {
+    pub(crate) fn open_shop_visit(
+        &mut self,
+        pool: &[(String, Rarity)],
+    ) -> Result<&ShopVisit, RunStateError> {
+        self.state.open_shop_visit(pool, &mut rand::rng())
+    }
+
+    pub(crate) fn shop_visit(&self) -> Option<&ShopVisit> {
+        self.state.shop_visit()
+    }
+
+    pub(crate) fn buy_from_shop(
+        &mut self,
+        slot: usize,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+    ) -> Result<Purchase, ShopError> {
+        self.state.buy_from_shop(slot, credits, deck)
+    }
+
+    pub(crate) fn scrub_logs_in_shop(
+        &mut self,
+        credits: &mut i64,
+        noise: &mut NoiseLevel,
+    ) -> Result<ScrubbedLogs, ShopError> {
+        self.state.scrub_logs_in_shop(credits, noise)
+    }
+
+    pub(crate) fn reroll_shop(&mut self, credits: &mut i64) -> Result<Reroll, ShopError> {
+        self.state.reroll_shop(credits, &mut rand::rng())
     }
 }
 
@@ -139,13 +186,152 @@ impl RunStateNode {
                 "ok" => true,
                 "zone" => encounter.zone() as i64,
                 "is_boss" => encounter.is_boss(),
+                "is_elite" => encounter.is_elite(),
             },
             None => vdict! {
                 "ok" => false,
                 "zone" => 0_i64,
                 "is_boss" => false,
+                "is_elite" => false,
             },
         }
+    }
+
+    /// What completing the active encounter leads to: `{ok, type, credits,
+    /// guaranteed_rare, wins_contract}`. `credits` and `guaranteed_rare` are
+    /// what clearing it pays, and `wins_contract` is whether it is the final
+    /// zone's boss.
+    ///
+    /// Read by `FlowCoordinator` in one call before it completes the
+    /// encounter, since completing clears it. With nothing active it pays
+    /// nothing and wins nothing.
+    #[func]
+    fn active_encounter_completion(&self) -> VarDictionary {
+        match self.state.active_encounter() {
+            Some(encounter) => vdict! {
+                "ok" => true,
+                "type" => encounter.encounter_type().as_str(),
+                "credits" => encounter_reward::credits_for(encounter.encounter_type(), encounter.zone()),
+                "guaranteed_rare" => encounter_reward::guaranteed_rarity(encounter.encounter_type()).is_some(),
+                "wins_contract" => self.state.active_encounter_wins_contract(),
+            },
+            None => vdict! {
+                "ok" => false,
+                "type" => "",
+                "credits" => 0_i64,
+                "guaranteed_rare" => false,
+                "wins_contract" => false,
+            },
+        }
+    }
+
+    /// The contracts this run can choose between, shortest first. Each is
+    /// `{index, name, target, credit_reward, zone_count, encounter_count}`,
+    /// where `index` is what `accept_contract_offer` takes.
+    #[func]
+    fn contract_offers(&self) -> Array<VarDictionary> {
+        let mut offers = Array::new();
+        for (index, offer) in self.state.contract_offers().iter().enumerate() {
+            offers.push(&offer_dictionary(index, offer));
+        }
+        offers
+    }
+
+    /// Whether `accept_contract_offer` would currently take an offer: at the
+    /// hub, with offers to choose from, before any encounter on the contract
+    /// has been entered. Still true once an offer is accepted, so the hub
+    /// reads it to offer Change contract on the map.
+    #[func]
+    fn can_accept_contract_offer(&self) -> bool {
+        self.state.can_accept_contract_offer()
+    }
+
+    /// Whether the hub should show the offer picker instead of the map: an
+    /// offer could be accepted and none has been yet.
+    #[func]
+    fn needs_contract_choice(&self) -> bool {
+        self.state.needs_contract_choice()
+    }
+
+    /// Whether an encounter on the current contract has been entered, even if
+    /// the player was caught in it and so completed nothing. Once it has, the
+    /// run is committed to this contract.
+    #[func]
+    fn contract_started(&self) -> bool {
+        self.state.contract_started()
+    }
+
+    /// Takes on the offer at `index` and rebuilds the contract map from it.
+    /// `{ok: true}`, or `{ok: false, error}` for an index that is not on offer,
+    /// outside the hub, or once an encounter on the contract has been entered.
+    /// A rejection changes nothing.
+    #[func]
+    fn accept_contract_offer(&mut self, index: i64) -> VarDictionary {
+        let index = match usize::try_from(index) {
+            Ok(index) => index,
+            Err(_) => return transition_error("contract offer index is invalid"),
+        };
+        transition_result(self.state.accept_contract_offer(index))
+    }
+
+    /// The contract the run took on: the same fields as a `contract_offers`
+    /// entry plus `ok: true`. `{ok: false}` while the run is still on the
+    /// contract it started with.
+    #[func]
+    fn accepted_contract_offer(&self) -> VarDictionary {
+        let (Some(index), Some(offer)) = (
+            self.state.accepted_offer_index(),
+            self.state.accepted_offer(),
+        ) else {
+            return vdict! { "ok" => false };
+        };
+
+        let mut dictionary = offer_dictionary(index, offer);
+        dictionary.set("ok", true);
+        dictionary
+    }
+
+    /// What the run has achieved so far, for the end screen:
+    /// `{combats_won, credits_earned, cards_added, encounters_completed,
+    /// total_encounters, zones_cleared, total_zones}`.
+    #[func]
+    fn run_summary(&self) -> VarDictionary {
+        let summary = self.state.summary();
+        vdict! {
+            "combats_won" => summary.stats.combats_won() as i64,
+            "credits_earned" => summary.stats.credits_earned(),
+            "cards_added" => summary.stats.cards_added() as i64,
+            "encounters_completed" => summary.encounters.completed as i64,
+            "total_encounters" => summary.encounters.total as i64,
+            "zones_cleared" => summary.zones_cleared as i64,
+            "total_zones" => summary.total_zones as i64,
+        }
+    }
+
+    /// Records a change made to the player's credits, gain or loss; only a
+    /// gain counts as earned. Whatever applies credits calls this once per
+    /// change: `EventNode` directly, GDScript through
+    /// `FlowCoordinator.change_credits`.
+    #[func]
+    pub(crate) fn record_credit_change(&mut self, amount: i64) {
+        self.state.record_credit_change(amount);
+    }
+
+    /// Records a card going into the run's deck. Called by
+    /// `FlowCoordinator.add_card_to_deck` once the deck has accepted it. A
+    /// card bought in the shop is recorded by `RunState::buy_from_shop`.
+    #[func]
+    pub(crate) fn record_card_added(&mut self) {
+        self.state.record_card_added();
+    }
+
+    /// Replaces this run with a fresh one: new contract, new offers, no zone
+    /// progress and no stats. `{ok: true}`, or `{ok: false, error}` during an
+    /// encounter, which changes nothing. Noise, knowledge and the deck are
+    /// reset by `FlowCoordinator.start_new_run`, which calls this.
+    #[func]
+    fn start_new_run(&mut self) -> VarDictionary {
+        transition_result(self.state.start_new_run(&mut rand::rng()))
     }
 
     #[func]
@@ -180,6 +366,26 @@ impl RunStateNode {
     #[func]
     fn complete_encounter(&mut self) -> VarDictionary {
         transition_result(self.state.complete_encounter())
+    }
+
+    /// What winning this contract paid: `{ok: true, credits}` once it has
+    /// been won, where `credits` is the accepted offer's `credit_reward` (0 on
+    /// the default contract). `{ok: false}` before then and on a contract the
+    /// player was caught on.
+    ///
+    /// Run state records the amount when the final boss is completed.
+    /// `FlowCoordinator` applies it with `change_credits` straight after that
+    /// transition, and the victory screen reads it from here, so it can be
+    /// rebuilt from run state alone.
+    #[func]
+    fn contract_reward(&self) -> VarDictionary {
+        match self.state.contract_reward() {
+            Some(credits) => vdict! {
+                "ok" => true,
+                "credits" => credits,
+            },
+            None => vdict! { "ok" => false },
+        }
     }
 
     #[func]
@@ -220,6 +426,18 @@ fn encounter_dictionary(node: &EncounterNode) -> VarDictionary {
     vdict! {
         "id" => i64::from(node.id()),
         "type" => node.encounter_type().as_str(),
+    }
+}
+
+/// One contract offer, as the selection and details screens read it.
+fn offer_dictionary(index: usize, offer: &ContractOffer) -> VarDictionary {
+    vdict! {
+        "index" => index as i64,
+        "name" => offer.name.as_str(),
+        "target" => offer.target.as_str(),
+        "credit_reward" => offer.credit_reward,
+        "zone_count" => offer.shape.zone_count as i64,
+        "encounter_count" => offer.encounter_count() as i64,
     }
 }
 

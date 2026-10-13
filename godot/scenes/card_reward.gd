@@ -22,6 +22,7 @@ func _ready() -> void:
 	offered = FlowCoordinator.offer_card_reward(OFFER_SIZE)
 	_build_offer_buttons()
 	_update_deck_label()
+	_show_credits_earned()
 
 
 func _build_offer_buttons() -> void:
@@ -71,6 +72,14 @@ func _on_skip_pressed() -> void:
 		return
 	choice_made = true
 	_leave()
+
+
+# The payout has already landed by the time this screen opens; this only says
+# so, since an elite paying more is half of what makes it worth the risk.
+func _show_credits_earned() -> void:
+	var credits := FlowCoordinator.pending_reward_credits()
+	if credits > 0 and status_label.text == "":
+		status_label.text = "+%d credits — balance now %d" % [credits, PlayerStateGlobal.money()]
 
 
 func _update_deck_label() -> void:

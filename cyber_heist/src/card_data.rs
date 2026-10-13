@@ -16,7 +16,7 @@ pub struct CardData {
     pub weak_side: Option<WeakSide>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum CardType {
     Attack,
     Defence,
@@ -34,7 +34,9 @@ pub struct WeakSide {
     pub keywords: Vec<Keyword>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
+/// Ordered from most to least common, so a reward can ask for a rarity "or
+/// better" with a plain comparison.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rarity {
     Common,
     Uncommon,
@@ -53,6 +55,8 @@ pub enum Keyword {
     Draw(i32),
     MaxEnergyBoost(u32),
     CorruptingBoost(u32),
+    ResolveAtEndOfTurn,
+    EnergyTax(u32),
     Exhaust,
     Flip,
 }

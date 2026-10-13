@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use crate::card_data::{CardData, Keyword};
+use crate::card_data::{CardData, CardType, Keyword};
 use crate::deck::Deck;
 use crate::knowledge::Knowledge;
 use crate::noise_meter::NoiseLevel;
@@ -16,21 +16,50 @@ pub enum PlayError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PlayedCard {
     pub name: String,
+    /// Which kind of card it was, so the screen can play that type's sound.
+    pub card_type: CardType,
     pub noise_change: i32,
     pub damage_dealt: i32,
+    /// Plain damage a boss's firewall absorbed before it reached integrity.
+    pub damage_blocked: i32,
     pub shield_added: i32,
     pub cards_drawn: i32,
     pub knowledge_change: i32,
     pub max_energy_gained: i32,
     pub corruption_added: i32,
     pub corruption_boost_added: i32,
+    pub energy_tax_paid: i32,
 }
 
+#[derive(Default)]
+struct KeywordEffects {
+    damage_dealt: i32,
+    damage_blocked: i32,
+    shield_added: i32,
+    cards_drawn: i32,
+    knowledge_change: i32,
+    max_energy_gained: i32,
+    corruption_added: i32,
+    corruption_boost_added: i32,
+}
+
+/// Plain damage, which a firewall can absorb.
 fn total_damage(keywords: &[Keyword]) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Damage(amount) | Keyword::Penetrating(amount) => *amount,
+            Keyword::Damage(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Penetrating damage, which goes straight through a firewall.
+fn total_penetrating(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Penetrating(amount) => *amount,
             _ => 0,
         })
         .sum()
@@ -96,8 +125,65 @@ fn total_corrupting_boost(keywords: &[Keyword]) -> i32 {
         .sum()
 }
 
-/// Reject before mutating anything. A full meter is already a failed encounter,
-/// not an opportunity to play a recovery card.
+fn total_energy_tax(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::EnergyTax(amount) => *amount as i32,
+            _ => 0,
+        })
+        .sum()
+}
+
+pub fn hand_energy_tax(hand: &[CardData], exclude_index: usize, current_noise: i32) -> i32 {
+    hand.iter()
+        .enumerate()
+        .filter(|(index, _)| *index != exclude_index)
+        .map(|(_, card)| total_energy_tax(&card.active_keywords(current_noise)))
+        .sum()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_keywords(
+    active_keywords: &[Keyword],
+    hand: &mut Vec<CardData>,
+    deck: &mut Deck,
+    energy: &mut i32,
+    max_energy: &mut i32,
+    noise: &mut NoiseLevel,
+    sentry: &mut Sentry,
+    knowledge: &mut Knowledge,
+    rng: &mut impl Rng,
+) -> KeywordEffects {
+    let shield_added = noise.add_shield(total_shield(active_keywords));
+    let blockable = sentry.take_blockable_damage(total_damage(active_keywords));
+    let damage_dealt = blockable.dealt + sentry.take_damage(total_penetrating(active_keywords));
+    let knowledge_change = knowledge.add(total_knowledge(active_keywords));
+    let corruption_added = sentry.add_corruption(total_corrupting(active_keywords));
+    let corruption_boost_added =
+        sentry.add_corruption_boost(total_corrupting_boost(active_keywords));
+
+    let max_energy_gained = total_max_energy_boost(active_keywords);
+    *max_energy += max_energy_gained;
+    *energy += max_energy_gained;
+
+    let draw_count = usize::try_from(total_draw(active_keywords)).unwrap_or(0);
+    let drawn = deck.draw_hand(draw_count, rng);
+    let cards_drawn = drawn.len() as i32;
+    hand.extend(drawn);
+
+    KeywordEffects {
+        damage_dealt,
+        damage_blocked: blockable.blocked,
+        shield_added,
+        cards_drawn,
+        knowledge_change,
+        max_energy_gained,
+        corruption_added,
+        corruption_boost_added,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn play_card(
     hand: &mut Vec<CardData>,
@@ -115,7 +201,10 @@ pub fn play_card(
     }
     let index = usize::try_from(index).map_err(|_| PlayError::InvalidIndex)?;
     let card = hand.get(index).ok_or(PlayError::InvalidIndex)?;
-    let cost = i32::from(card.cost);
+
+    let pre_play_noise = noise.noise();
+    let tax = hand_energy_tax(hand, index, pre_play_noise);
+    let cost = i32::from(card.cost) + tax;
     if cost > *energy {
         return Err(PlayError::NotEnoughEnergy);
     }
@@ -123,42 +212,103 @@ pub fn play_card(
     let card = hand.remove(index);
     *energy -= cost;
 
-    // Read noise once, before this card's own noise lands, so display name,
-    // active keywords and every effect below agree on which side of a flip
-    // is live.
-    let pre_play_noise = noise.noise();
     let active_keywords = card.active_keywords(pre_play_noise);
 
-    // Shield lands before this card's own noise, so it can absorb it too.
-    let shield_added = noise.add_shield(total_shield(&active_keywords));
-    let damage_dealt = sentry.take_damage(total_damage(&active_keywords));
-    let knowledge_change = knowledge.add(total_knowledge(&active_keywords));
-    let corruption_added = sentry.add_corruption(total_corrupting(&active_keywords));
-    let corruption_boost_added =
-        sentry.add_corruption_boost(total_corrupting_boost(&active_keywords));
-
-    let max_energy_gained = total_max_energy_boost(&active_keywords);
-    *max_energy += max_energy_gained;
-    *energy += max_energy_gained;
-
-    let draw_count = usize::try_from(total_draw(&active_keywords)).unwrap_or(0);
-    let drawn = deck.draw_hand(draw_count, rng);
-    let cards_drawn = drawn.len() as i32;
-    hand.extend(drawn);
+    let (effects, noise_change) = if active_keywords.contains(&Keyword::ResolveAtEndOfTurn) {
+        (KeywordEffects::default(), 0)
+    } else {
+        let effects = resolve_keywords(
+            &active_keywords,
+            hand,
+            deck,
+            energy,
+            max_energy,
+            noise,
+            sentry,
+            knowledge,
+            rng,
+        );
+        let noise_change = noise.add(i32::from(card.noise_generated));
+        (effects, noise_change)
+    };
 
     let played = PlayedCard {
         name: card.display_name(pre_play_noise),
-        noise_change: noise.add(i32::from(card.noise_generated)),
-        damage_dealt,
-        shield_added,
-        cards_drawn,
-        knowledge_change,
-        max_energy_gained,
-        corruption_added,
-        corruption_boost_added,
+        card_type: card.card_type,
+        noise_change,
+        damage_dealt: effects.damage_dealt,
+        damage_blocked: effects.damage_blocked,
+        shield_added: effects.shield_added,
+        cards_drawn: effects.cards_drawn,
+        knowledge_change: effects.knowledge_change,
+        max_energy_gained: effects.max_energy_gained,
+        corruption_added: effects.corruption_added,
+        corruption_boost_added: effects.corruption_boost_added,
+        energy_tax_paid: tax,
     };
     deck.discard(vec![card]);
     Ok(played)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_end_of_turn_effects(
+    hand: &mut Vec<CardData>,
+    deck: &mut Deck,
+    energy: &mut i32,
+    max_energy: &mut i32,
+    noise: &mut NoiseLevel,
+    sentry: &mut Sentry,
+    knowledge: &mut Knowledge,
+    rng: &mut impl Rng,
+) -> Vec<PlayedCard> {
+    let snapshot_noise = noise.noise();
+    let mut indices: Vec<usize> = hand
+        .iter()
+        .enumerate()
+        .filter(|(_, card)| {
+            card.active_keywords(snapshot_noise)
+                .contains(&Keyword::ResolveAtEndOfTurn)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    indices.sort_unstable_by(|a, b| b.cmp(a));
+
+    let mut resolved = Vec::with_capacity(indices.len());
+    for index in indices {
+        let card = hand.remove(index);
+        let current_noise = noise.noise();
+        let active_keywords = card.active_keywords(current_noise);
+
+        let effects = resolve_keywords(
+            &active_keywords,
+            hand,
+            deck,
+            energy,
+            max_energy,
+            noise,
+            sentry,
+            knowledge,
+            rng,
+        );
+        let noise_change = noise.add(i32::from(card.noise_generated));
+
+        resolved.push(PlayedCard {
+            name: card.display_name(current_noise),
+            card_type: card.card_type,
+            noise_change,
+            damage_dealt: effects.damage_dealt,
+            damage_blocked: effects.damage_blocked,
+            shield_added: effects.shield_added,
+            cards_drawn: effects.cards_drawn,
+            knowledge_change: effects.knowledge_change,
+            max_energy_gained: effects.max_energy_gained,
+            corruption_added: effects.corruption_added,
+            corruption_boost_added: effects.corruption_boost_added,
+            energy_tax_paid: 0,
+        });
+        deck.discard(vec![card]);
+    }
+    resolved
 }
 
 #[cfg(test)]
@@ -235,6 +385,24 @@ mod tests {
         assert_eq!(combat.noise.add(action.noise), 1);
         assert_eq!(combat.noise.noise(), 90);
         assert!(!combat.noise.is_at_cap());
+    }
+
+    /// The combat screen picks the card's sound from this, so every type has
+    /// to come through as the type that was authored.
+    #[test]
+    fn a_played_card_reports_its_type() {
+        for (id, card_type) in [
+            ("strike", CardType::Attack),
+            ("shield", CardType::Defence),
+            ("vpn", CardType::Skill),
+            ("background_check", CardType::Recon),
+            ("nigerian_king", CardType::SocialEngineering),
+        ] {
+            let mut combat = Combat::with_card(id, 0);
+            combat.energy = 10;
+            let played = combat.play(0).unwrap();
+            assert_eq!(played.card_type, card_type, "{id}");
+        }
     }
 
     #[test]
@@ -378,6 +546,34 @@ mod tests {
         let mut combat = Combat::with_card("trojan", 0);
         assert_eq!(combat.play(0).unwrap().damage_dealt, 6);
         assert_eq!(combat.sentry.health(), combat.sentry.max_health() - 6);
+    }
+
+    /// Boss card E2b: BLACK MONOLITH's firewall soaks up a plain Strike, and
+    /// the card reports what was blocked as well as what got through.
+    #[test]
+    fn a_firewall_blocks_plain_damage_before_it_reaches_integrity() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.sentry.raise_firewall(4);
+        let health_before = combat.sentry.health();
+
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_blocked, 4);
+        assert_eq!(played.damage_dealt, 2);
+        assert_eq!(combat.sentry.health(), health_before - 2);
+        assert_eq!(combat.sentry.firewall(), 0);
+    }
+
+    /// Penetrating damage is what goes "straight through the target's block",
+    /// so it is the answer to a firewall.
+    #[test]
+    fn penetrating_damage_goes_straight_through_a_firewall() {
+        let mut combat = Combat::with_card("trojan", 0);
+        combat.sentry.raise_firewall(12);
+
+        let played = combat.play(0).unwrap();
+        assert_eq!(played.damage_blocked, 0);
+        assert_eq!(played.damage_dealt, 6);
+        assert_eq!(combat.sentry.firewall(), 12, "the firewall is untouched");
     }
 
     #[test]

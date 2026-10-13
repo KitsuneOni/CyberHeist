@@ -8,13 +8,8 @@ use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
 use crate::noise_meter::NoiseMeter;
-use crate::run_state_node::RunStateNode;
-use crate::sentry::Sentry;
-
-/// Where the coordinator keeps the run. Looked up the same way as the shared
-/// meter, and optional for the same reason: the combat scene stays runnable on
-/// its own, it just falls back to first-zone security when there is no run.
-const RUN_STATE_PATH: &str = "/root/FlowCoordinator/RunState";
+use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
+use crate::sentry::{SecurityTier, Sentry};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -47,9 +42,9 @@ impl INode for SentryNode {
 
         // Which construct is on the other side of this encounter is decided by
         // where the player has got to on the contract, not by the scene: a
-        // zone's boss is a harder build of the security around it.
+        // zone's elites and boss are harder builds of the security around them.
         self.sentry = match self.encounter_profile() {
-            Some((zone, is_boss)) => Sentry::for_encounter(zone, is_boss),
+            Some((zone, tier)) => Sentry::for_encounter(zone, tier),
             None => Sentry::warden_7(),
         };
 
@@ -70,9 +65,10 @@ impl INode for SentryNode {
 }
 
 impl SentryNode {
-    /// `(zone, is_boss)` for the encounter being played, or `None` when there
-    /// is no run behind this screen.
-    fn encounter_profile(&self) -> Option<(usize, bool)> {
+    /// `(zone, tier)` for the encounter being played, or `None` when there is
+    /// no run behind this screen. The run is optional so the combat scene
+    /// stays runnable on its own, falling back to first-zone security.
+    fn encounter_profile(&self) -> Option<(usize, SecurityTier)> {
         let run_state = self
             .base()
             .try_get_node_as::<RunStateNode>(RUN_STATE_PATH)?;
@@ -82,7 +78,14 @@ impl SentryNode {
         }
 
         let zone = usize::try_from(profile.at("zone").to::<i64>()).unwrap_or(0);
-        Some((zone, profile.at("is_boss").booleanize()))
+        let tier = if profile.at("is_boss").booleanize() {
+            SecurityTier::Boss
+        } else if profile.at("is_elite").booleanize() {
+            SecurityTier::Elite
+        } else {
+            SecurityTier::Standard
+        };
+        Some((zone, tier))
     }
 
     fn noise_meter(&self) -> Gd<NoiseMeter> {
@@ -220,8 +223,29 @@ impl SentryNode {
         self.sentry.corruption_boost()
     }
 
+    /// Which phase the construct is fighting in: 1, or 2 once THE ARCHITECT
+    /// has escalated below half integrity.
+    #[func]
+    fn phase(&self) -> u32 {
+        self.sentry.phase()
+    }
+
+    /// Plain damage BLACK MONOLITH's firewall will still absorb this turn, or
+    /// zero when none is up.
+    #[func]
+    fn firewall(&self) -> i32 {
+        self.sentry.firewall()
+    }
+
     /// Takes the sentry's turn and reports what it did:
-    /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed}`.
+    /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed,
+    /// energy_drain, ability, integrity_restored, corruption_purged, firewall,
+    /// corruption_damage, corruption, phase, escalated, defeated}`.
+    ///
+    /// `escalated` is true when the corruption tick took the construct into
+    /// its second phase. It spends that turn escalating, so `ok` is false and
+    /// no action runs: the one it had announced belonged to the old set, and
+    /// the new set's first action has not been shown to the player yet.
     ///
     /// `ok` is false when nothing is queued, the meter is already full or the
     /// screen is detached. In those cases neither intent nor noise changes.
@@ -229,13 +253,20 @@ impl SentryNode {
     fn perform_queued_action(&mut self) -> VarDictionary {
         let meter = self.noise_meter();
 
+        // A firewall covers the player turn after it went up and no further,
+        // so it comes down before anything else in the construct's turn.
+        self.sentry.drop_firewall();
+
+        let phase_before = self.sentry.phase();
         let corruption_damage = self.sentry.resolve_corruption_tick();
         let corruption = self.sentry.corruption();
+        let escalated = self.sentry.phase() != phase_before;
 
         let action = if self.base().is_inside_tree()
             && !self.base().is_queued_for_deletion()
             && !meter.bind().is_at_cap()
             && !self.sentry.is_defeated()
+            && !escalated
         {
             self.sentry.perform_queued_action()
         } else {
@@ -248,6 +279,20 @@ impl SentryNode {
                 let noise = meter.bind().get_noise();
                 let max_noise = meter.bind().get_max_noise();
                 let run_failed = meter.bind().is_at_cap();
+                // An elite's Reinforce lands on the construct itself, so unlike
+                // a lockdown there is nothing for the combat screen to apply.
+                let integrity_restored = self
+                    .sentry
+                    .restore_integrity(action.ability.integrity_restored());
+                // A boss's Purge and Firewall land on the construct too. Purge
+                // runs after the corruption tick, so it clears what would
+                // have ticked next turn.
+                let corruption_purged = if action.ability.purges_corruption() {
+                    self.sentry.purge_corruption()
+                } else {
+                    0
+                };
+                let firewall = self.sentry.raise_firewall(action.ability.firewall_raised());
 
                 vdict! {
                     "ok" => true,
@@ -261,8 +306,15 @@ impl SentryNode {
                     // since the player's energy belongs to DrawPhase.
                     "energy_drain" => action.ability.energy_drain(),
                     "ability" => action.ability.describe().as_str(),
+                    // The actual amount regained, clamped at max integrity.
+                    "integrity_restored" => integrity_restored,
+                    "corruption_purged" => corruption_purged,
+                    // The firewall now standing for the player's next turn.
+                    "firewall" => firewall,
                     "corruption_damage" => corruption_damage,
-                    "corruption" => corruption,
+                    "corruption" => self.sentry.corruption(),
+                    "phase" => self.sentry.phase(),
+                    "escalated" => false,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }
@@ -281,8 +333,13 @@ impl SentryNode {
                     "run_failed" => run_failed,
                     "energy_drain" => 0,
                     "ability" => "",
+                    "integrity_restored" => 0,
+                    "corruption_purged" => 0,
+                    "firewall" => 0,
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
+                    "phase" => self.sentry.phase(),
+                    "escalated" => escalated,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }

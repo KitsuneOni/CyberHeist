@@ -1,10 +1,13 @@
+mod audio_mix;
 mod card_data;
 mod card_database;
 mod card_play;
 mod card_reward;
 mod card_text;
 mod contract_map;
+mod contract_offer;
 mod deck;
+mod encounter_reward;
 mod encounter_text;
 mod events;
 mod events_node;
@@ -14,10 +17,14 @@ mod run_deck;
 mod run_deck_node;
 mod run_state;
 mod run_state_node;
+mod run_stats;
 mod sentry;
 mod sentry_node;
+mod shop;
+mod shop_node;
 mod starter_deck;
 
+use audio_mix::SoundCue;
 use card_data::CardData;
 use card_database::CardDatabase;
 use deck::Deck;
@@ -32,6 +39,31 @@ use sentry_node::SentryNode;
 /// comment it's a child of the `FlowCoordinator` autoload, not its own
 /// top-level autoload — confirm this path matches your actual scene tree.
 const RUN_DECK_PATH: &str = "/root/FlowCoordinator/RunDeck";
+
+/// A card's player-facing details as a dictionary, the shape every screen
+/// that describes a card reads: `{name, type, rarity, cost, cost_text,
+/// noise_text, description, keywords: [{label, explanation}]}`. Callers add
+/// their own fields on top, such as an id or a shop price.
+pub(crate) fn card_detail_dictionary(detail: &card_text::CardDetail) -> VarDictionary {
+    let mut keywords: Array<VarDictionary> = Array::new();
+    for keyword in &detail.keywords {
+        keywords.push(&vdict! {
+            "label" => keyword.label.as_str(),
+            "explanation" => keyword.explanation.as_str(),
+        });
+    }
+
+    vdict! {
+        "name" => detail.name.as_str(),
+        "type" => detail.card_type.as_str(),
+        "rarity" => detail.rarity.as_str(),
+        "cost" => detail.cost,
+        "cost_text" => detail.cost_text.as_str(),
+        "noise_text" => detail.noise_text.as_str(),
+        "description" => detail.description.as_str(),
+        "keywords" => &keywords,
+    }
+}
 
 struct CyberHeistExtension;
 
@@ -89,6 +121,25 @@ impl PlayerState {
         self.upgrades.push(name);
     }
 
+    /// The upgrades earned on the current contract, in the order they were
+    /// gained.
+    #[func]
+    fn upgrades(&self) -> Array<GString> {
+        self.upgrades.iter().cloned().collect()
+    }
+
+    /// Drops the upgrades earned on the current contract and keeps the credit
+    /// balance.
+    ///
+    /// Upgrades only last for the contract they were earned on, while credits
+    /// are the player's balance between runs. `FlowCoordinator.start_new_run()`
+    /// calls this so a won contract's upgrades never leak into the next run;
+    /// being caught already loses them through `apply_penalty`.
+    #[func]
+    fn clear_upgrades(&mut self) {
+        self.upgrades.clear();
+    }
+
     #[func]
     fn money(&self) -> i64 {
         self.money
@@ -108,6 +159,15 @@ impl PlayerState {
             "fine" => fine,
             "lost_upgrades" => &lost,
         }
+    }
+}
+
+impl PlayerState {
+    /// The credit balance itself, for a Rust rule that has to check and spend
+    /// it in one step. `ShopNode` lends it to `RunState::buy_from_shop`, which
+    /// refuses rather than take the balance below zero.
+    pub(crate) fn credits_mut(&mut self) -> &mut i64 {
+        &mut self.money
     }
 }
 
@@ -267,14 +327,18 @@ impl DrawPhase {
                 vdict! {
                     "ok" => true,
                     "name" => played.name.as_str(),
+                    "type" => card_text::card_type_name(played.card_type),
+                    "sound_cue" => SoundCue::for_card_type(played.card_type).id(),
                     "noise_change" => played.noise_change,
                     "damage_dealt" => played.damage_dealt,
+                    "damage_blocked" => played.damage_blocked,
                     "shield_added" => played.shield_added,
                     "cards_drawn" => played.cards_drawn,
                     "knowledge_change" => played.knowledge_change,
                     "max_energy_gained" => played.max_energy_gained,
                     "corruption_added" => played.corruption_added,
                     "corruption_boost_added" => played.corruption_boost_added,
+                    "energy_tax_paid" => played.energy_tax_paid,
                 }
             }
             Err(error) => {
@@ -286,6 +350,17 @@ impl DrawPhase {
                 vdict! { "ok" => false, "error" => error }
             }
         }
+    }
+
+    /// The card ids in the hand, in the same order as `hand_names`. Unlike a
+    /// name, an id does not change with noise, so this is what to compare
+    /// against the run's deck.
+    #[func]
+    fn hand_ids(&self) -> PackedStringArray {
+        self.hand
+            .iter()
+            .map(|card| GString::from(card.id.as_str()))
+            .collect()
     }
 
     #[func]
@@ -307,32 +382,22 @@ impl DrawPhase {
         };
 
         let noise = self.current_noise();
-        let detail = card_text::describe(card, noise);
-
-        let mut keywords: Array<VarDictionary> = Array::new();
-        for keyword in &detail.keywords {
-            keywords.push(&vdict! {
-                "label" => keyword.label.as_str(),
-                "explanation" => keyword.explanation.as_str(),
-            });
-        }
-
-        vdict! {
-            "ok" => true,
-            "name" => detail.name.as_str(),
-            "type" => detail.card_type.as_str(),
-            "rarity" => detail.rarity.as_str(),
-            "cost" => detail.cost,
-            "cost_text" => detail.cost_text.as_str(),
-            "noise_text" => detail.noise_text.as_str(),
-            "description" => detail.description.as_str(),
-            "keywords" => &keywords,
-        }
+        let mut detail = card_detail_dictionary(&card_text::describe(card, noise));
+        detail.set("ok", true);
+        detail
     }
 
     #[func]
     fn hand_costs(&self) -> PackedInt32Array {
-        self.hand.iter().map(|c| c.cost as i32).collect()
+        let nosie = self.current_noise();
+        self.hand
+            .iter()
+            .enumerate()
+            .map(|(index, card)| {
+                let tax = card_play::hand_energy_tax(&self.hand, index, nosie);
+                card.cost as i32 + tax
+            })
+            .collect()
     }
 
     #[func]
@@ -344,11 +409,6 @@ impl DrawPhase {
     #[signal]
     fn security_phase(finished_turn: i32);
 
-    /// Ends the player's turn: every card still in hand goes to the discard
-    /// pile (however many there are — a `Draw` play earlier this turn may
-    /// have grown the hand past `hand_size`, and all of it still goes to
-    /// discard here), the security system gets its phase, then the next turn
-    /// begins with refreshed energy and a freshly drawn hand.
     #[func]
     fn end_turn(&mut self) -> PackedStringArray {
         if !self.base().is_inside_tree()
@@ -358,6 +418,23 @@ impl DrawPhase {
             return self.hand_names();
         }
         let finished_turn = self.turn_number;
+
+        {
+            let mut meter = self.noise_meter().clone();
+            let mut sentry_node = self.sentry_node().clone();
+            let mut knowledge_meter = self.knowledge_meter().clone();
+            let mut rng = rand::rng();
+            card_play::resolve_end_of_turn_effects(
+                &mut self.hand,
+                &mut self.deck,
+                &mut self.energy,
+                &mut self.max_energy,
+                meter.bind_mut().level_mut(),
+                sentry_node.bind_mut().sentry_mut(),
+                knowledge_meter.bind_mut().level_mut(),
+                &mut rng,
+            );
+        }
 
         let remaining_hand = std::mem::take(&mut self.hand);
         self.deck.discard(remaining_hand);

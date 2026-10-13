@@ -163,8 +163,8 @@ mod tests {
         assert_eq!(first_ids, second_ids);
     }
 
-    /// The shipped starter deck must be buildable purely from the cards that
-    /// already exist in cards.ron, so it cannot drift from the real card set.
+    ///The shipped starter deck must be buildable purely from the cards that
+    ///already exist in cards.ron, so it cannot drift from the real card set.
     #[test]
     fn the_real_starter_deck_uses_only_real_cards() {
         let deck_text = std::fs::read_to_string("../godot/data/starter_deck.ron")
