@@ -1070,8 +1070,15 @@ after VPN, loud cards and security actions, as well as screen replacement.
 `CYBER_HEIST_LIBRARY` may select an explicitly labelled substitute build. The
 runner pre-registers the extension for engine startup; first-discovery editor
 import aborted on exit with the local Godot 4.7.1/reduced-binding setup, while
-startup registration and runtime tests succeeded. It does not suppress import
-or test failures and does not prove that first-discovery path works.
+startup registration and runtime tests succeeded. It does not prove that
+first-discovery path works. Godot 4.7.1 itself occasionally crashes or hangs
+during the fixture's headless import, so the runner retries that import up to
+three times, but only for crash and hang exits (124, 134, 137, 139). Any other
+exit fails at once. Each retry starts from an empty resource cache, so the
+attempt that succeeds imports every resource itself and its log is the one
+scanned for errors. It does not suppress import errors or test failures: the
+runner fails if every attempt crashes, if the successful import logs an error,
+or if the test run (which is never retried) fails.
 
 ### Shared lifetime and caught recovery
 
