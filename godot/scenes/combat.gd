@@ -24,11 +24,15 @@ var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailConte
 @onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
 @onready var complete_encounter_button: Button = $VBoxContainer/Buttons/CompleteEncounterButton
 
+const CardTooltip := preload("res://scenes/card_tooltip.gd")
+
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
+# Shows a card's full description while the mouse is over it (story #14).
+var card_tooltip: PanelContainer = CardTooltip.new()
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
@@ -38,6 +42,7 @@ var shown_phase := 1
 
 
 func _ready() -> void:
+	add_child(card_tooltip)
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
@@ -178,6 +183,9 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 	if selected_index >= names.size():
 		selected_index = -1
 
+	# The card under the mouse may be about to go, and a freed button never
+	# sends its mouse_exited.
+	card_tooltip.hide_tooltip()
 	for child in card_container.get_children():
 		child.queue_free()
 	card_buttons.clear()
@@ -190,6 +198,10 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 		button.toggle_mode = true
 		button.disabled = costs[i] > draw_phase.energy
 		button.pressed.connect(_on_card_clicked.bind(i))
+		# Unaffordable cards are disabled but still report hover, so the player
+		# can read a card they can't play yet.
+		button.mouse_entered.connect(_on_card_hovered.bind(i))
+		button.mouse_exited.connect(card_tooltip.hide_for.bind(button))
 		card_container.add_child(button)
 		card_buttons.append(button)
 
@@ -201,6 +213,12 @@ func _on_card_clicked(index: int) -> void:
 	selected_index = index
 	_update_selection_visuals()
 	_update_card_detail()
+
+
+func _on_card_hovered(index: int) -> void:
+	if index >= card_buttons.size():
+		return
+	card_tooltip.show_for(card_buttons[index], draw_phase.card_detail(index))
 
 
 # Fills the detail panel from the selected card, including an explanation of
@@ -221,23 +239,10 @@ func _update_card_detail() -> void:
 		detail_keywords.text = ""
 		return
 
-	detail_title.text = (
-		"%s — %s · %s"
-		% [
-			detail.get("name", "?"),
-			detail.get("type", "?"),
-			detail.get("rarity", "?"),
-		]
-	)
-	detail_stats.text = "%s · %s" % [detail.get("cost_text", ""), detail.get("noise_text", "")]
+	detail_title.text = CardTooltip.title_for(detail)
+	detail_stats.text = CardTooltip.stats_for(detail)
 	detail_description.text = str(detail.get("description", ""))
-
-	var keyword_lines: Array[String] = []
-	for keyword: Dictionary in detail.get("keywords", []):
-		keyword_lines.append(
-			"%s — %s" % [keyword.get("label", "?"), keyword.get("explanation", "")]
-		)
-	detail_keywords.text = "\n".join(keyword_lines)
+	detail_keywords.text = CardTooltip.keywords_for(detail)
 
 
 func _update_selection_visuals() -> void:
