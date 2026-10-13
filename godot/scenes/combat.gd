@@ -260,6 +260,9 @@ func _on_play_button_pressed() -> void:
 
 	var result: Dictionary = draw_phase.play_card(selected_index)
 	if result.get("ok", false):
+		# Every card type has its own sound, so the play is heard as well as
+		# read. DrawPhase reports which one this card makes.
+		AudioDirector.play_card_sound(str(result.get("sound_cue", "")))
 		play_count_label.text = "Cards played: %d" % draw_phase.play_count
 		selected_index = -1
 		var noise_change: int = result.get("noise_change", 0)

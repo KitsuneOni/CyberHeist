@@ -4,7 +4,7 @@
 #   Scenario: The game opens on the main menu
 #     Given I launch the game
 #     Then I see the main menu rather than the contract map
-#     And I can choose New contract, Continue run or Quit
+#     And I can choose New contract, Continue run, Settings or Quit
 #
 #   Scenario: Start a new run
 #     Given I am on the main menu
@@ -19,6 +19,11 @@
 #     Given I am on the main menu
 #     Then New contract is selected
 #     And moving down skips Continue run when it is unavailable
+#
+#   Scenario: Open settings (story #111)
+#     Given I am on the main menu
+#     When I choose Settings
+#     Then the settings screen opens, and Back returns to the menu
 #
 # Run: godot --headless --path godot -s res://tests/main_menu_test.gd
 extends SceneTree
@@ -78,11 +83,18 @@ func _run() -> void:
 
 	var new_contract: Button = menu.get_node_or_null("%NewContractButton")
 	var continue_run: Button = menu.get_node_or_null("%ContinueButton")
+	var settings_button: Button = menu.get_node_or_null("%SettingsButton")
 	var quit_button: Button = menu.get_node_or_null("%QuitButton")
 	_check(new_contract != null, "the menu offers New contract")
 	_check(continue_run != null, "the menu offers Continue run")
+	_check(settings_button != null, "the menu offers Settings")
 	_check(quit_button != null, "the menu offers Quit")
-	if new_contract == null or continue_run == null or quit_button == null:
+	if (
+		new_contract == null
+		or continue_run == null
+		or settings_button == null
+		or quit_button == null
+	):
 		_finish()
 		return
 
@@ -93,7 +105,7 @@ func _run() -> void:
 	# --- keyboard navigation ---
 	_check(new_contract.has_focus(), "New contract is selected when the menu opens")
 	_check(
-		new_contract.find_valid_focus_neighbor(SIDE_BOTTOM) == quit_button,
+		new_contract.find_valid_focus_neighbor(SIDE_BOTTOM) == settings_button,
 		"moving down from New contract skips the unavailable Continue run"
 	)
 
@@ -102,6 +114,26 @@ func _run() -> void:
 		quit_button.pressed.get_connections().size() > 0,
 		"Quit is connected to an action"
 	)
+
+	# --- settings opens and comes back ---
+	settings_button.pressed.emit()
+	await process_frame
+	var settings := _screen()
+	_check(
+		settings != null and settings.name == "SettingsMenu",
+		"Settings opens the settings screen"
+	)
+	if settings == null or settings.name != "SettingsMenu":
+		_finish()
+		return
+	settings.get_node("%BackButton").pressed.emit()
+	await process_frame
+	menu = _screen()
+	_check(menu != null and menu.name == "MainMenu", "Back returns to the main menu")
+	if menu == null or menu.name != "MainMenu":
+		_finish()
+		return
+	new_contract = menu.get_node("%NewContractButton")
 
 	# --- start a new run ---
 	new_contract.pressed.emit()

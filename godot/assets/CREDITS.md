@@ -36,3 +36,11 @@ transparent. Credit by author:
 - **DarkZaitzev**: hooded-figure
 - **Skoll**: siren
 - **Andy Meneely**: police-badge
+
+## Audio (`audio/`)
+
+No third-party audio. Every sound effect and the background music loop were
+synthesised for CyberHeist by `tools/generate_audio.py` (Python and numpy, no
+samples or recordings), so they are original to this project and carry no
+third-party licence or attribution requirement. Run the script again to
+rebuild them.

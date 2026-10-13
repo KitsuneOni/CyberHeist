@@ -14,9 +14,10 @@ use crate::contract_map::{
     EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
 use crate::contract_offer::{ContractOffer, generate_offers};
+use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_stats::RunStats;
-use crate::shop::{Purchase, ShopError, ShopVisit};
+use crate::shop::{Purchase, Reroll, ScrubbedLogs, ShopError, ShopVisit};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -471,15 +472,45 @@ impl RunState {
         credits: &mut i64,
         deck: &mut RunDeck,
     ) -> Result<Purchase, ShopError> {
-        if !self.is_in_shop() {
-            return Err(ShopError::NotInShop);
-        }
-        let visit = self.shop_visit.as_mut().ok_or(ShopError::NotInShop)?;
-
-        let purchase = visit.buy(slot, credits, deck)?;
+        let purchase = self.open_visit_mut()?.buy(slot, credits, deck)?;
         self.stats.record_credit_change(-purchase.price);
         self.stats.record_card_added();
         Ok(purchase)
+    }
+
+    /// Buys Scrub Logs in the open shop visit and records the spend on the
+    /// run, in this one call (see [`ShopVisit::scrub_logs`]). Refused, with
+    /// nothing changed, as `buy_from_shop` is.
+    pub fn scrub_logs_in_shop(
+        &mut self,
+        credits: &mut i64,
+        noise: &mut NoiseLevel,
+    ) -> Result<ScrubbedLogs, ShopError> {
+        let scrubbed = self.open_visit_mut()?.scrub_logs(credits, noise)?;
+        self.stats.record_credit_change(-scrubbed.price);
+        Ok(scrubbed)
+    }
+
+    /// Rerolls the open shop visit's unsold stock and records the spend on
+    /// the run, in this one call (see [`ShopVisit::reroll`]). Refused, with
+    /// nothing changed, as `buy_from_shop` is.
+    pub fn reroll_shop(
+        &mut self,
+        credits: &mut i64,
+        rng: &mut impl Rng,
+    ) -> Result<Reroll, ShopError> {
+        let reroll = self.open_visit_mut()?.reroll(credits, rng)?;
+        self.stats.record_credit_change(-reroll.price);
+        Ok(reroll)
+    }
+
+    /// The shop visit to act on, or [`ShopError::NotInShop`] unless the run
+    /// is in a shop encounter whose visit has been opened.
+    fn open_visit_mut(&mut self) -> Result<&mut ShopVisit, ShopError> {
+        if !self.is_in_shop() {
+            return Err(ShopError::NotInShop);
+        }
+        self.shop_visit.as_mut().ok_or(ShopError::NotInShop)
     }
 
     pub fn report_caught(&mut self) -> Result<(), RunStateError> {
@@ -1932,5 +1963,34 @@ mod tests {
                 phase: ContractPhase::Hub
             })
         );
+    }
+
+    #[test]
+    fn shop_services_record_their_spend_and_are_refused_outside_a_shop() {
+        let mut state = in_shop();
+        state
+            .open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(4))
+            .unwrap();
+        let mut credits = 1_000;
+        let mut noise = NoiseLevel::new(100);
+        noise.add(50);
+        let mut rng = StdRng::seed_from_u64(5);
+
+        let scrubbed = state.scrub_logs_in_shop(&mut credits, &mut noise).unwrap();
+        let reroll = state.reroll_shop(&mut credits, &mut rng).unwrap();
+
+        assert_eq!(credits, 1_000 - scrubbed.price - reroll.price);
+        assert_eq!(state.summary().stats.cards_added(), 0);
+
+        state.complete_encounter().unwrap();
+        assert_eq!(
+            state.scrub_logs_in_shop(&mut credits, &mut noise),
+            Err(ShopError::NotInShop)
+        );
+        assert_eq!(
+            state.reroll_shop(&mut credits, &mut rng),
+            Err(ShopError::NotInShop)
+        );
+        assert_eq!(credits, 1_000 - scrubbed.price - reroll.price);
     }
 }

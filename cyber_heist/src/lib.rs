@@ -1,3 +1,4 @@
+mod audio_mix;
 mod card_data;
 mod card_database;
 mod card_play;
@@ -25,6 +26,7 @@ mod shop;
 mod shop_node;
 mod starter_deck;
 
+use audio_mix::SoundCue;
 use card_data::CardData;
 use card_database::CardDatabase;
 use deck::Deck;
@@ -351,6 +353,8 @@ impl DrawPhase {
                 vdict! {
                     "ok" => true,
                     "name" => played.name.as_str(),
+                    "type" => card_text::card_type_name(played.card_type),
+                    "sound_cue" => SoundCue::for_card_type(played.card_type).id(),
                     "noise_change" => played.noise_change,
                     "damage_dealt" => played.damage_dealt,
                     "damage_blocked" => played.damage_blocked,

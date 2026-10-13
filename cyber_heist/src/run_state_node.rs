@@ -10,9 +10,10 @@ use crate::encounter_reward;
 use crate::encounter_text::{
     all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
 };
+use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_state::{RunState, RunStateError};
-use crate::shop::{Purchase, ShopError, ShopVisit};
+use crate::shop::{Purchase, Reroll, ScrubbedLogs, ShopError, ShopVisit};
 
 /// Where `FlowCoordinator` keeps the run. Other nodes that need the run look
 /// it up here, and treat it as optional so their scenes still run on their
@@ -71,6 +72,18 @@ impl RunStateNode {
         deck: &mut RunDeck,
     ) -> Result<Purchase, ShopError> {
         self.state.buy_from_shop(slot, credits, deck)
+    }
+
+    pub(crate) fn scrub_logs_in_shop(
+        &mut self,
+        credits: &mut i64,
+        noise: &mut NoiseLevel,
+    ) -> Result<ScrubbedLogs, ShopError> {
+        self.state.scrub_logs_in_shop(credits, noise)
+    }
+
+    pub(crate) fn reroll_shop(&mut self, credits: &mut i64) -> Result<Reroll, ShopError> {
+        self.state.reroll_shop(credits, &mut rand::rng())
     }
 }
 

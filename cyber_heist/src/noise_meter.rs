@@ -196,6 +196,12 @@ impl NoiseMeter {
 }
 
 impl NoiseMeter {
+    /// The authoritative value, for a Rust rule that has to look at it, such
+    /// as whether the shop's Scrub Logs would lower it.
+    pub(crate) fn level(&self) -> &NoiseLevel {
+        &self.level
+    }
+
     /// The transaction borrows the authoritative value, never a copied mirror.
     pub(crate) fn level_mut(&mut self) -> &mut NoiseLevel {
         &mut self.level
