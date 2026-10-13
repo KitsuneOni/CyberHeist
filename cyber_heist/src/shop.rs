@@ -209,10 +209,13 @@ impl ShopVisit {
 
     /// Checks a visit read back from a save is one `open` could have rolled
     /// and buying could have left: no more than [`STOCK_SIZE`] slots, no card
-    /// twice, and every slot priced by its card's rarity. `rarity_of` looks a
-    /// card up in the card database, `None` for one that does not exist.
+    /// twice, and every slot holding its card's real rarity and priced by it.
+    /// The pool a reroll draws from is checked the same way: every card real,
+    /// listed once, with its real rarity. `rarity_of` looks a card up in the
+    /// card database, `None` for one that does not exist.
     ///
-    /// Without this an edited save could make every card free on Continue.
+    /// Without this an edited save could make every card free on Continue, or
+    /// slip a cheap or made-up card into the stock through a reroll.
     pub fn validate_restored(
         &self,
         rarity_of: impl Fn(&str) -> Option<Rarity>,
@@ -231,11 +234,28 @@ impl ShopVisit {
                     slot.card_id
                 ));
             };
+            if slot.rarity != rarity {
+                return Err(format!(
+                    "'{}' is stocked with the wrong rarity",
+                    slot.card_id
+                ));
+            }
             if slot.price != price_for(rarity) {
                 return Err(format!("'{}' is not priced by its rarity", slot.card_id));
             }
         }
 
+        let mut pooled = std::collections::HashSet::new();
+        for (card_id, rarity) in &self.pool {
+            if !pooled.insert(card_id.as_str()) {
+                return Err(format!("a shop's pool lists '{card_id}' twice"));
+            }
+            if rarity_of(card_id) != Some(*rarity) {
+                return Err(format!(
+                    "a shop's pool has '{card_id}', which does not exist or has another rarity"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1210,12 +1230,46 @@ mod tests {
             edited
         };
         let unknown = shop_selling("not_a_real_card", 50);
+        let wrong_slot_rarity = {
+            let mut edited = shop.clone();
+            edited.slots[0].rarity = match edited.slots[0].rarity {
+                Rarity::Common => Rarity::Legendary,
+                _ => Rarity::Common,
+            };
+            edited
+        };
+        let unknown_in_pool = {
+            let mut edited = shop.clone();
+            edited
+                .pool
+                .push(("not_a_real_card".to_string(), Rarity::Common));
+            edited
+        };
+        let cheapened_in_pool = {
+            let mut edited = shop.clone();
+            for (card_id, rarity) in &mut edited.pool {
+                if card_id == "stuxnet" {
+                    *rarity = Rarity::Common;
+                }
+            }
+            edited
+        };
+        let repeated_in_pool = {
+            let mut edited = shop.clone();
+            let first = edited.pool[0].clone();
+            edited.pool.push(first);
+            edited
+        };
 
         for (description, edited) in [
             ("a free card", free),
             ("a card twice", repeated),
             ("too many cards", oversized),
             ("an unknown card", unknown),
+            ("a slot's rarity changed", wrong_slot_rarity),
+            ("an unknown card in its pool", unknown_in_pool),
+            ("a Legendary made Common in its pool", cheapened_in_pool),
+            ("a card twice in its pool", repeated_in_pool),
         ] {
             assert!(
                 edited.validate_restored(rarity_in_pool).is_err(),
