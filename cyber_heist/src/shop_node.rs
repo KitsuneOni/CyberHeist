@@ -1,19 +1,20 @@
 //! Thin Godot adapter for the shop model in `shop.rs`.
 //!
-//! Lives on the shop screen, as `EventNode` does on the event screen, and
-//! holds that visit's [`ShopVisit`]. The stock is rolled once when the node
-//! enters the tree, so it stays fixed for as long as the player is in the shop.
+//! Lives on the shop screen, as `EventNode` does on the event screen. The
+//! visit itself belongs to the run (`RunState::open_shop_visit`), not to this
+//! node: the stock is rolled the first time the screen opens during a shop
+//! encounter, and a screen rebuilt during the same visit finds the same stock
+//! and sold slots rather than rolling new ones.
 //!
 //! Buying borrows the player's credits from `PlayerStateGlobal` and the run's
-//! deck from `RunDeckNode` and hands both to [`ShopVisit::buy`] in one call, so
-//! the price is taken and the card added together or not at all. The spend and
-//! the card are then recorded on the run for the end screen, as rewards and
-//! events do.
+//! deck from `RunDeckNode` and hands both to `RunState::buy_from_shop` in one
+//! call, which takes the price, adds the card and records both on the run's
+//! stats together or not at all.
 //!
 //! The two services work the same way. Scrub Logs borrows the credits and the
-//! shared `NoiseMeterGlobal` level for [`ShopVisit::scrub_logs`], and a reroll
-//! borrows the credits for [`ShopVisit::reroll`]. Each spend is recorded on the
-//! run like a purchase.
+//! shared `NoiseMeterGlobal` level for `RunState::scrub_logs_in_shop`, and a
+//! reroll borrows the credits for `RunState::reroll_shop`. Each records its
+//! spend on the run in the same call.
 
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
@@ -24,8 +25,8 @@ use crate::card_text;
 use crate::noise_meter::NoiseMeter;
 use crate::run_deck_node::RunDeckNode;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
-use crate::shop::{SCRUB_LOGS_NOISE_REDUCTION, SCRUB_LOGS_PRICE, ShopVisit};
-use crate::{PlayerState, RUN_DECK_PATH};
+use crate::shop::{SCRUB_LOGS_NOISE_REDUCTION, SCRUB_LOGS_PRICE};
+use crate::{PlayerState, RUN_DECK_PATH, card_detail_dictionary};
 
 const CARD_DATABASE_PATH: &str = "/root/CardDatabaseGlobal";
 const PLAYER_STATE_PATH: &str = "/root/PlayerStateGlobal";
@@ -34,23 +35,23 @@ const NOISE_METER_PATH: &str = "/root/NoiseMeterGlobal";
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct ShopNode {
-    /// This visit's stock. `None` only if the card database was missing when
-    /// the shop opened, in which case there is nothing to sell.
-    visit: Option<ShopVisit>,
     base: Base<Node>,
 }
 
 #[godot_api]
 impl INode for ShopNode {
     fn init(base: Base<Node>) -> Self {
-        Self { visit: None, base }
+        Self { base }
     }
 
+    /// Opens the run's shop visit, rolling its stock if this is the first time
+    /// the screen has opened during this shop encounter.
     fn ready(&mut self) {
-        let Some(db) = self
-            .base()
-            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
-        else {
+        let Some(mut run_state) = self.run_state() else {
+            godot_error!("ShopNode: no RunState, so there is no shop visit to open.");
+            return;
+        };
+        let Some(db) = self.card_database() else {
             godot_error!("ShopNode: no CardDatabaseGlobal, so the shop has no stock.");
             return;
         };
@@ -60,63 +61,50 @@ impl INode for ShopNode {
             .all()
             .map(|card| (card.id.clone(), card.rarity))
             .collect();
-        self.visit = Some(ShopVisit::open(&pool, &mut rand::rng()));
+        if let Err(error) = run_state.bind_mut().open_shop_visit(&pool) {
+            godot_error!("ShopNode: {error}");
+        }
     }
 }
 
 #[godot_api]
 impl ShopNode {
-    /// The stock in display order, one dictionary per slot:
-    /// `{slot, id, name, type, rarity, cost_text, noise_text, description,
-    ///   keywords: [{label, explanation}], price, sold, affordable}`.
+    /// The stock in display order, one dictionary per slot: the card's
+    /// details (see `card_detail_dictionary`) plus `{slot, id, price, sold,
+    /// affordable}`. `slot` is the position to pass to `buy`.
     ///
     /// `affordable` is measured against the player's credits right now, so
     /// the screen can disable a buy button the moment it stops being one.
     #[func]
     fn stock(&self) -> Array<VarDictionary> {
         let mut stock: Array<VarDictionary> = Array::new();
-        let Some(visit) = self.visit.as_ref() else {
+        let (Some(run_state), Some(db)) = (self.run_state(), self.card_database()) else {
             return stock;
         };
-        let Some(db) = self
-            .base()
-            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
-        else {
+        let run_state = run_state.bind();
+        let Some(visit) = run_state.shop_visit() else {
             return stock;
         };
         let db = db.bind();
         let credits = self.credits();
 
         for (index, slot) in visit.slots().iter().enumerate() {
+            // Every stocked id came from the database, so this only skips a
+            // card if the database has changed since. The screen matches rows
+            // by `slot`, not by position in this list, so a skipped card does
+            // not shift the others.
             let Some(card) = db.get(slot.card_id()) else {
                 continue;
             };
             // Bought outside an encounter, so a card is shown on its strong
             // side, the same as a card reward.
-            let detail = card_text::describe(card, 0);
-
-            let mut keywords: Array<VarDictionary> = Array::new();
-            for keyword in &detail.keywords {
-                keywords.push(&vdict! {
-                    "label" => keyword.label.as_str(),
-                    "explanation" => keyword.explanation.as_str(),
-                });
-            }
-
-            stock.push(&vdict! {
-                "slot" => index as i64,
-                "id" => slot.card_id(),
-                "name" => detail.name.as_str(),
-                "type" => detail.card_type.as_str(),
-                "rarity" => detail.rarity.as_str(),
-                "cost_text" => detail.cost_text.as_str(),
-                "noise_text" => detail.noise_text.as_str(),
-                "description" => detail.description.as_str(),
-                "keywords" => &keywords,
-                "price" => slot.price(),
-                "sold" => slot.is_sold(),
-                "affordable" => visit.can_afford(index, credits),
-            });
+            let mut entry = card_detail_dictionary(&card_text::describe(card, 0));
+            entry.set("slot", index as i64);
+            entry.set("id", slot.card_id());
+            entry.set("price", slot.price());
+            entry.set("sold", slot.is_sold());
+            entry.set("affordable", visit.can_afford(index, credits));
+            stock.push(&entry);
         }
 
         stock
@@ -125,9 +113,9 @@ impl ShopNode {
     /// Buys the card in `slot`. Returns `{ok: true, id, price, credits}` with
     /// the balance after paying, or `{ok: false, error}` with nothing changed.
     ///
-    /// `error` is `no_such_slot`, `already_sold` or `not_enough_credits` from
-    /// the shop's own rules, or `shop_closed` / `no_player_state` /
-    /// `no_run_deck` when the screen has no run to buy for.
+    /// `error` is `no_such_slot`, `already_sold`, `not_enough_credits` or
+    /// `not_in_shop` from the shop's own rules, or `no_player_state` /
+    /// `no_run_deck` / `no_run_state` when the screen has no run to buy for.
     #[func]
     fn buy(&mut self, slot: i64) -> VarDictionary {
         let Ok(slot) = usize::try_from(slot) else {
@@ -142,27 +130,27 @@ impl ShopNode {
         let Some(mut run_deck) = self.base().try_get_node_as::<RunDeckNode>(RUN_DECK_PATH) else {
             return failure("no_run_deck");
         };
-        let Some(visit) = self.visit.as_mut() else {
-            return failure("shop_closed");
+        let Some(mut run_state) = self.run_state() else {
+            return failure("no_run_state");
         };
 
         let result = {
             let mut player_state = player_state.bind_mut();
             let mut run_deck = run_deck.bind_mut();
-            visit.buy(slot, player_state.credits_mut(), run_deck.deck_mut())
+            run_state.bind_mut().buy_from_shop(
+                slot,
+                player_state.credits_mut(),
+                run_deck.deck_mut(),
+            )
         };
 
         match result {
-            Ok(purchase) => {
-                self.record_spend_on_run(purchase.price);
-                self.record_card_added_on_run();
-                vdict! {
-                    "ok" => true,
-                    "id" => purchase.card_id.as_str(),
-                    "price" => purchase.price,
-                    "credits" => purchase.credits_left,
-                }
-            }
+            Ok(purchase) => vdict! {
+                "ok" => true,
+                "id" => purchase.card_id.as_str(),
+                "price" => purchase.price,
+                "credits" => purchase.credits_left,
+            },
             Err(error) => failure(error.code()),
         }
     }
@@ -170,21 +158,25 @@ impl ShopNode {
     /// The Scrub Logs service as the screen shows it:
     /// `{price, reduction, sold, affordable, noise, max_noise}`.
     ///
-    /// `affordable` is measured against the player's credits right now and is
-    /// false once it is sold out. `noise` lets the screen show what it would
-    /// scrub and hold the button back while there is nothing to scrub.
+    /// `affordable` is whether it can be bought right now: not sold out, the
+    /// player's credits cover it, and it would actually lower the noise. The
+    /// screen enables the button and colours the price by it alone.
     #[func]
     fn scrub_logs_offer(&self) -> VarDictionary {
-        let (sold, affordable) = match self.visit.as_ref() {
-            Some(visit) => (
-                visit.scrub_logs_sold(),
-                visit.can_afford_scrub_logs(self.credits()),
-            ),
-            None => (false, false),
-        };
-        let (noise, max_noise) = match self.base().try_get_node_as::<NoiseMeter>(NOISE_METER_PATH) {
+        let meter = self.noise_meter();
+        let (noise, max_noise) = match &meter {
             Some(meter) => (meter.bind().get_noise(), meter.bind().get_max_noise()),
             None => (0, 0),
+        };
+        let (sold, affordable) = match (self.run_state(), &meter) {
+            (Some(run_state), Some(meter)) => match run_state.bind().shop_visit() {
+                Some(visit) => (
+                    visit.scrub_logs_sold(),
+                    visit.can_buy_scrub_logs(self.credits(), meter.bind().level()),
+                ),
+                None => (false, false),
+            },
+            _ => (false, false),
         };
 
         vdict! {
@@ -201,9 +193,10 @@ impl ShopNode {
     /// credits}` with the noise and balance afterwards, or `{ok: false, error}`
     /// with nothing changed.
     ///
-    /// `error` is `already_sold`, `nothing_to_scrub` or `not_enough_credits`
-    /// from the shop's own rules, or `shop_closed` / `no_player_state` /
-    /// `no_noise_meter` when the screen has no run to scrub for.
+    /// `error` is `already_sold`, `nothing_to_scrub`, `not_enough_credits` or
+    /// `not_in_shop` from the shop's own rules, or `no_player_state` /
+    /// `no_noise_meter` / `no_run_state` when the screen has no run to scrub
+    /// for.
     #[func]
     fn scrub_logs(&mut self) -> VarDictionary {
         let Some(mut player_state) = self
@@ -212,31 +205,29 @@ impl ShopNode {
         else {
             return failure("no_player_state");
         };
-        let Some(mut noise_meter) = self.base().try_get_node_as::<NoiseMeter>(NOISE_METER_PATH)
-        else {
+        let Some(mut noise_meter) = self.noise_meter() else {
             return failure("no_noise_meter");
         };
-        let Some(visit) = self.visit.as_mut() else {
-            return failure("shop_closed");
+        let Some(mut run_state) = self.run_state() else {
+            return failure("no_run_state");
         };
 
         let result = {
             let mut player_state = player_state.bind_mut();
             let mut noise_meter = noise_meter.bind_mut();
-            visit.scrub_logs(player_state.credits_mut(), noise_meter.level_mut())
+            run_state
+                .bind_mut()
+                .scrub_logs_in_shop(player_state.credits_mut(), noise_meter.level_mut())
         };
 
         match result {
-            Ok(scrubbed) => {
-                self.record_spend_on_run(scrubbed.price);
-                vdict! {
-                    "ok" => true,
-                    "price" => scrubbed.price,
-                    "noise_removed" => scrubbed.noise_removed,
-                    "noise" => scrubbed.noise_left,
-                    "credits" => scrubbed.credits_left,
-                }
-            }
+            Ok(scrubbed) => vdict! {
+                "ok" => true,
+                "price" => scrubbed.price,
+                "noise_removed" => scrubbed.noise_removed,
+                "noise" => scrubbed.noise_left,
+                "credits" => scrubbed.credits_left,
+            },
             Err(error) => failure(error.code()),
         }
     }
@@ -244,22 +235,28 @@ impl ShopNode {
     /// The reroll as the screen shows it: `{price, affordable, available}`.
     ///
     /// `price` is what the next reroll in this visit costs. `available` is
-    /// false once every card is sold, when there is nothing left to reroll;
-    /// `affordable` is false then too.
+    /// false when a reroll would change nothing: every card is sold, or the
+    /// pool has no card outside the stock. `affordable` is whether it can be
+    /// bought right now, so it is false then too.
     #[func]
     fn reroll_offer(&self) -> VarDictionary {
-        let Some(visit) = self.visit.as_ref() else {
-            return vdict! {
-                "price" => 0,
-                "affordable" => false,
-                "available" => false,
-            };
+        let unavailable = vdict! {
+            "price" => 0,
+            "affordable" => false,
+            "available" => false,
+        };
+        let Some(run_state) = self.run_state() else {
+            return unavailable;
+        };
+        let run_state = run_state.bind();
+        let Some(visit) = run_state.shop_visit() else {
+            return unavailable;
         };
 
         vdict! {
             "price" => visit.reroll_price(),
-            "affordable" => visit.can_afford_reroll(self.credits()),
-            "available" => visit.has_unsold_stock(),
+            "affordable" => visit.can_buy_reroll(self.credits()),
+            "available" => visit.has_something_to_reroll(),
         }
     }
 
@@ -267,9 +264,9 @@ impl ShopNode {
     /// credits}`, or `{ok: false, error}` with nothing changed. Read `stock()`
     /// again afterwards for the new cards.
     ///
-    /// `error` is `nothing_to_reroll` or `not_enough_credits` from the shop's
-    /// own rules, or `shop_closed` / `no_player_state` when the screen has no
-    /// run to reroll for.
+    /// `error` is `nothing_to_reroll`, `not_enough_credits` or `not_in_shop`
+    /// from the shop's own rules, or `no_player_state` / `no_run_state` when
+    /// the screen has no run to reroll for.
     #[func]
     fn reroll(&mut self) -> VarDictionary {
         let Some(mut player_state) = self
@@ -278,31 +275,41 @@ impl ShopNode {
         else {
             return failure("no_player_state");
         };
-        let Some(visit) = self.visit.as_mut() else {
-            return failure("shop_closed");
+        let Some(mut run_state) = self.run_state() else {
+            return failure("no_run_state");
         };
 
         let result = {
             let mut player_state = player_state.bind_mut();
-            visit.reroll(player_state.credits_mut(), &mut rand::rng())
+            run_state.bind_mut().reroll_shop(player_state.credits_mut())
         };
 
         match result {
-            Ok(reroll) => {
-                self.record_spend_on_run(reroll.price);
-                vdict! {
-                    "ok" => true,
-                    "price" => reroll.price,
-                    "next_price" => reroll.next_price,
-                    "credits" => reroll.credits_left,
-                }
-            }
+            Ok(reroll) => vdict! {
+                "ok" => true,
+                "price" => reroll.price,
+                "next_price" => reroll.next_price,
+                "credits" => reroll.credits_left,
+            },
             Err(error) => failure(error.code()),
         }
     }
 }
 
 impl ShopNode {
+    fn noise_meter(&self) -> Option<Gd<NoiseMeter>> {
+        self.base().try_get_node_as::<NoiseMeter>(NOISE_METER_PATH)
+    }
+
+    fn run_state(&self) -> Option<Gd<RunStateNode>> {
+        self.base().try_get_node_as::<RunStateNode>(RUN_STATE_PATH)
+    }
+
+    fn card_database(&self) -> Option<Gd<CardDatabase>> {
+        self.base()
+            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
+    }
+
     fn credits(&self) -> i64 {
         match self
             .base()
@@ -310,22 +317,6 @@ impl ShopNode {
         {
             Some(player_state) => player_state.bind().money(),
             None => 0,
-        }
-    }
-
-    /// Records a shop spend on the run. A spend is a loss, which the run does
-    /// not count as earned, but it is recorded like every other credit change.
-    /// Skipped when the shop screen is open on its own with no run behind it.
-    fn record_spend_on_run(&self, price: i64) {
-        if let Some(mut run_state) = self.base().try_get_node_as::<RunStateNode>(RUN_STATE_PATH) {
-            run_state.bind_mut().record_credit_change(-price);
-        }
-    }
-
-    /// Records a bought card on the run, so the end screen counts it.
-    fn record_card_added_on_run(&self) {
-        if let Some(mut run_state) = self.base().try_get_node_as::<RunStateNode>(RUN_STATE_PATH) {
-            run_state.bind_mut().record_card_added();
         }
     }
 }

@@ -3,18 +3,35 @@
 #
 # Layout, status and connections all come from contract_map.rs; this script
 # only wires them to the screen, and MapGraph does the drawing.
+#
+# A new run first asks the player which contract to take (the offer picker),
+# and only shows the map once one is accepted. The accepted offer is what
+# winning the contract pays, so every run the player starts carries a reward.
+# Until they enter an encounter, Change contract on the map brings the picker
+# back so they can swap to another offer.
 extends Control
+
+const CHOOSING_TITLE := "Choose your contract"
+const CHOOSING_SUBTITLE := "Longer contracts take more zones and pay more when you win."
+const MAP_TITLE := "Choose your next breach"
+const MAP_SUBTITLE := "Each route changes which encounters remain available for this contract."
 
 # How many frames to give the map graph to reach the width it asked for before
 # scrolling anyway. Layout normally settles in one or two; the bound just stops
 # a contract that never grows from waiting forever.
 const MAX_LAYOUT_FRAMES := 8
 
+@onready var title_label: Label = $Page/VBox/Title
+@onready var subtitle_label: Label = $Page/VBox/Subtitle
+@onready var offer_picker: PanelContainer = $Page/VBox/OfferPicker
+@onready var map_panel: PanelContainer = $Page/VBox/MapPanel
 @onready var credits_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/CreditsLabel
 @onready var progress_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/ProgressLabel
 @onready var map_scroll: ScrollContainer = $Page/VBox/MapPanel/MapMargin/MapContent/MapScroll
 @onready var map_graph: Control = $Page/VBox/MapPanel/MapMargin/MapContent/MapScroll/MapGraph
 @onready var instruction_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/InstructionLabel
+@onready
+var change_contract_button: Button = $Page/VBox/MapPanel/MapMargin/MapContent/ChangeContractButton
 @onready var key_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/KeyLabel
 @onready var status_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/StatusLabel
 
@@ -23,7 +40,38 @@ func _ready() -> void:
 	# The nodes on the map are the only way to choose a route, so selection
 	# comes from the graph rather than a separate row of buttons.
 	map_graph.node_selected.connect(_on_encounter_selected)
+	offer_picker.offer_chosen.connect(_on_offer_chosen)
+	change_contract_button.pressed.connect(_on_change_contract_pressed)
 	_build_key()
+
+	if FlowCoordinator.needs_contract_choice():
+		_show_contract_choice()
+	else:
+		_show_map()
+
+
+# Whether the player is choosing a contract rather than looking at the map.
+func is_choosing_contract() -> bool:
+	return offer_picker.visible
+
+
+func _show_contract_choice() -> void:
+	title_label.text = CHOOSING_TITLE
+	subtitle_label.text = CHOOSING_SUBTITLE
+	map_panel.visible = false
+	offer_picker.visible = true
+	# Opens on the contract already accepted, if any, so Accept straight away
+	# keeps it.
+	var accepted_index := int(FlowCoordinator.accepted_contract_offer().get("index", -1))
+	offer_picker.show_offers(FlowCoordinator.contract_offers(), accepted_index)
+
+
+func _show_map() -> void:
+	title_label.text = MAP_TITLE
+	subtitle_label.text = MAP_SUBTITLE
+	offer_picker.visible = false
+	map_panel.visible = true
+	change_contract_button.visible = FlowCoordinator.can_change_contract()
 	_show_available_encounters()
 
 
@@ -122,6 +170,25 @@ func _boss_is_next(available: Array) -> bool:
 		if str(encounter.get("type", "")) != "boss":
 			return false
 	return not available.is_empty()
+
+
+# Accepting rebuilds the run's map from the offer, so the map is drawn only
+# after the acceptance has gone through.
+func _on_offer_chosen(index: int) -> void:
+	var result: Dictionary = FlowCoordinator.accept_contract_offer(index)
+	if not result.get("ok", false):
+		offer_picker.show_error(
+			"Could not accept the contract: %s" % result.get("error", "unknown error")
+		)
+		return
+	_show_map()
+
+
+func _on_change_contract_pressed() -> void:
+	if not FlowCoordinator.can_change_contract():
+		change_contract_button.visible = false
+		return
+	_show_contract_choice()
 
 
 func _on_encounter_selected(node_id: int) -> void:

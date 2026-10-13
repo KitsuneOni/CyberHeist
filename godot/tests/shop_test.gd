@@ -5,7 +5,8 @@
 # screens, and checks what only a running game can show.
 #
 #   S1 Scenario: Shop generates stock on entry
-#     Given I select a shop node on the contract map
+#     Given I have accepted a contract on the offer picker
+#     And I select a shop node on the contract map
 #     When the shop screen opens
 #     Then I see 5 cards for sale with their full details
 #     And each card's price is set by its rarity
@@ -15,6 +16,7 @@
 #     When I buy a card
 #     Then that slot shows as sold
 #     And the other cards stay the same
+#     And reopening the shop screen shows the same stock, still sold
 #
 #   S2 Scenario: Successful purchase
 #     When I buy a card I can afford
@@ -67,10 +69,6 @@ const PRICE_BY_RARITY := {
 	"Legendary": 150,
 }
 const STOCK_SIZE := 5
-# Mirror the service prices in cyber_heist/src/shop.rs.
-const SCRUB_LOGS_PRICE := 60
-const SCRUB_LOGS_NOISE_REDUCTION := 20
-const REROLL_BASE_PRICE := 25
 # The S2 scenario's balance. Every card costs at least 50, so a couple of
 # purchases always leaves something the player cannot afford.
 const STARTING_CREDITS := 120
@@ -123,14 +121,37 @@ func _settle() -> void:
 	await process_frame
 
 
-# Walks the first zone of the current run until the map offers a shop, then
-# clicks it on the map like a player would. Encounters on the way are completed
-# without being played. Returns the shop's node id, or -1 if this run's first
-# zone had none.
+# A new run opens the hub on the offer picker with the map hidden, so accept
+# the offer it shows first, as a player must before the map appears. Returns
+# whether the hub is showing the map.
+func _accept_shown_offer(hub: Node) -> bool:
+	if not hub.is_choosing_contract():
+		return true
+	hub.offer_picker.accept_button.pressed.emit()
+	await _settle()
+	if hub.is_choosing_contract():
+		push_error(
+			"accepting the shown offer left the picker up: %s"
+			% hub.offer_picker.status_label.text
+		)
+		return false
+	return true
+
+
+# Accepts a contract on the offer picker, then walks the first zone of the run
+# until the map offers a shop and clicks it on the map like a player would.
+# Encounters on the way are completed without being played. Returns the shop's
+# node id, or -1 if this run's first zone had none.
 func _walk_to_first_zone_shop() -> int:
+	var first_hub := _screen()
+	if first_hub == null or first_hub.name != "ContractHub":
+		return -1
+	if not await _accept_shown_offer(first_hub):
+		return -1
+
 	for step in 10:
 		var hub := _screen()
-		if hub == null or hub.name != "ContractHub":
+		if hub == null or hub.name != "ContractHub" or hub.is_choosing_contract():
 			return -1
 
 		var options: Array = _flow.selectable_encounters()
@@ -231,10 +252,12 @@ func _set_credits_and_noise(shop: Node, credits: int, noise: int) -> void:
 	shop._refresh()
 
 
-func _count_in(names: PackedStringArray, card_name: String) -> int:
+# Counts by id rather than display name: a card's name flips to its weak side
+# at high noise, and two cards could share a name.
+func _count_in(card_ids: PackedStringArray, card_id: String) -> int:
 	var count := 0
-	for drawn_name in names:
-		if drawn_name == card_name:
+	for drawn_id in card_ids:
+		if drawn_id == card_id:
 			count += 1
 	return count
 
@@ -329,6 +352,7 @@ func _run() -> void:
 	var deck_before: int = _flow.run_deck_size()
 	var cards_added_before: int = _flow.run_summary().cards_added
 	var earned_before: int = _flow.run_summary().credits_earned
+	# Ids of the cards bought, one entry per copy.
 	var bought: Array[String] = []
 
 	# Stock can include starter cards, so remember how many copies the run
@@ -336,7 +360,7 @@ func _run() -> void:
 	var run_deck: Node = _flow.get_node("RunDeck")
 	var copies_before := {}
 	for card: Dictionary in stock:
-		copies_before[String(card.name)] = int(run_deck.count_of(String(card.id)))
+		copies_before[String(card.id)] = int(run_deck.count_of(String(card.id)))
 
 	var slot_to_buy := _cheapest_affordable_slot(stock)
 	_check(slot_to_buy >= 0, "with %d credits a card is affordable" % STARTING_CREDITS)
@@ -349,7 +373,7 @@ func _run() -> void:
 	if not _press_buy(shop, slot_to_buy, String(target.name)):
 		_finish()
 		return
-	bought.append(String(target.name))
+	bought.append(String(target.id))
 	stock = shop_node.stock()
 
 	_check(
@@ -369,6 +393,22 @@ func _run() -> void:
 		"the credits shown drop with the purchase"
 	)
 
+	# Rebuild the screen mid-visit, as resuming the run onto the shop does.
+	# The visit belongs to the run, so it must not roll new stock or restock
+	# the sold slot.
+	_check(_flow._show_current_run_screen().get("ok", false), "the shop screen can be reopened")
+	await _settle()
+	shop = _screen()
+	_check(shop != null and shop.name == "ShopScreen", "reopening shows the shop screen again")
+	if shop == null or shop.name != "ShopScreen":
+		_finish()
+		return
+	shop_node = shop.get_node("ShopNode")
+	stock = shop_node.stock()
+	_check(_stock_ids(stock) == stock_before_buying, "reopening the shop keeps its stock")
+	_check(stock[slot_to_buy].sold, "reopening the shop keeps the bought slot sold")
+	_check(shop._price_labels[slot_to_buy].text == "SOLD", "the reopened screen shows it as sold")
+
 	# Spend down until some card is out of reach. Every card costs at least 50,
 	# so from 120 this takes at most two purchases.
 	var unaffordable_slot := _first_unaffordable_slot(stock)
@@ -379,7 +419,7 @@ func _run() -> void:
 		var next_name := String(stock[next_slot].name)
 		if not _press_buy(shop, next_slot, next_name):
 			break
-		bought.append(next_name)
+		bought.append(String(stock[next_slot].id))
 		stock = shop_node.stock()
 		unaffordable_slot = _first_unaffordable_slot(stock)
 
@@ -425,16 +465,23 @@ func _run() -> void:
 	shop.get_node("%LeaveButton").pressed.emit()
 	await _settle()
 	var hub := _screen()
-	_check(hub != null and hub.name == "ContractHub", "Leave returns to the contract map")
+	_check(
+		hub != null and hub.name == "ContractHub" and not hub.is_choosing_contract(),
+		"Leave returns to the contract map, not the offer picker"
+	)
 	_check(_flow.run_snapshot().phase == "hub", "no encounter is active after leaving")
 	_check(_node_status(shop_id) == "completed", "the shop node is marked completed")
 
 	# --- #38: bought cards are drawable in a later encounter ------------------
-	# Scrub Logs left noise at 50, where some cards show their weak-side name.
-	# The shop lists every card by its strong-side name, so draw at zero noise
-	# to find them by the same names.
-	_noise_meter.add_noise(-_noise_meter.noise)
-	var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	# Scrub Logs left noise at 50, where some cards show their weak-side name,
+	# which is why the draw is checked by id rather than by name.
+	# What matters here is the run's deck, not this contract, so when the next
+	# column only offers elites or the boss, roll a fresh contract (which keeps
+	# the deck) rather than fail on the map's luck.
+	var combat_fixture := preload("res://tests/combat_fixture.gd")
+	if not combat_fixture.offers_standard_security(_flow):
+		combat_fixture.roll_new_contract(_flow)
+	var entered: Dictionary = combat_fixture.enter(_flow)
 	_check(entered.get("ok", false), "the next encounter loads")
 	await _settle()
 	var combat := _screen()
@@ -447,37 +494,51 @@ func _run() -> void:
 	var draw: Node = combat.draw_phase
 	draw.hand_size = draw.hand_names().size() + draw.draw_pile_count() + draw.discard_pile_count()
 	combat._draw_hand()
-	var hand: PackedStringArray = draw.hand_names()
+	var hand: PackedStringArray = draw.hand_ids()
 	var checked := {}
-	for card_name in bought:
-		if checked.has(card_name):
+	for card_id in bought:
+		if checked.has(card_id):
 			continue
-		checked[card_name] = true
-		var expected: int = int(copies_before[card_name]) + bought.count(card_name)
-		var drawn := _count_in(hand, card_name)
+		checked[card_id] = true
+		var expected: int = int(copies_before[card_id]) + bought.count(card_id)
+		var drawn := _count_in(hand, card_id)
 		_check(
 			drawn == expected,
 			(
 				"every copy of the bought card '%s' can be drawn in a later encounter (%d of %d)"
-				% [card_name, drawn, expected]
+				% [card_id, drawn, expected]
 			)
 		)
 
 	_finish()
 
 
-# S3: Scrub Logs lowers noise by 20 for its price, once per visit, and is
-# refused with nothing changed when the player cannot afford it.
+# S3: Scrub Logs lowers noise by its reduction for its price, once per visit,
+# and is refused with nothing changed when the player cannot afford it or
+# there is no noise to scrub. The price and reduction are read from ShopNode,
+# so the Rust tests own the scenario's numbers (60 credits, 20 noise).
 func _play_scrub_logs(shop: Node, shop_node: Node) -> void:
 	var scrub_button: Button = shop.get_node("%ScrubLogsButton")
 	var scrub_price: Label = shop.get_node("%ScrubLogsPriceLabel")
 	var scrub_details: Label = shop.get_node("%ScrubLogsDetails")
+	var offer: Dictionary = shop_node.scrub_logs_offer()
+	var price := int(offer.price)
+	var reduction := int(offer.reduction)
 
-	# One credit short first.
-	_set_credits_and_noise(shop, SCRUB_LOGS_PRICE - 1, 70)
+	# Plenty of credits but no noise: nothing to pay for, so it is held back
+	# and its price shown red like anything else that cannot be bought.
+	_set_credits_and_noise(shop, price * 3, 0)
+	_check(scrub_button.disabled, "Scrub Logs cannot be bought with no noise to scrub")
+	_check(
+		scrub_price.get_theme_color("font_color") == UNAFFORDABLE_COLOUR,
+		"Scrub Logs with nothing to scrub has its price in red"
+	)
+
+	# One credit short.
+	_set_credits_and_noise(shop, price - 1, 70)
 	_check(scrub_details.text.contains("SCRUB LOGS"), "the shop offers Scrub Logs")
 	_check(scrub_details.text.contains("now 70/100"), "Scrub Logs shows the noise it would scrub")
-	_check(scrub_price.text == "%d cr" % SCRUB_LOGS_PRICE, "Scrub Logs shows its price")
+	_check(scrub_price.text == "%d cr" % price, "Scrub Logs shows its price")
 	_check(scrub_button.disabled, "Scrub Logs cannot be bought one credit short")
 	_check(
 		scrub_price.get_theme_color("font_color") == UNAFFORDABLE_COLOUR,
@@ -486,27 +547,30 @@ func _play_scrub_logs(shop: Node, shop_node: Node) -> void:
 	# Force the attempt past the disabled button, as a stale click would.
 	shop._on_scrub_logs_pressed()
 	_check(_noise_meter.noise == 70, "a refused Scrub Logs leaves noise alone")
-	_check(_player.money() == SCRUB_LOGS_PRICE - 1, "a refused Scrub Logs leaves credits alone")
+	_check(_player.money() == price - 1, "a refused Scrub Logs leaves credits alone")
 	_check(not shop_node.scrub_logs_offer().sold, "a refused Scrub Logs is still for sale")
 
 	# S3 scenario 1: noise 70 with enough credits.
-	var credits_before := SCRUB_LOGS_PRICE + 40
+	var credits_before := price + 40
 	_set_credits_and_noise(shop, credits_before, 70)
 	if not _press_service(scrub_button, "Scrub Logs"):
 		return
 	_check(
-		_noise_meter.noise == 70 - SCRUB_LOGS_NOISE_REDUCTION,
-		"Scrub Logs drops noise by 20 to 50 (now %d)" % _noise_meter.noise
+		_noise_meter.noise == 70 - reduction,
+		"Scrub Logs drops noise by %d (now %d)" % [reduction, _noise_meter.noise]
 	)
 	_check(
-		_player.money() == credits_before - SCRUB_LOGS_PRICE,
+		_player.money() == credits_before - price,
 		"Scrub Logs takes exactly its price (%d -> %d)" % [credits_before, _player.money()]
 	)
 	_check(
 		shop.get_node("%CreditsLabel").text.contains(str(_player.money())),
 		"the credits shown drop with Scrub Logs"
 	)
-	_check(scrub_details.text.contains("now 50/100"), "Scrub Logs shows the lowered noise")
+	_check(
+		scrub_details.text.contains("now %d/100" % (70 - reduction)),
+		"Scrub Logs shows the lowered noise"
+	)
 
 	# S3 scenario 2: sold out for the rest of the visit.
 	_check(scrub_price.text == "SOLD OUT", "Scrub Logs is shown as sold out")
@@ -514,12 +578,13 @@ func _play_scrub_logs(shop: Node, shop_node: Node) -> void:
 	var credits_after: int = _player.money()
 	var again: Dictionary = shop_node.scrub_logs()
 	_check(again.get("error", "") == "already_sold", "the shop refuses a second Scrub Logs")
-	_check(_noise_meter.noise == 50, "a second Scrub Logs does not lower noise again")
+	_check(_noise_meter.noise == 70 - reduction, "a second Scrub Logs does not lower noise again")
 	_check(_player.money() == credits_after, "a second Scrub Logs charges nothing")
 
 
 # S4: a reroll replaces every unsold card, leaves sold ones sold, takes its
 # price and costs more next time. Ends by buying one of the rerolled cards.
+# Prices are read from ShopNode; the Rust tests own the scenario's numbers.
 func _play_reroll(
 	shop: Node,
 	shop_node: Node,
@@ -530,9 +595,10 @@ func _play_reroll(
 	var reroll_button: Button = shop.get_node("%RerollButton")
 	var reroll_price: Label = shop.get_node("%RerollPriceLabel")
 
-	# S4 scenario 1: 50 credits and a 25 credit reroll.
-	_set_credits_and_noise(shop, 50, _noise_meter.noise)
-	_check(reroll_price.text == "%d cr" % REROLL_BASE_PRICE, "the first reroll costs 25")
+	# S4 scenario 1: twice the first reroll's price in hand (50 for 25).
+	var first_price := int(shop_node.reroll_offer().price)
+	_set_credits_and_noise(shop, first_price * 2, _noise_meter.noise)
+	_check(reroll_price.text == "%d cr" % first_price, "the screen shows the first reroll's price")
 	var before: Array = shop_node.stock()
 	var before_ids := _stock_ids(before)
 	var sold_before := 0
@@ -544,7 +610,10 @@ func _play_reroll(
 		return
 
 	var after: Array = shop_node.stock()
-	_check(_player.money() == 25, "a reroll from 50 credits leaves 25 (got %d)" % _player.money())
+	_check(
+		_player.money() == first_price,
+		"a reroll takes exactly its price (%d left)" % _player.money()
+	)
 	_check(after.size() == before.size(), "a reroll keeps every slot")
 	var distinct := {}
 	for index in after.size():
@@ -562,7 +631,7 @@ func _play_reroll(
 			"unsold slot %d now offers a new card (%s -> %s)" % [index, was.id, now.id]
 		)
 		_check(
-			shop._rows[index].get_child(0).text.contains(String(now.name).to_upper()),
+			shop._rows[int(now.slot)].get_child(0).text.contains(String(now.name).to_upper()),
 			"slot %d shows its new card" % index
 		)
 		_check(
@@ -572,9 +641,9 @@ func _play_reroll(
 	_check(distinct.size() == after.size(), "a reroll never stocks the same card twice")
 
 	# S4 scenario 2: the next reroll costs more than the first, and is out of
-	# reach on the 25 credits left.
+	# reach on what is left.
 	var next_price := int(shop_node.reroll_offer().price)
-	_check(next_price > REROLL_BASE_PRICE, "the next reroll costs more (%d)" % next_price)
+	_check(next_price > first_price, "the next reroll costs more (%d)" % next_price)
 	_check(reroll_price.text == "%d cr" % next_price, "the screen shows the higher reroll price")
 	_check(reroll_button.disabled, "an unaffordable reroll's button is disabled")
 	_check(
@@ -583,7 +652,7 @@ func _play_reroll(
 	)
 	shop._on_reroll_pressed()
 	_check(_stock_ids(shop_node.stock()) == _stock_ids(after), "a refused reroll keeps the stock")
-	_check(_player.money() == 25, "a refused reroll leaves the credits alone")
+	_check(_player.money() == first_price, "a refused reroll leaves the credits alone")
 
 	# With the money for it, the second reroll takes the higher price.
 	_set_credits_and_noise(shop, 200, _noise_meter.noise)
@@ -601,10 +670,10 @@ func _play_reroll(
 	if slot < 0:
 		return
 	var card: Dictionary = stock[slot]
-	var card_name := String(card.name)
-	if not copies_before.has(card_name):
-		copies_before[card_name] = int(run_deck.count_of(String(card.id)))
+	var card_id := String(card.id)
+	if not copies_before.has(card_id):
+		copies_before[card_id] = int(run_deck.count_of(card_id))
 	var deck_before: int = _flow.run_deck_size()
-	if _press_buy(shop, slot, card_name):
-		bought.append(card_name)
+	if _press_buy(shop, slot, String(card.name)):
+		bought.append(card_id)
 		_check(_flow.run_deck_size() == deck_before + 1, "a rerolled card can be bought")

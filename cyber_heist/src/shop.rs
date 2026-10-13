@@ -22,14 +22,21 @@
 //! and every check happens before it, so a refused action changes nothing and
 //! the balance can never be taken below zero.
 //!
+//! The run keeps the [`ShopVisit`] (see `RunState::open_shop_visit`), not the
+//! shop screen, so reopening the screen during the same visit shows the same
+//! stock, sold slots, Scrub Logs and reroll price.
+//!
 //! A [`ShopVisit`] is the state of one visit. Plain Rust with no Godot types,
 //! so the rules stay unit testable per docs/rust-godot-setup.md. `ShopNode` in
 //! `shop_node.rs` is the Godot side.
+
+use std::collections::HashMap;
 
 use rand::Rng;
 use rand::seq::SliceRandom;
 
 use crate::card_data::Rarity;
+use crate::card_reward;
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 
@@ -68,10 +75,12 @@ pub fn price_for(rarity: Rarity) -> i64 {
     }
 }
 
-/// One place in the shop's stock: a card, its price and whether it has gone.
+/// One place in the shop's stock: a card, its rarity and price, and whether
+/// it has gone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShopSlot {
     card_id: String,
+    rarity: Rarity,
     price: i64,
     sold: bool,
 }
@@ -80,6 +89,7 @@ impl ShopSlot {
     fn for_sale(card_id: String, rarity: Rarity) -> Self {
         Self {
             card_id,
+            rarity,
             price: price_for(rarity),
             sold: false,
         }
@@ -145,6 +155,8 @@ pub enum ShopError {
     NothingToScrub,
     /// Every card has been bought, so a reroll would take credits for nothing.
     NothingToReroll,
+    /// The run is not in a shop encounter, so there is no visit to buy from.
+    NotInShop,
 }
 
 impl ShopError {
@@ -156,6 +168,7 @@ impl ShopError {
             ShopError::NotEnoughCredits => "not_enough_credits",
             ShopError::NothingToScrub => "nothing_to_scrub",
             ShopError::NothingToReroll => "nothing_to_reroll",
+            ShopError::NotInShop => "not_in_shop",
         }
     }
 }
@@ -195,7 +208,7 @@ impl ShopVisit {
     /// missing slot, since there is nothing there to afford.
     pub fn can_afford(&self, slot: usize, credits: i64) -> bool {
         match self.slots.get(slot) {
-            Some(slot) => !slot.sold && credits >= slot.price,
+            Some(slot) => !slot.sold && covers(credits, slot.price),
             None => false,
         }
     }
@@ -232,27 +245,28 @@ impl ShopVisit {
         self.scrub_logs_sold
     }
 
-    /// Whether `credits` would cover Scrub Logs. False once it is sold out.
-    pub fn can_afford_scrub_logs(&self, credits: i64) -> bool {
-        !self.scrub_logs_sold && credits >= SCRUB_LOGS_PRICE
+    /// Whether Scrub Logs can be bought right now: it is not sold out, it
+    /// would actually lower `noise`, and `credits` cover it. The screen
+    /// enables its button by this, and [`ShopVisit::scrub_logs`] refuses
+    /// exactly when it is false.
+    pub fn can_buy_scrub_logs(&self, credits: i64, noise: &NoiseLevel) -> bool {
+        self.scrub_logs_refusal(credits, noise).is_none()
     }
 
     /// Buys the Scrub Logs service: takes [`SCRUB_LOGS_PRICE`] from `credits`
     /// and lowers `noise` by [`SCRUB_LOGS_NOISE_REDUCTION`], clamped at zero by
     /// the meter itself. It can be bought once per visit.
     ///
-    /// Refused, with nothing changed, when it is sold out, when there is no
-    /// noise to scrub or when the player cannot afford it.
+    /// Refused, with nothing changed, when it is sold out, when it would not
+    /// lower the noise at all (none to scrub, or resistance blocking all of
+    /// it) or when the player cannot afford it.
     pub fn scrub_logs(
         &mut self,
         credits: &mut i64,
         noise: &mut NoiseLevel,
     ) -> Result<ScrubbedLogs, ShopError> {
-        if self.scrub_logs_sold {
-            return Err(ShopError::AlreadySold);
-        }
-        if noise.noise() <= 0 {
-            return Err(ShopError::NothingToScrub);
+        if let Some(refusal) = self.scrub_logs_refusal(*credits, noise) {
+            return Err(refusal);
         }
 
         charge(credits, SCRUB_LOGS_PRICE)?;
@@ -267,44 +281,70 @@ impl ShopVisit {
         })
     }
 
+    /// Why Scrub Logs cannot be bought right now, or `None` if it can.
+    fn scrub_logs_refusal(&self, credits: i64, noise: &NoiseLevel) -> Option<ShopError> {
+        if self.scrub_logs_sold {
+            Some(ShopError::AlreadySold)
+        } else if scrub_logs_reduction(noise) <= 0 {
+            Some(ShopError::NothingToScrub)
+        } else if !covers(credits, SCRUB_LOGS_PRICE) {
+            Some(ShopError::NotEnoughCredits)
+        } else {
+            None
+        }
+    }
+
     /// What the next reroll in this visit costs.
     pub fn reroll_price(&self) -> i64 {
         REROLL_BASE_PRICE + REROLL_PRICE_STEP * i64::from(self.rerolls)
     }
 
-    /// Whether there is any card left for a reroll to replace.
-    pub fn has_unsold_stock(&self) -> bool {
-        self.slots.iter().any(|slot| !slot.sold)
+    /// Whether a reroll would change anything: a card is still for sale, and
+    /// the pool holds a card that is not already in the stock to replace it
+    /// with. Without both, a reroll could only hand back the same cards.
+    pub fn has_something_to_reroll(&self) -> bool {
+        let any_unsold = self.slots.iter().any(|slot| !slot.sold);
+        let any_unstocked = self
+            .pool
+            .iter()
+            .any(|(card_id, _)| !self.is_stocked(card_id));
+        any_unsold && any_unstocked
     }
 
-    /// Whether `credits` would cover the next reroll. False when every card
-    /// has been sold, since there is nothing left to reroll.
-    pub fn can_afford_reroll(&self, credits: i64) -> bool {
-        self.has_unsold_stock() && credits >= self.reroll_price()
+    /// Whether the next reroll can be bought right now: there is something to
+    /// reroll and `credits` cover it. The screen enables its button by this,
+    /// and [`ShopVisit::reroll`] refuses exactly when it is false.
+    pub fn can_buy_reroll(&self, credits: i64) -> bool {
+        self.reroll_refusal(credits).is_none()
     }
 
     /// Rerolls the stock: takes [`ShopVisit::reroll_price`] from `credits` and
-    /// replaces the card in every unsold slot with a fresh one, priced by its
-    /// rarity. Sold slots stay sold and every slot keeps its place, so the
-    /// stock is the same size afterwards. The next reroll then costs
-    /// [`REROLL_PRICE_STEP`] more.
+    /// replaces the card in every unsold slot, each priced by its rarity. Sold
+    /// slots stay sold and every slot keeps its place, so the stock is the
+    /// same size afterwards. The next reroll then costs [`REROLL_PRICE_STEP`]
+    /// more.
     ///
     /// A replacement is always a card that was not in the stock before the
     /// reroll, as long as the pool has enough of them. Only a pool too small
     /// to fill every slot with a new card offers some of the old ones again.
     /// The stock never holds the same card twice.
     ///
-    /// Refused, with nothing changed, when every card has been sold or when
-    /// the player cannot afford it.
+    /// Refused, with nothing changed, when there is nothing to reroll (see
+    /// [`ShopVisit::has_something_to_reroll`]) or the player cannot afford it.
     pub fn reroll(&mut self, credits: &mut i64, rng: &mut impl Rng) -> Result<Reroll, ShopError> {
-        if !self.has_unsold_stock() {
-            return Err(ShopError::NothingToReroll);
+        if let Some(refusal) = self.reroll_refusal(*credits) {
+            return Err(refusal);
         }
 
+        // Rolled before paying, so nothing can go wrong after the charge.
+        let replacements = self.roll_replacements(rng);
         let price = self.reroll_price();
         charge(credits, price)?;
-        self.refill_unsold_slots(rng);
         self.rerolls += 1;
+        let unsold_slots = self.slots.iter_mut().filter(|slot| !slot.sold);
+        for (slot, replacement) in unsold_slots.zip(replacements) {
+            *slot = replacement;
+        }
 
         Ok(Reroll {
             price,
@@ -313,48 +353,66 @@ impl ShopVisit {
         })
     }
 
-    /// Puts a fresh card in every unsold slot. New cards come first; the
-    /// cards being replaced are only offered again if the pool runs out of
-    /// new ones, which keeps every slot filled.
-    fn refill_unsold_slots(&mut self, rng: &mut impl Rng) {
-        let stocked: Vec<&str> = self.slots.iter().map(|slot| slot.card_id()).collect();
-        let mut fresh: Vec<(String, Rarity)> = self
-            .pool
-            .iter()
-            .filter(|(card_id, _)| !stocked.contains(&card_id.as_str()))
-            .cloned()
-            .collect();
-        fresh.shuffle(rng);
-
-        let mut replaced: Vec<(String, Rarity)> = self
-            .pool
-            .iter()
-            .filter(|(card_id, _)| {
-                self.slots
-                    .iter()
-                    .any(|slot| !slot.sold && slot.card_id == *card_id)
-            })
-            .cloned()
-            .collect();
-        replaced.shuffle(rng);
-
-        // `fresh` is drawn from the front and `replaced` only after it, so a
-        // pool with enough new cards never offers an old one again. There are
-        // always enough between them: `replaced` alone has one per unsold slot.
-        let mut replacements = fresh.into_iter().chain(replaced);
-        for slot in self.slots.iter_mut().filter(|slot| !slot.sold) {
-            if let Some((card_id, rarity)) = replacements.next() {
-                *slot = ShopSlot::for_sale(card_id, rarity);
-            }
+    /// Why the next reroll cannot be bought right now, or `None` if it can.
+    fn reroll_refusal(&self, credits: i64) -> Option<ShopError> {
+        if !self.has_something_to_reroll() {
+            Some(ShopError::NothingToReroll)
+        } else if !covers(credits, self.reroll_price()) {
+            Some(ShopError::NotEnoughCredits)
+        } else {
+            None
         }
     }
+
+    /// One replacement for every unsold slot, in slot order. Cards that are
+    /// not in the stock come first; the cards being replaced are only offered
+    /// again if the pool runs out of new ones. Those replaced cards alone are
+    /// one per unsold slot, so there are always enough.
+    fn roll_replacements(&self, rng: &mut impl Rng) -> Vec<ShopSlot> {
+        let unsold: Vec<&ShopSlot> = self.slots.iter().filter(|slot| !slot.sold).collect();
+        let unstocked: Vec<(String, Rarity)> = self
+            .pool
+            .iter()
+            .filter(|(card_id, _)| !self.is_stocked(card_id))
+            .cloned()
+            .collect();
+
+        let mut replacements = roll_slots(&unstocked, unsold.len(), rng);
+        let mut replaced: Vec<ShopSlot> = unsold
+            .iter()
+            .map(|slot| ShopSlot::for_sale(slot.card_id.clone(), slot.rarity))
+            .collect();
+        replaced.shuffle(rng);
+        replacements.extend(replaced);
+        replacements.truncate(unsold.len());
+        replacements
+    }
+
+    fn is_stocked(&self, card_id: &str) -> bool {
+        self.slots.iter().any(|slot| slot.card_id == card_id)
+    }
+}
+
+/// How much Scrub Logs would take off `noise` right now, after any detection
+/// resistance and the meter's floor of zero. Worked out on a copy, so the
+/// real meter is untouched.
+pub fn scrub_logs_reduction(noise: &NoiseLevel) -> i32 {
+    let mut preview = *noise;
+    -preview.add(-SCRUB_LOGS_NOISE_REDUCTION)
+}
+
+/// Whether a balance of `credits` covers `price`. The one affordability rule,
+/// shared by what the screen shows ([`ShopVisit::can_afford`]) and what
+/// [`charge`] allows, so the two can never disagree.
+fn covers(credits: i64, price: i64) -> bool {
+    credits >= price
 }
 
 /// Takes `price` from `credits`, or refuses without touching them when the
 /// balance does not cover it. The single place the shop spends credits, so
 /// every paid action shares the same never-negative rule.
 fn charge(credits: &mut i64, price: i64) -> Result<(), ShopError> {
-    if *credits < price {
+    if !covers(*credits, price) {
         return Err(ShopError::NotEnoughCredits);
     }
     *credits -= price;
@@ -371,16 +429,24 @@ fn distinct_sorted(pool: &[(String, Rarity)]) -> Vec<(String, Rarity)> {
     distinct
 }
 
-/// Picks up to `count` cards from a pool of distinct cards and prices each
-/// for sale.
+/// Picks up to `count` distinct cards from `pool` and prices each for sale.
+///
+/// The cards are chosen by the same distinct-offer rule as a card reward
+/// ([`card_reward::offer_from_pool`]), which also sorts the pool first, so a
+/// test with a fixed seed gets the same stock whatever order the pool is in.
 fn roll_slots(pool: &[(String, Rarity)], count: usize, rng: &mut impl Rng) -> Vec<ShopSlot> {
-    let mut candidates: Vec<(String, Rarity)> = pool.to_vec();
-    candidates.shuffle(rng);
-    candidates.truncate(count);
+    let rarity_of: HashMap<&str, Rarity> = pool
+        .iter()
+        .map(|(card_id, rarity)| (card_id.as_str(), *rarity))
+        .collect();
+    let card_ids: Vec<String> = pool.iter().map(|(card_id, _)| card_id.clone()).collect();
 
-    candidates
+    card_reward::offer_from_pool(&card_ids, count, rng)
         .into_iter()
-        .map(|(card_id, rarity)| ShopSlot::for_sale(card_id, rarity))
+        .map(|card_id| {
+            let rarity = rarity_of[card_id.as_str()];
+            ShopSlot::for_sale(card_id, rarity)
+        })
         .collect()
 }
 
@@ -409,12 +475,13 @@ mod tests {
     }
 
     /// A shop whose one slot sells `card_id` for exactly `price`, for the
-    /// buying scenarios that name a price.
+    /// buying scenarios that name a price. Its pool is just that card.
     fn shop_selling(card_id: &str, price: i64) -> ShopVisit {
         ShopVisit {
-            pool: Vec::new(),
+            pool: vec![(card_id.to_string(), Rarity::Common)],
             slots: vec![ShopSlot {
                 card_id: card_id.to_string(),
+                rarity: Rarity::Common,
                 price,
                 sold: false,
             }],
@@ -672,6 +739,7 @@ mod tests {
             ShopError::NotEnoughCredits,
             ShopError::NothingToScrub,
             ShopError::NothingToReroll,
+            ShopError::NotInShop,
         ];
         let codes: HashSet<&str> = refusals.iter().map(|error| error.code()).collect();
 
@@ -694,7 +762,7 @@ mod tests {
         let mut noise = noise_at(70);
         let mut credits = 100;
 
-        assert!(shop.can_afford_scrub_logs(credits));
+        assert!(shop.can_buy_scrub_logs(credits, &noise));
         let scrubbed = shop
             .scrub_logs(&mut credits, &mut noise)
             .expect("affordable");
@@ -724,7 +792,10 @@ mod tests {
             .expect("first use");
 
         assert!(shop.scrub_logs_sold());
-        assert!(!shop.can_afford_scrub_logs(credits), "not on offer again");
+        assert!(
+            !shop.can_buy_scrub_logs(credits, &noise),
+            "not on offer again"
+        );
         assert_eq!(
             shop.scrub_logs(&mut credits, &mut noise),
             Err(ShopError::AlreadySold)
@@ -771,7 +842,7 @@ mod tests {
         let mut noise = noise_at(70);
         let mut credits = SCRUB_LOGS_PRICE - 1;
 
-        assert!(!shop.can_afford_scrub_logs(credits));
+        assert!(!shop.can_buy_scrub_logs(credits, &noise));
         assert_eq!(
             shop.scrub_logs(&mut credits, &mut noise),
             Err(ShopError::NotEnoughCredits)
@@ -794,6 +865,10 @@ mod tests {
         let mut noise = noise_at(0);
         let mut credits = 100;
 
+        assert!(
+            !shop.can_buy_scrub_logs(credits, &noise),
+            "not offered with nothing to scrub, so the screen shows it red"
+        );
         assert_eq!(
             shop.scrub_logs(&mut credits, &mut noise),
             Err(ShopError::NothingToScrub)
@@ -803,6 +878,24 @@ mod tests {
             !shop.scrub_logs_sold(),
             "still on offer once there is noise"
         );
+    }
+
+    #[test]
+    fn scrub_logs_will_not_charge_when_resistance_would_block_the_whole_reduction() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(31));
+        let mut noise = noise_at(70);
+        noise.set_resistance_percent(100);
+        let mut credits = 100;
+
+        assert_eq!(scrub_logs_reduction(&noise), 0);
+        assert!(!shop.can_buy_scrub_logs(credits, &noise));
+        assert_eq!(
+            shop.scrub_logs(&mut credits, &mut noise),
+            Err(ShopError::NothingToScrub)
+        );
+        assert_eq!(credits, 100);
+        assert_eq!(noise.noise(), 70);
+        assert!(!shop.scrub_logs_sold());
     }
 
     // --- S4: rerolling the stock ------------------------------------------
@@ -825,7 +918,7 @@ mod tests {
         let mut credits = 50;
 
         assert_eq!(shop.reroll_price(), 25);
-        assert!(shop.can_afford_reroll(credits));
+        assert!(shop.can_buy_reroll(credits));
         let reroll = shop
             .reroll(&mut credits, &mut StdRng::seed_from_u64(16))
             .expect("affordable");
@@ -936,7 +1029,7 @@ mod tests {
         let before = shop.clone();
         let mut credits = REROLL_BASE_PRICE - 1;
 
-        assert!(!shop.can_afford_reroll(credits));
+        assert!(!shop.can_buy_reroll(credits));
         assert_eq!(
             shop.reroll(&mut credits, &mut StdRng::seed_from_u64(25)),
             Err(ShopError::NotEnoughCredits)
@@ -952,12 +1045,48 @@ mod tests {
         let mut deck = RunDeck::default();
         shop.buy(0, &mut credits, &mut deck).expect("affordable");
 
-        assert!(!shop.can_afford_reroll(credits));
+        assert!(!shop.can_buy_reroll(credits));
         assert_eq!(
             shop.reroll(&mut credits, &mut StdRng::seed_from_u64(26)),
             Err(ShopError::NothingToReroll)
         );
         assert_eq!(credits, 425, "nothing charged");
+    }
+
+    #[test]
+    fn a_pool_with_no_card_outside_the_stock_cannot_be_rerolled() {
+        // Exactly STOCK_SIZE distinct cards: every one is already stocked, so a
+        // reroll could only shuffle the same cards around.
+        let exact: Vec<(String, Rarity)> = pool().into_iter().take(STOCK_SIZE).collect();
+        let mut shop = ShopVisit::open(&exact, &mut StdRng::seed_from_u64(32));
+        let before = shop.clone();
+        let mut credits = 500;
+
+        assert!(!shop.has_something_to_reroll());
+        assert!(!shop.can_buy_reroll(credits));
+        assert_eq!(
+            shop.reroll(&mut credits, &mut StdRng::seed_from_u64(33)),
+            Err(ShopError::NothingToReroll)
+        );
+        assert_eq!(credits, 500, "nothing charged");
+        assert_eq!(shop, before, "same stock, same next price");
+    }
+
+    #[test]
+    fn a_reroll_refills_every_unsold_slot_even_if_its_card_left_the_pool() {
+        // The stocked card is not in the pool the visit kept, as could happen
+        // if slots were ever built some other way. The replacements come from
+        // the slots themselves, so the reroll still fills every unsold slot.
+        let mut shop = shop_selling("rootkit", 75);
+        shop.pool = vec![("vpn".to_string(), Rarity::Common)];
+        let mut credits = 100;
+
+        shop.reroll(&mut credits, &mut StdRng::seed_from_u64(34))
+            .expect("one new card to bring in");
+
+        assert_eq!(shop.slots().len(), 1);
+        assert_eq!(shop.slots()[0].card_id(), "vpn");
+        assert_eq!(credits, 100 - REROLL_BASE_PRICE);
     }
 
     #[test]
