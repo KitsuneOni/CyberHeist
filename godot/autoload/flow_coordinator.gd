@@ -3,15 +3,15 @@ extends Node
 const MAIN_MENU_SCENE_PATH := "res://scenes/main_menu.tscn"
 const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
-const PLACEHOLDER_ENCOUNTER_SCENE_PATH := "res://scenes/placeholder_encounter.tscn"
 const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
+const SHOP_SCENE_PATH := "res://scenes/shop.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
 const VICTORY_SCENE_PATH := "res://scenes/victory_screen.tscn"
 const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
-	"shop": PLACEHOLDER_ENCOUNTER_SCENE_PATH,
+	"shop": SHOP_SCENE_PATH,
 	# Elites and bosses are combat encounters; what makes them one is the
 	# construct behind them, which SentryNode builds from the run rather than
 	# from the scene.
@@ -20,7 +20,8 @@ const ENCOUNTER_SCENES := {
 }
 
 # Encounter types that earn a card reward when cleared. Event and shop nodes
-# hand out their own rewards, so they go straight back to the hub.
+# hand out their own rewards, so they go straight back to the hub. Leaving the
+# shop is completing its node.
 const REWARDING_ENCOUNTERS := ["combat", "elite", "boss"]
 
 @onready var _run_state: Node = $RunState
@@ -269,10 +270,12 @@ func take_card_reward(card_id: String) -> bool:
 	return add_card_to_deck(card_id)
 
 
-# Adds a card to the run's deck and counts it in the run's stats. Every way of
-# gaining a card (rewards today, a shop later) goes through here, so the end
-# screen's count cannot miss one or count one twice. False, with nothing
-# counted, for an id the card database does not know.
+# Adds a card to the run's deck and counts it in the run's stats. Card rewards
+# go through here, so the end screen's count cannot miss one or count one
+# twice. False, with nothing counted, for an id the card database does not
+# know. A shop purchase does not come through here: RunState::buy_from_shop
+# takes the price, adds the card and records both in one Rust call, so a
+# purchase the player cannot cover is refused before anything changes.
 func add_card_to_deck(card_id: String) -> bool:
 	if not _run_deck.add_card(card_id):
 		return false

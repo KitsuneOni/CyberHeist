@@ -150,5 +150,12 @@ jobs:
       - name: Run headless contract victory and reward test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/contract_victory_test.gd
 
+      # Clicks a shop on the map and shops through the screen: five priced
+      # cards, buying deducts the exact price and marks the slot sold, an
+      # unaffordable card's button is disabled with its price in red, Leave
+      # completes the node, and a bought card is drawn in the next encounter.
+      - name: Run headless dark web shop test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/shop_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh

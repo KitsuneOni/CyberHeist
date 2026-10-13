@@ -19,6 +19,8 @@ mod run_state_node;
 mod run_stats;
 mod sentry;
 mod sentry_node;
+mod shop;
+mod shop_node;
 mod starter_deck;
 
 use card_data::CardData;
@@ -35,6 +37,31 @@ use sentry_node::SentryNode;
 /// comment it's a child of the `FlowCoordinator` autoload, not its own
 /// top-level autoload — confirm this path matches your actual scene tree.
 const RUN_DECK_PATH: &str = "/root/FlowCoordinator/RunDeck";
+
+/// A card's player-facing details as a dictionary, the shape every screen
+/// that describes a card reads: `{name, type, rarity, cost, cost_text,
+/// noise_text, description, keywords: [{label, explanation}]}`. Callers add
+/// their own fields on top, such as an id or a shop price.
+pub(crate) fn card_detail_dictionary(detail: &card_text::CardDetail) -> VarDictionary {
+    let mut keywords: Array<VarDictionary> = Array::new();
+    for keyword in &detail.keywords {
+        keywords.push(&vdict! {
+            "label" => keyword.label.as_str(),
+            "explanation" => keyword.explanation.as_str(),
+        });
+    }
+
+    vdict! {
+        "name" => detail.name.as_str(),
+        "type" => detail.card_type.as_str(),
+        "rarity" => detail.rarity.as_str(),
+        "cost" => detail.cost,
+        "cost_text" => detail.cost_text.as_str(),
+        "noise_text" => detail.noise_text.as_str(),
+        "description" => detail.description.as_str(),
+        "keywords" => &keywords,
+    }
+}
 
 struct CyberHeistExtension;
 
@@ -130,6 +157,15 @@ impl PlayerState {
             "fine" => fine,
             "lost_upgrades" => &lost,
         }
+    }
+}
+
+impl PlayerState {
+    /// The credit balance itself, for a Rust rule that has to check and spend
+    /// it in one step. `ShopNode` lends it to `RunState::buy_from_shop`, which
+    /// refuses rather than take the balance below zero.
+    pub(crate) fn credits_mut(&mut self) -> &mut i64 {
+        &mut self.money
     }
 }
 
@@ -312,6 +348,17 @@ impl DrawPhase {
         }
     }
 
+    /// The card ids in the hand, in the same order as `hand_names`. Unlike a
+    /// name, an id does not change with noise, so this is what to compare
+    /// against the run's deck.
+    #[func]
+    fn hand_ids(&self) -> PackedStringArray {
+        self.hand
+            .iter()
+            .map(|card| GString::from(card.id.as_str()))
+            .collect()
+    }
+
     #[func]
     fn hand_names(&self) -> PackedStringArray {
         let noise = self.current_noise();
@@ -331,27 +378,9 @@ impl DrawPhase {
         };
 
         let noise = self.current_noise();
-        let detail = card_text::describe(card, noise);
-
-        let mut keywords: Array<VarDictionary> = Array::new();
-        for keyword in &detail.keywords {
-            keywords.push(&vdict! {
-                "label" => keyword.label.as_str(),
-                "explanation" => keyword.explanation.as_str(),
-            });
-        }
-
-        vdict! {
-            "ok" => true,
-            "name" => detail.name.as_str(),
-            "type" => detail.card_type.as_str(),
-            "rarity" => detail.rarity.as_str(),
-            "cost" => detail.cost,
-            "cost_text" => detail.cost_text.as_str(),
-            "noise_text" => detail.noise_text.as_str(),
-            "description" => detail.description.as_str(),
-            "keywords" => &keywords,
-        }
+        let mut detail = card_detail_dictionary(&card_text::describe(card, noise));
+        detail.set("ok", true);
+        detail
     }
 
     #[func]

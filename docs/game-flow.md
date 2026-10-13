@@ -41,17 +41,16 @@ success. `FlowCoordinator.run_snapshot()` returns:
 ```
 
 Supported lifecycle encounter types are `combat`, `event`, `shop`, `elite`
-and `boss`. Combat, elite and boss share the combat gameplay scene, and events
-have their own. Shops still use a shared placeholder scene until their story
-is implemented.
+and `boss`. Combat, elite and boss share the combat gameplay scene, while
+events and shops each have their own (see [the dark web shop](#the-dark-web-shop-story-38)).
 
 ## Contract route selection
 
 This slice implements only the capability to choose an onward path, load its
 encounter, and lock paths not taken. It is **not** a contract-map UI design,
 visual design, or UX proposal. `ContractMap` is the domain name for the node
-graph, while the current hub and placeholder scenes are functional test
-harnesses that future UI/UX work may replace completely.
+graph, while the current hub scene is a functional test harness that future
+UI/UX work may replace completely.
 
 The persistent `RunStateNode` also owns the authored contract graph. The hub
 asks `FlowCoordinator.selectable_encounters()` for every directly reachable
@@ -212,7 +211,10 @@ and a new run starts them again.
 - **Cards added** counts cards that go into the run's deck on top of the
   starter deck. Every card is added through
   `FlowCoordinator.add_card_to_deck(card_id)`, which only counts a card the
-  deck accepted. `take_card_reward` uses it, and so should a shop.
+  deck accepted. `take_card_reward` uses it. A shop purchase is the one
+  exception: `ShopNode` takes the price and adds the card in a single Rust
+  call, then records the card (and the spend) on the run itself, the same way
+  `EventNode` records event credits.
 
 The end screen reads everything in one call:
 
@@ -349,6 +351,107 @@ rebuilt from run state alone. Finally it takes another contract from the
 victory screen, checks the hub asks for a contract again, accepts one through
 the picker, and checks that being caught on it costs the fine and pays no
 reward.
+
+## The dark web shop (story #38)
+
+A shop node opens `scenes/shop.tscn`, a dark web market where the player
+spends credits on cards for the rest of the run. It delivers the epic through
+two stories: S1 shop stock and pricing (#104) and S2 buying with credits
+(#105). The rules are plain Rust in `cyber_heist/src/shop.rs`; `ShopNode`
+(`shop_node.rs`) sits on the shop screen as its bridge, as `EventNode` does for
+events.
+
+**Stock.** The first time the screen opens during a shop encounter, `ShopNode`
+asks the run to open its `ShopVisit` (`RunState::open_shop_visit`), which rolls
+five distinct cards (`STOCK_SIZE`) from the card database. Cursed cards are not
+in that pool. Each card's price comes from its rarity (`price_for`):
+
+| Rarity | Price |
+| --- | --- |
+| Common | 50 |
+| Uncommon | 75 |
+| Rare | 100 |
+| Legendary | 150 |
+
+The visit is kept on the run, not on the screen, until the shop encounter
+ends. Rebuilding the screen during the visit therefore shows the same stock
+with the same sold slots rather than a free reroll; leaving (or any other end
+to the encounter) drops it, so the next shop rolls its own. The stock is fixed
+for the visit and never restocks. A bought card's slot is marked sold rather
+than removed, so the other cards keep their places and the screen shows `SOLD`
+in that row.
+
+**Buying.** `RunState::buy_from_shop` is the only thing that spends credits in
+the shop, and it only works while the run is in a shop encounter whose visit
+is open (otherwise `not_in_shop`). Through `ShopVisit::buy` it checks the slot
+and the balance before changing anything, then takes the exact price from
+`PlayerStateGlobal`, adds the card to the run's deck on `RunDeckNode` and
+records the spend and the card on the run's stats, all in one call. A refusal
+(`not_enough_credits`, `already_sold`, `no_such_slot`, `not_in_shop`) changes
+neither the credits, the deck, the stock nor the stats, and a purchase can
+never take the balance below zero. A balance already below zero from a caught
+fine simply affords nothing. A bought card is in the run's deck at once, so
+`DrawPhase` deals it in the next encounter.
+
+This is the shop's counterpart to `FlowCoordinator.change_credits` and
+`add_card_to_deck`, which cannot refuse a payment the player cannot cover, so
+a purchase does not go through them. Every card the shop sells was drawn from
+the card database when the stock was rolled, which is the check
+`RunDeckNode.add_card` would otherwise make.
+
+The screen reads `affordable` for each slot against the current balance. A
+card the player cannot afford has its buy button disabled and its price in
+red, and the screen re-reads the stock after every purchase. Its rows are
+matched to the stock by `slot`, the same number `buy` takes.
+
+**Leaving.** Leave calls `FlowCoordinator.complete_active_encounter()`. Shops
+pay no encounter reward and are not in `REWARDING_ENCOUNTERS`, so the player
+goes straight back to the map with the shop node marked completed. Shops are
+not fights, so they do not count as wins.
+
+```gdscript
+$ShopNode.stock()
+# [{"slot": 0, "id": "vpn", "name": "VPN", "type": "Skill", "rarity": "Common",
+#   "cost": 2, "cost_text": "Costs 2 energy", "noise_text": "Reduces noise by 10",
+#   "description": "...", "keywords": [{"label", "explanation"}],
+#   "price": 50, "sold": false, "affordable": true}, ...]
+
+$ShopNode.buy(0)
+# {"ok": true, "id": "vpn", "price": 50, "credits": 70},
+# or {"ok": false, "error": "not_enough_credits"} with nothing changed
+```
+
+`ShopVisit` holds everything about one visit, so the later shop stories can
+build on it without restructuring:
+
+- **Scrub Logs (#106):** a once-per-visit noise reduction service, added as a
+  `scrub_logs_used` flag on the visit and a method that pays through the same
+  private `charge` step before lowering noise.
+- **Reroll (#107):** a paid reroll of the unsold stock pays through `charge`
+  too, then refills only the slots still for sale with `roll_slots`. Sold slots
+  stay sold, which is why each slot keeps its own sold state.
+
+The visual design of this screen belongs to Neel (see the S1/S2 cards). The
+current screen is a plain, functional version in the main menu's terminal
+style that reads everything from `ShopNode`, so a redesign only has to replace
+`shop.gd` and `shop.tscn`.
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/shop_test.gd
+```
+
+It starts from the main menu, accepts a contract on the hub's offer picker, and
+rolls new runs until a first-zone route offers a shop, then clicks the shop on
+the map with 120 credits. It checks the five rows and their details and prices,
+buys through the buy buttons until a card is out of reach, and checks the exact
+deduction, the sold slot, the unchanged stock (also after rebuilding the shop
+screen mid-visit), and that the out-of-reach card's button is disabled, its
+price red and a forced attempt changes nothing. Then it presses Leave and
+checks the map, not the offer picker, and the completed node. Finally it enters
+the next encounter and draws the whole deck to find every card it bought, by
+id.
 
 ## The sentry's turn
 
