@@ -36,38 +36,51 @@ export TMPDIR="$fixture/tmp"
 
 # Godot 4.7.1 itself intermittently dies during a headless --import before any
 # test code runs: "double free or corruption" (SIGABRT, exit 134), a
-# segmentation fault while reimporting a font (exit 139), or a hang until the
-# timeout (exit 124). A fresh attempt continues the import and normally
-# succeeds, so retry a bounded number of times. Each failure is reported with
-# its exit code and log tail, and every attempt's log is kept in the fixture, so
-# a consistently failing import still fails here and stays diagnosable.
+# segmentation fault while reimporting a font (exit 139), or a hang (exit 124,
+# or 137 if it ignores SIGTERM and has to be killed). Only those crash and hang
+# codes are retried, a bounded number of times. Any other exit, such as 1 for a
+# real import error or 126/127 for a bad GODOT_BIN, fails immediately.
+#
+# Each retry starts from an empty resource cache, so a crashed attempt cannot
+# leave a half-written import behind, and the attempt that succeeds has
+# imported every resource itself. That is why the error scan below only needs
+# the successful attempt's log: a broken asset that errored in a crashed
+# attempt errors again there. Godot also prints its import output and crash
+# reports to the console, so every attempt is visible in the CI log.
 # Only the import is retried; the test run below gets exactly one attempt.
 import_attempts=3
+is_engine_crash_or_hang() {
+    case $1 in
+        124 | 134 | 137 | 139) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+reset_import_cache() {
+    find "$fixture/godot/.godot" -mindepth 1 -maxdepth 1 \
+        ! -name extension_list.cfg -exec rm -rf {} +
+}
 import_fixture() {
-    local attempt log status
+    local attempt status
     for ((attempt = 1; attempt <= import_attempts; attempt++)); do
-        log="$fixture/import-attempt-$attempt.log"
         status=0
-        timeout 30s "$engine" --headless --path "$fixture/godot" \
-            --log-file "$log" --import || status=$?
+        timeout -k 5s 30s "$engine" --headless --path "$fixture/godot" \
+            --log-file "$fixture/import.log" --import || status=$?
         if [[ $status -eq 0 ]]; then
-            # The error scan below checks the import that succeeded, not the
-            # crash output of attempts that were already reported.
-            cp "$log" "$fixture/import.log"
             return 0
         fi
-        echo "Fixture import attempt $attempt/$import_attempts failed with exit $status (124 = timeout)." >&2
-        if [[ -f "$log" ]]; then
-            echo "Last lines of $log:" >&2
-            tail -n 20 "$log" >&2
+        echo "Fixture import attempt $attempt/$import_attempts failed with exit $status." >&2
+        if ! is_engine_crash_or_hang "$status"; then
+            echo "Exit $status is not an engine crash or hang, so it is not retried." >&2
+            return "$status"
         fi
+        reset_import_cache
     done
-    echo "Fixture import failed on all $import_attempts attempts." >&2
+    echo "Fixture import crashed or hung on all $import_attempts attempts." >&2
     return 1
 }
 
 import_fixture
-timeout 30s "$engine" --headless --path "$fixture/godot" \
+timeout -k 5s 30s "$engine" --headless --path "$fixture/godot" \
     --log-file "$fixture/test.log" -s res://tests/shared_noise_test.gd
 
 # Godot can return zero for a script error. Require the test's own completion
