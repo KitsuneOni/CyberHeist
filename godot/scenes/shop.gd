@@ -1,8 +1,9 @@
 # The dark web shop a shop node opens (Trello #38, with S1 #104 and S2 #105).
 #
 # Five cards are for sale, each with its full details and a price set by its
-# rarity. The stock is rolled once by ShopNode when this screen opens and stays
-# the same for the visit; a bought card's slot shows as sold. A card the player
+# rarity. The stock is rolled the first time this screen opens during a shop
+# encounter and kept on the run, so it stays the same for the visit even if the
+# screen is rebuilt; a bought card's slot shows as sold. A card the player
 # cannot afford has its buy button disabled and its price in red. Leave
 # completes the shop node and returns to the contract map.
 #
@@ -27,11 +28,13 @@ const SOLD_ROW_ALPHA := 0.45
 @onready var status_label: Label = %StatusLabel
 @onready var leave_button: Button = %LeaveButton
 
-# One entry per stock slot, in the same order ShopNode lists them, so a slot
-# index finds its controls without searching the tree.
-var _rows: Array[Control] = []
-var _price_labels: Array[Label] = []
-var _buy_buttons: Array[Button] = []
+# Each stock slot's controls and card name, keyed by the slot number ShopNode
+# reports (and buy() takes), never by position in the stock list, so a row and
+# the card it sells cannot drift apart.
+var _rows: Dictionary[int, Control] = {}
+var _price_labels: Dictionary[int, Label] = {}
+var _buy_buttons: Dictionary[int, Button] = {}
+var _card_names: Dictionary[int, String] = {}
 # Guards against a double click leaving twice.
 var _leaving := false
 
@@ -56,7 +59,10 @@ func _build_stock_rows() -> void:
 
 
 func _add_stock_row(card: Dictionary) -> void:
-	var slot := int(card.get("slot", _rows.size()))
+	var slot := int(card.get("slot", -1))
+	if slot < 0:
+		push_error("ShopNode listed a card without a slot: %s" % card)
+		return
 
 	var row := HBoxContainer.new()
 	row.name = "Slot%d" % slot
@@ -90,9 +96,10 @@ func _add_stock_row(card: Dictionary) -> void:
 	purchase.add_child(buy_button)
 
 	stock_list.add_child(row)
-	_rows.append(row)
-	_price_labels.append(price_label)
-	_buy_buttons.append(buy_button)
+	_rows[slot] = row
+	_price_labels[slot] = price_label
+	_buy_buttons[slot] = buy_button
+	_card_names[slot] = String(card.get("name", "the card"))
 
 
 # Three lines, so all five cards fit on screen at once: name, type and rarity;
@@ -131,15 +138,16 @@ func _keyword_explanations(card: Dictionary) -> String:
 func _refresh() -> void:
 	credits_label.text = "$ %d  credits on hand" % PlayerStateGlobal.money()
 
-	var stock: Array = shop_node.stock()
-	for index in mini(stock.size(), _rows.size()):
-		var card: Dictionary = stock[index]
+	for card: Dictionary in shop_node.stock():
+		var slot := int(card.get("slot", -1))
+		if not _rows.has(slot):
+			continue
 		var price := int(card.get("price", 0))
-		var price_label := _price_labels[index]
-		var buy_button := _buy_buttons[index]
+		var price_label := _price_labels[slot]
+		var buy_button := _buy_buttons[slot]
 
 		if card.get("sold", false):
-			_rows[index].modulate.a = SOLD_ROW_ALPHA
+			_rows[slot].modulate.a = SOLD_ROW_ALPHA
 			price_label.text = "SOLD"
 			price_label.remove_theme_color_override("font_color")
 			buy_button.text = "sold"
@@ -159,7 +167,7 @@ func _refresh() -> void:
 
 
 func _focus_first_control() -> void:
-	for buy_button in _buy_buttons:
+	for buy_button: Button in _buy_buttons.values():
 		if not buy_button.disabled:
 			buy_button.grab_focus()
 			return
@@ -169,24 +177,16 @@ func _focus_first_control() -> void:
 func _on_buy_pressed(slot: int) -> void:
 	var result: Dictionary = shop_node.buy(slot)
 	if result.get("ok", false):
-		var card_name := _card_name(slot)
 		status_label.text = "Bought %s for %d credits. It is in your deck." % [
-			card_name,
+			_card_names.get(slot, "the card"),
 			int(result.get("price", 0)),
 		]
 	else:
 		status_label.text = _refusal_text(String(result.get("error", "")))
 
 	_refresh()
-	if _buy_buttons[slot].disabled:
+	if not _buy_buttons.has(slot) or _buy_buttons[slot].disabled:
 		_focus_first_control()
-
-
-func _card_name(slot: int) -> String:
-	var stock: Array = shop_node.stock()
-	if slot < 0 or slot >= stock.size():
-		return "the card"
-	return String(stock[slot].get("name", "the card"))
 
 
 func _refusal_text(error: String) -> String:

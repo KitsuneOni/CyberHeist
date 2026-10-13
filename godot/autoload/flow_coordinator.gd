@@ -273,8 +273,9 @@ func take_card_reward(card_id: String) -> bool:
 # Adds a card to the run's deck and counts it in the run's stats. Card rewards
 # go through here, so the end screen's count cannot miss one or count one
 # twice. False, with nothing counted, for an id the card database does not
-# know. A shop purchase does not come through here: ShopNode takes the price
-# and adds the card in one Rust call, and records the card itself.
+# know. A shop purchase does not come through here: RunState::buy_from_shop
+# takes the price, adds the card and records both in one Rust call, so a
+# purchase the player cannot cover is refused before anything changes.
 func add_card_to_deck(card_id: String) -> bool:
 	if not _run_deck.add_card(card_id):
 		return false

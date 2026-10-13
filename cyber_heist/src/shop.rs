@@ -11,7 +11,9 @@
 //!   and only then takes the price and adds the card to the run's deck, so a
 //!   refused purchase changes nothing and credits can never go negative.
 //!
-//! A [`ShopVisit`] is the state of one visit. Later shop stories extend it
+//! A [`ShopVisit`] is the state of one visit. The run keeps it (see
+//! `RunState::open_shop_visit`), not the shop screen, so reopening the screen
+//! during the same visit shows the same stock. Later shop stories extend it
 //! rather than restructure it:
 //!
 //! - A once-per-visit **Scrub Logs** service (#106) is another paid action on
@@ -25,10 +27,12 @@
 //! Plain Rust with no Godot types, so the rules stay unit testable per
 //! docs/rust-godot-setup.md. `ShopNode` in `shop_node.rs` is the Godot side.
 
+use std::collections::HashMap;
+
 use rand::Rng;
-use rand::seq::SliceRandom;
 
 use crate::card_data::Rarity;
+use crate::card_reward;
 use crate::run_deck::RunDeck;
 
 /// How many cards a shop has for sale on each visit.
@@ -97,6 +101,8 @@ pub enum ShopError {
     AlreadySold,
     /// The player has fewer credits than the price.
     NotEnoughCredits,
+    /// The run is not in a shop encounter, so there is no visit to buy from.
+    NotInShop,
 }
 
 impl ShopError {
@@ -106,6 +112,7 @@ impl ShopError {
             ShopError::NoSuchSlot => "no_such_slot",
             ShopError::AlreadySold => "already_sold",
             ShopError::NotEnoughCredits => "not_enough_credits",
+            ShopError::NotInShop => "not_in_shop",
         }
     }
 }
@@ -135,7 +142,7 @@ impl ShopVisit {
     /// missing slot, since there is nothing there to afford.
     pub fn can_afford(&self, slot: usize, credits: i64) -> bool {
         match self.slots.get(slot) {
-            Some(slot) => !slot.sold && credits >= slot.price,
+            Some(slot) => !slot.sold && covers(credits, slot.price),
             None => false,
         }
     }
@@ -168,11 +175,18 @@ impl ShopVisit {
     }
 }
 
+/// Whether a balance of `credits` covers `price`. The one affordability rule,
+/// shared by what the screen shows ([`ShopVisit::can_afford`]) and what
+/// [`charge`] allows, so the two can never disagree.
+fn covers(credits: i64, price: i64) -> bool {
+    credits >= price
+}
+
 /// Takes `price` from `credits`, or refuses without touching them when the
 /// balance does not cover it. The single place the shop spends credits, so
 /// every paid action shares the same never-negative rule.
 fn charge(credits: &mut i64, price: i64) -> Result<(), ShopError> {
-    if *credits < price {
+    if !covers(*credits, price) {
         return Err(ShopError::NotEnoughCredits);
     }
     *credits -= price;
@@ -180,18 +194,23 @@ fn charge(credits: &mut i64, price: i64) -> Result<(), ShopError> {
 }
 
 /// Picks up to `count` distinct cards from `pool` and prices each for sale.
+///
+/// The cards are chosen by the same distinct-offer rule as a card reward
+/// ([`card_reward::offer_from_pool`]), which also sorts the pool first, so a
+/// test with a fixed seed gets the same stock whatever order the pool is in.
 fn roll_slots(pool: &[(String, Rarity)], count: usize, rng: &mut impl Rng) -> Vec<ShopSlot> {
-    let mut candidates: Vec<(String, Rarity)> = pool.to_vec();
-    // Sorted before shuffling so the same seed always gives the same stock,
-    // whatever order the card database handed the pool over in.
-    candidates.sort_by(|a, b| a.0.cmp(&b.0));
-    candidates.dedup_by(|a, b| a.0 == b.0);
-    candidates.shuffle(rng);
-    candidates.truncate(count);
+    let rarity_of: HashMap<&str, Rarity> = pool
+        .iter()
+        .map(|(card_id, rarity)| (card_id.as_str(), *rarity))
+        .collect();
+    let card_ids: Vec<String> = pool.iter().map(|(card_id, _)| card_id.clone()).collect();
 
-    candidates
+    card_reward::offer_from_pool(&card_ids, count, rng)
         .into_iter()
-        .map(|(card_id, rarity)| ShopSlot::for_sale(card_id, rarity))
+        .map(|card_id| {
+            let rarity = rarity_of[card_id.as_str()];
+            ShopSlot::for_sale(card_id, rarity)
+        })
         .collect()
 }
 
@@ -478,11 +497,12 @@ mod tests {
             ShopError::NoSuchSlot,
             ShopError::AlreadySold,
             ShopError::NotEnoughCredits,
+            ShopError::NotInShop,
         ]
         .iter()
         .map(|error| error.code())
         .collect();
 
-        assert_eq!(codes.len(), 3);
+        assert_eq!(codes.len(), 4);
     }
 }

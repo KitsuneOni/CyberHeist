@@ -361,9 +361,10 @@ two stories: S1 shop stock and pricing (#104) and S2 buying with credits
 (`shop_node.rs`) sits on the shop screen as its bridge, as `EventNode` does for
 events.
 
-**Stock.** When the screen opens, `ShopNode` rolls a `ShopVisit` of five
-distinct cards (`STOCK_SIZE`) from the card database. Cursed cards are not in
-that pool. Each card's price comes from its rarity (`price_for`):
+**Stock.** The first time the screen opens during a shop encounter, `ShopNode`
+asks the run to open its `ShopVisit` (`RunState::open_shop_visit`), which rolls
+five distinct cards (`STOCK_SIZE`) from the card database. Cursed cards are not
+in that pool. Each card's price comes from its rarity (`price_for`):
 
 | Rarity | Price |
 | --- | --- |
@@ -372,22 +373,36 @@ that pool. Each card's price comes from its rarity (`price_for`):
 | Rare | 100 |
 | Legendary | 150 |
 
-The stock is fixed for the visit and never restocks. A bought card's slot is
-marked sold rather than removed, so the other cards keep their places and the
-screen shows `SOLD` in that row.
+The visit is kept on the run, not on the screen, until the shop encounter
+ends. Rebuilding the screen during the visit therefore shows the same stock
+with the same sold slots rather than a free reroll; leaving (or any other end
+to the encounter) drops it, so the next shop rolls its own. The stock is fixed
+for the visit and never restocks. A bought card's slot is marked sold rather
+than removed, so the other cards keep their places and the screen shows `SOLD`
+in that row.
 
-**Buying.** `ShopVisit::buy` is the only thing that spends credits in the shop.
-It checks the slot and the balance before changing anything, then takes the
-exact price from `PlayerStateGlobal` and adds the card to the run's deck on
-`RunDeckNode`, all in one call. A refusal (`not_enough_credits`,
-`already_sold`, `no_such_slot`) changes neither the credits, the deck nor the
-stock, and a purchase can never take the balance below zero. A balance already
-below zero from a caught fine simply affords nothing. A bought card is in the
-run's deck at once, so `DrawPhase` deals it in the next encounter.
+**Buying.** `RunState::buy_from_shop` is the only thing that spends credits in
+the shop, and it only works while the run is in a shop encounter whose visit
+is open (otherwise `not_in_shop`). Through `ShopVisit::buy` it checks the slot
+and the balance before changing anything, then takes the exact price from
+`PlayerStateGlobal`, adds the card to the run's deck on `RunDeckNode` and
+records the spend and the card on the run's stats, all in one call. A refusal
+(`not_enough_credits`, `already_sold`, `no_such_slot`, `not_in_shop`) changes
+neither the credits, the deck, the stock nor the stats, and a purchase can
+never take the balance below zero. A balance already below zero from a caught
+fine simply affords nothing. A bought card is in the run's deck at once, so
+`DrawPhase` deals it in the next encounter.
+
+This is the shop's counterpart to `FlowCoordinator.change_credits` and
+`add_card_to_deck`, which cannot refuse a payment the player cannot cover, so
+a purchase does not go through them. Every card the shop sells was drawn from
+the card database when the stock was rolled, which is the check
+`RunDeckNode.add_card` would otherwise make.
 
 The screen reads `affordable` for each slot against the current balance. A
 card the player cannot afford has its buy button disabled and its price in
-red, and the screen re-reads the stock after every purchase.
+red, and the screen re-reads the stock after every purchase. Its rows are
+matched to the stock by `slot`, the same number `buy` takes.
 
 **Leaving.** Leave calls `FlowCoordinator.complete_active_encounter()`. Shops
 pay no encounter reward and are not in `REWARDING_ENCOUNTERS`, so the player
@@ -397,7 +412,7 @@ not fights, so they do not count as wins.
 ```gdscript
 $ShopNode.stock()
 # [{"slot": 0, "id": "vpn", "name": "VPN", "type": "Skill", "rarity": "Common",
-#   "cost_text": "Costs 2 energy", "noise_text": "Reduces noise by 10",
+#   "cost": 2, "cost_text": "Costs 2 energy", "noise_text": "Reduces noise by 10",
 #   "description": "...", "keywords": [{"label", "explanation"}],
 #   "price": 50, "sold": false, "affordable": true}, ...]
 
@@ -431,11 +446,12 @@ It starts from the main menu, accepts a contract on the hub's offer picker, and
 rolls new runs until a first-zone route offers a shop, then clicks the shop on
 the map with 120 credits. It checks the five rows and their details and prices,
 buys through the buy buttons until a card is out of reach, and checks the exact
-deduction, the sold slot, the unchanged stock, and that the out-of-reach card's
-button is disabled, its price red and a forced attempt changes nothing. Then it
-presses Leave and checks the map, not the offer picker, and the completed node.
-Finally it enters the next encounter and draws the whole deck to find every
-card it bought.
+deduction, the sold slot, the unchanged stock (also after rebuilding the shop
+screen mid-visit), and that the out-of-reach card's button is disabled, its
+price red and a forced attempt changes nothing. Then it presses Leave and
+checks the map, not the offer picker, and the completed node. Finally it enters
+the next encounter and draws the whole deck to find every card it bought, by
+id.
 
 ## The sentry's turn
 
