@@ -16,7 +16,7 @@ pub struct CardData {
     pub weak_side: Option<WeakSide>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum CardType {
     Attack,
     Defence,
