@@ -7,6 +7,7 @@
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use serde::{Deserialize, Serialize};
 
 use crate::contract_map::{ContractMap, ContractShape};
 use crate::sentry::BOSS_NAMES;
@@ -60,7 +61,7 @@ const CONTRACT_TARGETS: [&str; 10] = [
 
 /// One job the player can take on: what it is called, who it hits, what it
 /// pays and how the contract map is laid out if it is accepted.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractOffer {
     pub name: String,
     /// The organisation being broken into.
@@ -96,6 +97,16 @@ impl ContractOffer {
     pub fn build_map(&self) -> ContractMap {
         let mut rng = StdRng::seed_from_u64(self.map_seed);
         ContractMap::generate(self.shape, &mut rng)
+    }
+
+    /// Whether `generate_offers` could have rolled this offer: its shape is
+    /// one contracts are offered in, and it pays what that shape pays.
+    ///
+    /// An offer read back from a save file can say anything, and an unbounded
+    /// shape would overflow when the map is sized or built from it.
+    pub fn is_offerable(&self) -> bool {
+        offerable_shapes().contains(&self.shape)
+            && self.credit_reward == credit_reward_for(self.shape)
     }
 }
 
@@ -327,6 +338,30 @@ mod tests {
             offers_for(2),
             "two runs should not be offered the same jobs"
         );
+    }
+
+    /// A saved run's offers are checked with `is_offerable`, so every offer
+    /// the game rolls has to pass it, and one stretched past the supported
+    /// shapes or paying more than its shape must not.
+    #[test]
+    fn rolled_offers_are_offerable_and_altered_ones_are_not() {
+        for seed in 0..50 {
+            for offer in offers_for(seed) {
+                assert!(offer.is_offerable(), "seed {seed}: {offer:?}");
+            }
+        }
+
+        let offer = offers_for(0).remove(0);
+        let mut endless = offer.clone();
+        endless.shape.zone_length = usize::MAX;
+        let mut too_deep = offer.clone();
+        too_deep.shape.zone_count = MAX_ZONE_COUNT + 1;
+        let mut overpaid = offer.clone();
+        overpaid.credit_reward += 1;
+
+        for altered in [endless, too_deep, overpaid] {
+            assert!(!altered.is_offerable(), "{altered:?} was accepted");
+        }
     }
 
     /// The pools have to be big enough to fill a set without repeating
