@@ -425,7 +425,13 @@ func _run() -> void:
 	_check(_node_status(shop_id) == "completed", "the shop node is marked completed")
 
 	# --- #38: bought cards are drawable in a later encounter ------------------
-	var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	# What matters here is the run's deck, not this contract, so when the next
+	# column only offers elites or the boss, roll a fresh contract (which keeps
+	# the deck) rather than fail on the map's luck.
+	var combat_fixture := preload("res://tests/combat_fixture.gd")
+	if not combat_fixture.offers_standard_security(_flow):
+		combat_fixture.roll_new_contract(_flow)
+	var entered: Dictionary = combat_fixture.enter(_flow)
 	_check(entered.get("ok", false), "the next encounter loads")
 	await _settle()
 	var combat := _screen()
