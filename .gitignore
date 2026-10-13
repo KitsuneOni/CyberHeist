@@ -40,3 +40,6 @@ desktop.ini
 
 # Local secrets
 .env
+
+# Python wheels and other locally installed tool packages
+*.whl
