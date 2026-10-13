@@ -813,6 +813,21 @@ impl ContractMap {
         self.active_node
     }
 
+    /// The encounter completed most recently, if any has been. Completing an
+    /// encounter moves the player onto it, so it is the current node once
+    /// that node is completed (the entry node never is until it is left).
+    pub fn last_completed_node(&self) -> Option<NodeId> {
+        self.completed_nodes
+            .contains(&self.current_node)
+            .then_some(self.current_node)
+    }
+
+    /// Whether `other` has the same nodes, encounter types, connections and
+    /// entry as this map, whatever progress either has made on it.
+    pub fn has_same_layout(&self, other: &ContractMap) -> bool {
+        self.nodes == other.nodes && self.start_node == other.start_node
+    }
+
     /// The node with `node_id` and the zone it sits in, if it is on the map.
     pub fn node_and_zone(&self, node_id: NodeId) -> Option<(&EncounterNode, usize)> {
         let node = self.nodes.get(&node_id)?;

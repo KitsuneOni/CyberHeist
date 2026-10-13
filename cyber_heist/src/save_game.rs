@@ -23,14 +23,16 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::contract_map::EncounterType;
+use crate::card_reward;
+use crate::encounter_reward;
+use crate::knowledge::MAX_KNOWLEDGE;
+use crate::noise_meter::MAX_NOISE;
 use crate::run_state::{ContractPhase, RunState};
-use crate::shop::ShopVisit;
 
 /// The layout of the save file. Bump it whenever a change to anything saved
 /// would stop an older file reading back correctly; older files are then
@@ -39,7 +41,10 @@ use crate::shop::ShopVisit;
 /// Version 2 keeps a won contract's reward in the run state
 /// (`contract_reward`). Version 1 kept a claimed flag there and the payout
 /// beside the screen, so a won run saved by it cannot be read back.
-pub const SAVE_VERSION: u32 = 2;
+///
+/// Version 3 keeps a shop's stock in the run state (`shop_visit`), where the
+/// shop itself now keeps it, rather than beside the run.
+pub const SAVE_VERSION: u32 = 3;
 
 /// Everything written to the save file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,7 +69,8 @@ pub struct SavedRun {
     /// The contract lifecycle: phase, contract offers and the accepted one,
     /// whether the contract has started (until it has, the player can still
     /// change it), the map with its completed and locked nodes and open
-    /// zones, the reward recorded for a won contract, and the run's stats.
+    /// zones, the reward recorded for a won contract, the run's stats and, in
+    /// a shop, its stock.
     pub run_state: RunState,
     /// Card ids the run's deck owns, starter cards and gains alike.
     pub deck: Vec<String>,
@@ -74,9 +80,6 @@ pub struct SavedRun {
     pub noise: i32,
     /// What the player has learned about the target.
     pub knowledge: i32,
-    /// The stock of the shop the player is in. Present exactly when the run
-    /// was saved during a shop visit.
-    pub shop_visit: Option<ShopVisit>,
     /// What the screen the run was saved on needs to show the same thing
     /// again when it is resumed.
     pub screen: ScreenState,
@@ -196,38 +199,31 @@ impl SavedRun {
         self.validate_safe_point()?;
         self.validate_screen_state()?;
 
-        if self.noise < 0 {
-            return Err(invalid("noise is negative"));
+        // Checked against the caps the meters are built with, not the meter
+        // nodes, so the check holds however early in launch the save is read.
+        if !(0..=MAX_NOISE).contains(&self.noise) {
+            return Err(invalid("noise is outside the meter's range"));
         }
-        if self.knowledge < 0 {
-            return Err(invalid("knowledge is negative"));
-        }
-        if let Some(visit) = &self.shop_visit
-            && visit.slots().iter().any(|slot| slot.price() < 0)
-        {
-            return Err(invalid("a shop price is negative"));
+        if !(0..=MAX_KNOWLEDGE).contains(&self.knowledge) {
+            return Err(invalid("knowledge is outside its range"));
         }
         Ok(())
     }
 
     /// The only encounter a run can be saved in is a shop, and then the
-    /// shop's stock has to be saved with it.
+    /// shop's stock has to be saved with it: it is opened as the shop screen
+    /// appears, before the save made on entering, so a shop saved without it
+    /// would roll new stock on Continue.
     fn validate_safe_point(&self) -> Result<(), SaveError> {
-        let in_shop = self.run_state.phase() == ContractPhase::EncounterActive
-            && self
-                .run_state
-                .active_encounter()
-                .is_some_and(|encounter| encounter.encounter_type() == EncounterType::Shop);
+        let in_shop = self.run_state.is_in_shop();
 
         if self.run_state.phase() == ContractPhase::EncounterActive && !in_shop {
             return Err(invalid(
                 "it was saved during a fight or an event, which is not a safe point",
             ));
         }
-        if in_shop != self.shop_visit.is_some() {
-            return Err(invalid(
-                "a shop's stock is saved exactly when the run is in a shop",
-            ));
+        if in_shop && self.run_state.shop_visit().is_none() {
+            return Err(invalid("a run in a shop is saved without the shop's stock"));
         }
         Ok(())
     }
@@ -246,10 +242,42 @@ impl SavedRun {
             return Err(invalid("a card reward is saved outside the hub"));
         }
         if let Some(reward) = &screen.pending_card_reward {
-            let distinct: BTreeSet<&String> = reward.offered_card_ids.iter().collect();
-            if distinct.len() != reward.offered_card_ids.len() {
-                return Err(invalid("a card reward offers the same card twice"));
-            }
+            self.validate_pending_card_reward(reward)?;
+        }
+        Ok(())
+    }
+
+    /// A card reward waits for the fight just completed, so its payout and
+    /// Rare guarantee are that fight's, and its offer is the reward screen's
+    /// size at most, with no card twice. (That the guaranteed Rare is really
+    /// there needs the card database; `SaveGameNode` checks it.)
+    fn validate_pending_card_reward(&self, reward: &PendingCardReward) -> Result<(), SaveError> {
+        let Some((encounter_type, zone)) = self.run_state.last_completed_encounter() else {
+            return Err(invalid("a card reward is saved before any fight was won"));
+        };
+        if !encounter_type.is_fight() {
+            return Err(invalid(
+                "a card reward is saved after an encounter that was not a fight",
+            ));
+        }
+        if reward.credits != encounter_reward::credits_for(encounter_type, zone) {
+            return Err(invalid(
+                "a card reward's credits are not what its fight paid",
+            ));
+        }
+        let guarantees_rare = encounter_reward::guaranteed_rarity(encounter_type).is_some();
+        if reward.guaranteed_rare != guarantees_rare {
+            return Err(invalid("a card reward's Rare guarantee is not its fight's"));
+        }
+
+        if reward.offered_card_ids.len() > card_reward::OFFER_SIZE {
+            return Err(invalid(
+                "a card reward offers more cards than the reward screen",
+            ));
+        }
+        let distinct: BTreeSet<&String> = reward.offered_card_ids.iter().collect();
+        if distinct.len() != reward.offered_card_ids.len() {
+            return Err(invalid("a card reward offers the same card twice"));
         }
         Ok(())
     }
@@ -272,18 +300,73 @@ pub fn read_save_file(path: &Path) -> Result<Option<SaveGame>, SaveError> {
 
 /// Writes `save` to `path`, replacing any save already there.
 ///
-/// The JSON goes to a temporary file beside it first and is then renamed over
-/// the old save, so the game closing mid-write leaves the previous save
-/// intact rather than a half-written one.
+/// The JSON goes to a temporary file beside it first, which is flushed to disk
+/// before it is renamed over the old save, and the directory is then flushed
+/// so the rename itself is on disk. The game closing mid-write, or the
+/// machine losing power, leaves either the previous save or the new one,
+/// never a half-written file.
 pub fn write_save_file(path: &Path, save: &SaveGame) -> Result<(), SaveError> {
     let json = save.to_json()?;
     let temporary = temporary_path(path);
-    if let Some(directory) = path.parent() {
-        fs::create_dir_all(directory).map_err(|error| SaveError::Io(error.to_string()))?;
+    let directory = path.parent();
+    if let Some(directory) = directory {
+        fs::create_dir_all(directory).map_err(io_error)?;
     }
 
-    fs::write(&temporary, json).map_err(|error| SaveError::Io(error.to_string()))?;
-    fs::rename(&temporary, path).map_err(|error| SaveError::Io(error.to_string()))
+    let mut file = fs::File::create(&temporary).map_err(io_error)?;
+    file.write_all(json.as_bytes()).map_err(io_error)?;
+    file.sync_all().map_err(io_error)?;
+    drop(file);
+
+    fs::rename(&temporary, path).map_err(io_error)?;
+    if let Some(directory) = directory {
+        sync_directory(directory)?;
+    }
+    Ok(())
+}
+
+/// Flushes a directory's entries, such as a rename into it, to disk. Windows
+/// cannot open a directory as a file and commits a rename itself, so there
+/// is nothing to do there.
+fn sync_directory(directory: &Path) -> Result<(), SaveError> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    fs::File::open(directory)
+        .and_then(|directory| directory.sync_all())
+        .map_err(io_error)
+}
+
+fn io_error(error: io::Error) -> SaveError {
+    SaveError::Io(error.to_string())
+}
+
+/// What could be kept of a save that would not load.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnreadableSave {
+    /// Where the file was copied before anything could overwrite it.
+    pub kept_at: PathBuf,
+    /// The credit balance, if the file still says what it was. It is what
+    /// carries between runs, so it is worth keeping even when the run cannot
+    /// be continued, as with a save from another version.
+    pub credits: Option<i64>,
+}
+
+/// Keeps a save that would not load: copies it beside itself with
+/// `.unreadable` added, replacing any earlier copy, and reads back its credit
+/// balance if the file still holds one. The next save then replaces the
+/// original without losing it.
+pub fn keep_unreadable_save(path: &Path) -> Result<UnreadableSave, SaveError> {
+    let mut kept_at = path.as_os_str().to_owned();
+    kept_at.push(".unreadable");
+    let kept_at = PathBuf::from(kept_at);
+    fs::copy(path, &kept_at).map_err(io_error)?;
+
+    let credits = fs::read_to_string(path)
+        .ok()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|value| value.get("meta")?.get("credits")?.as_i64());
+    Ok(UnreadableSave { kept_at, credits })
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -300,19 +383,30 @@ mod tests {
 
     use super::*;
     use crate::card_data::Rarity;
+    use crate::contract_map::EncounterType;
 
     /// A run that has accepted an offer, won its first fight and banked
     /// some credits and a card, the way a few minutes of play leaves it.
     fn run_played_partway() -> RunState {
-        let mut run = RunState::generated(&mut StdRng::seed_from_u64(7));
-        run.accept_contract_offer(1).expect("second offer");
+        for seed in 7..200 {
+            let mut run = RunState::generated(&mut StdRng::seed_from_u64(seed));
+            run.accept_contract_offer(1).expect("second offer");
 
-        let first = run.selectable_encounters()[0].id();
-        run.select_encounter(first).expect("first encounter");
-        run.complete_encounter().expect("complete it");
-        run.record_credit_change(25);
-        run.record_card_added();
-        run
+            let Some(fight) = run
+                .selectable_encounters()
+                .into_iter()
+                .find(|node| node.encounter_type() == EncounterType::Combat)
+                .map(|node| node.id())
+            else {
+                continue;
+            };
+            run.select_encounter(fight).expect("first fight");
+            run.complete_encounter().expect("complete it");
+            run.record_credit_change(25);
+            run.record_card_added();
+            return run;
+        }
+        panic!("no seed offered a fight straight away");
     }
 
     /// A run that accepted its third offer and beat that contract's final
@@ -345,7 +439,6 @@ mod tests {
             upgrades: vec!["Lucky Charm".to_string()],
             noise: 23,
             knowledge: 2,
-            shop_visit: None,
             screen: ScreenState::default(),
         }
     }
@@ -361,10 +454,12 @@ mod tests {
         serde_json::from_str(&json).unwrap()
     }
 
-    /// Steps into the first shop a fresh run can reach, if any.
+    /// Steps into the first shop a fresh run on an accepted contract can
+    /// reach, without opening it.
     fn run_in_a_shop() -> RunState {
         for seed in 0..200 {
             let mut run = RunState::generated(&mut StdRng::seed_from_u64(seed));
+            run.accept_contract_offer(0).expect("first offer");
             let shop = run
                 .selectable_encounters()
                 .into_iter()
@@ -378,12 +473,22 @@ mod tests {
         panic!("no seed offered a shop straight away");
     }
 
-    fn shop_visit() -> ShopVisit {
-        let pool = vec![
+    fn shop_pool() -> Vec<(String, Rarity)> {
+        vec![
             ("vpn".to_string(), Rarity::Common),
             ("proxy_chain".to_string(), Rarity::Rare),
-        ];
-        ShopVisit::open(&pool, &mut StdRng::seed_from_u64(3))
+        ]
+    }
+
+    /// What the reward screen holds after `run`'s last fight, offering
+    /// `card_ids`.
+    fn pending_reward_for(run: &RunState, card_ids: &[&str]) -> PendingCardReward {
+        let (encounter_type, zone) = run.last_completed_encounter().expect("a fight was won");
+        PendingCardReward {
+            credits: encounter_reward::credits_for(encounter_type, zone),
+            guaranteed_rare: encounter_reward::guaranteed_rarity(encounter_type).is_some(),
+            offered_card_ids: card_ids.iter().map(|id| id.to_string()).collect(),
+        }
     }
 
     #[test]
@@ -597,7 +702,7 @@ mod tests {
     /// enough to panic, so each is refused.
     #[test]
     fn a_save_describing_an_impossible_run_is_refused() {
-        let tamperings: [Tampering; 11] = [
+        let tamperings: [Tampering; 14] = [
             ("current node off the map", |value| {
                 value["run"]["run_state"]["contract_map"]["current_node"] = json!(999);
             }),
@@ -615,6 +720,25 @@ mod tests {
             }),
             ("negative noise", |value| {
                 value["run"]["noise"] = json!(-5);
+            }),
+            ("noise above the meter's cap", |value| {
+                value["run"]["noise"] = json!(500);
+            }),
+            // A valid graph, but not the accepted offer's: turning its fights
+            // into shops would make the contract free to walk.
+            ("a map that is not the accepted contract's", |value| {
+                let nodes = &mut value["run"]["run_state"]["contract_map"]["nodes"];
+                let fight = nodes
+                    .as_object_mut()
+                    .expect("nodes are keyed by id")
+                    .values_mut()
+                    .filter(|node| node["encounter_type"] == json!("combat"))
+                    .last()
+                    .expect("the map has a fight");
+                fight["encounter_type"] = json!("shop");
+            }),
+            ("a contract under way that was never accepted", |value| {
+                value["run"]["run_state"]["accepted_offer_index"] = Value::Null;
             }),
             // Sizing a map this long overflows, so it must never reach the
             // hub, which lists every offer.
@@ -664,19 +788,21 @@ mod tests {
 
     #[test]
     fn a_shop_visit_is_saved_with_its_stock_and_sales() {
-        let mut visit = shop_visit();
+        let mut shop = run_in_a_shop();
+        shop.open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(3))
+            .expect("in a shop");
         let mut credits = 500;
         let mut deck = crate::run_deck::RunDeck::default();
-        visit.buy(0, &mut credits, &mut deck).expect("buy slot 0");
+        shop.buy_from_shop(0, &mut credits, &mut deck)
+            .expect("buy slot 0");
+        let visit = shop.shop_visit().cloned();
 
-        let mut run = saved_run(run_in_a_shop());
-        run.shop_visit = Some(visit.clone());
-        let save = SaveGame::new(MetaProgress { credits }, run).expect("a shop is a safe point");
-
+        let save = SaveGame::new(MetaProgress { credits }, saved_run(shop))
+            .expect("a shop is a safe point");
         let restored = SaveGame::from_json(&save.to_json().unwrap()).unwrap();
 
-        assert_eq!(restored.run.shop_visit, Some(visit));
-        assert!(restored.run.shop_visit.unwrap().slots()[0].is_sold());
+        assert_eq!(restored.run.run_state.shop_visit().cloned(), visit);
+        assert!(restored.run.run_state.shop_visit().unwrap().slots()[0].is_sold());
     }
 
     #[test]
@@ -703,24 +829,15 @@ mod tests {
         ));
     }
 
-    fn pending_reward_offering(card_ids: &[&str]) -> PendingCardReward {
-        PendingCardReward {
-            credits: 40,
-            guaranteed_rare: false,
-            offered_card_ids: card_ids.iter().map(|id| id.to_string()).collect(),
-        }
-    }
-
     /// Continuing on a card reward must offer the cards that were on the
     /// screen, or quitting and continuing would be a free reroll.
     #[test]
     fn a_pending_card_reward_keeps_the_cards_it_offered() {
-        let mut run = saved_run(run_played_partway());
-        run.screen.pending_card_reward = Some(pending_reward_offering(&[
-            "wannacry",
-            "social_engineering",
-            "triple_worm",
-        ]));
+        let played = run_played_partway();
+        let reward =
+            pending_reward_for(&played, &["wannacry", "social_engineering", "triple_worm"]);
+        let mut run = saved_run(played);
+        run.screen.pending_card_reward = Some(reward);
         let save = SaveGame::new(MetaProgress::default(), run).expect("the hub is a safe point");
 
         let restored = SaveGame::from_json(&save.to_json().unwrap()).unwrap();
@@ -733,13 +850,72 @@ mod tests {
 
     #[test]
     fn a_card_reward_offering_a_card_twice_is_refused() {
-        let mut run = saved_run(run_played_partway());
-        run.screen.pending_card_reward = Some(pending_reward_offering(&["vpn", "vpn"]));
+        let played = run_played_partway();
+        let reward = pending_reward_for(&played, &["vpn", "vpn"]);
+        let mut run = saved_run(played);
+        run.screen.pending_card_reward = Some(reward);
 
         assert!(matches!(
             SaveGame::new(MetaProgress::default(), run),
             Err(SaveError::InvalidRun(_))
         ));
+    }
+
+    /// A card reward's payout, guarantee and size are its fight's, so an
+    /// edited reward cannot pay more or offer more on Continue.
+    #[test]
+    fn an_edited_card_reward_is_refused() {
+        let played = run_played_partway();
+        let honest = pending_reward_for(&played, &["vpn"]);
+        let edits: [(&str, PendingCardReward); 3] = [
+            (
+                "more credits than the fight paid",
+                PendingCardReward {
+                    credits: honest.credits + 1,
+                    ..honest.clone()
+                },
+            ),
+            (
+                "a Rare guarantee the fight did not earn",
+                PendingCardReward {
+                    guaranteed_rare: !honest.guaranteed_rare,
+                    ..honest.clone()
+                },
+            ),
+            (
+                "more cards than the reward screen offers",
+                pending_reward_for(&played, &["vpn", "strike", "rootkit", "phish"]),
+            ),
+        ];
+
+        for (description, reward) in edits {
+            let mut run = saved_run(played.clone());
+            run.screen.pending_card_reward = Some(reward);
+            assert!(
+                matches!(
+                    SaveGame::new(MetaProgress::default(), run),
+                    Err(SaveError::InvalidRun(_))
+                ),
+                "a reward with {description} was not refused"
+            );
+        }
+    }
+
+    /// The caps are constants rather than read from the meter nodes, so the
+    /// check holds even when the save is read before those nodes exist.
+    #[test]
+    fn noise_or_knowledge_above_its_cap_is_refused() {
+        let mut too_noisy = saved_run(run_played_partway());
+        too_noisy.noise = MAX_NOISE + 1;
+        let mut too_knowing = saved_run(run_played_partway());
+        too_knowing.knowledge = MAX_KNOWLEDGE + 1;
+
+        for run in [too_noisy, too_knowing] {
+            assert!(matches!(
+                SaveGame::new(MetaProgress::default(), run),
+                Err(SaveError::InvalidRun(_))
+            ));
+        }
     }
 
     #[test]
@@ -811,6 +987,41 @@ mod tests {
 
         assert!(matches!(read_save_file(&path), Err(SaveError::Corrupt(_))));
 
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A save that will not load is copied aside before the next save could
+    /// replace it, and its balance is kept when the file still states it.
+    #[test]
+    fn an_unreadable_save_is_kept_with_its_credit_balance() {
+        let dir = scratch_dir("unreadable");
+        let path = dir.join("save.json");
+        let mut old_version = save_json_value();
+        old_version["version"] = json!(SAVE_VERSION + 1);
+        old_version["meta"]["credits"] = json!(345);
+        fs::write(&path, old_version.to_string()).unwrap();
+        assert!(read_save_file(&path).is_err());
+
+        let kept = keep_unreadable_save(&path).expect("the file can be copied");
+
+        assert_eq!(kept.credits, Some(345));
+        assert_eq!(
+            fs::read_to_string(&kept.kept_at).unwrap(),
+            old_version.to_string()
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_corrupt_save_is_kept_even_without_a_balance_to_recover() {
+        let dir = scratch_dir("unreadable_corrupt");
+        let path = dir.join("save.json");
+        fs::write(&path, "{\"version\": 1, \"meta\": ").unwrap();
+
+        let kept = keep_unreadable_save(&path).expect("the file can be copied");
+
+        assert_eq!(kept.credits, None);
+        assert!(kept.kept_at.is_file());
         fs::remove_dir_all(dir).unwrap();
     }
 }

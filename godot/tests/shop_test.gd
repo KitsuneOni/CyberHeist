@@ -15,6 +15,7 @@
 #     When I buy a card
 #     Then that slot shows as sold
 #     And the other cards stay the same
+#     And reopening the shop screen shows the same stock, still sold
 #
 #   S2 Scenario: Successful purchase
 #     When I buy a card I can afford
@@ -208,10 +209,12 @@ func _press_buy(shop: Node, slot: int, card_name: String) -> bool:
 	return true
 
 
-func _count_in(names: PackedStringArray, card_name: String) -> int:
+# Counts by id rather than display name: a card's name flips to its weak side
+# at high noise, and two cards could share a name.
+func _count_in(card_ids: PackedStringArray, card_id: String) -> int:
 	var count := 0
-	for drawn_name in names:
-		if drawn_name == card_name:
+	for drawn_id in card_ids:
+		if drawn_id == card_id:
 			count += 1
 	return count
 
@@ -304,6 +307,7 @@ func _run() -> void:
 	var deck_before: int = _flow.run_deck_size()
 	var cards_added_before: int = _flow.run_summary().cards_added
 	var earned_before: int = _flow.run_summary().credits_earned
+	# Ids of the cards bought, one entry per copy.
 	var bought: Array[String] = []
 
 	# Stock can include starter cards, so remember how many copies the run
@@ -311,7 +315,7 @@ func _run() -> void:
 	var run_deck: Node = _flow.get_node("RunDeck")
 	var copies_before := {}
 	for card: Dictionary in stock:
-		copies_before[String(card.name)] = int(run_deck.count_of(String(card.id)))
+		copies_before[String(card.id)] = int(run_deck.count_of(String(card.id)))
 
 	var slot_to_buy := _cheapest_affordable_slot(stock)
 	_check(slot_to_buy >= 0, "with %d credits a card is affordable" % STARTING_CREDITS)
@@ -324,7 +328,7 @@ func _run() -> void:
 	if not _press_buy(shop, slot_to_buy, String(target.name)):
 		_finish()
 		return
-	bought.append(String(target.name))
+	bought.append(String(target.id))
 	stock = shop_node.stock()
 
 	_check(
@@ -344,6 +348,22 @@ func _run() -> void:
 		"the credits shown drop with the purchase"
 	)
 
+	# Rebuild the screen mid-visit, as resuming the run onto the shop does.
+	# The visit belongs to the run, so it must not roll new stock or restock
+	# the sold slot.
+	_check(_flow._show_current_run_screen().get("ok", false), "the shop screen can be reopened")
+	await _settle()
+	shop = _screen()
+	_check(shop != null and shop.name == "ShopScreen", "reopening shows the shop screen again")
+	if shop == null or shop.name != "ShopScreen":
+		_finish()
+		return
+	shop_node = shop.get_node("ShopNode")
+	stock = shop_node.stock()
+	_check(_stock_ids(stock) == stock_before_buying, "reopening the shop keeps its stock")
+	_check(stock[slot_to_buy].sold, "reopening the shop keeps the bought slot sold")
+	_check(shop._price_labels[slot_to_buy].text == "SOLD", "the reopened screen shows it as sold")
+
 	# Spend down until some card is out of reach. Every card costs at least 50,
 	# so from 120 this takes at most two purchases.
 	var unaffordable_slot := _first_unaffordable_slot(stock)
@@ -354,7 +374,7 @@ func _run() -> void:
 		var next_name := String(stock[next_slot].name)
 		if not _press_buy(shop, next_slot, next_name):
 			break
-		bought.append(next_name)
+		bought.append(String(stock[next_slot].id))
 		stock = shop_node.stock()
 		unaffordable_slot = _first_unaffordable_slot(stock)
 
@@ -405,7 +425,13 @@ func _run() -> void:
 	_check(_node_status(shop_id) == "completed", "the shop node is marked completed")
 
 	# --- #38: bought cards are drawable in a later encounter ------------------
-	var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	# What matters here is the run's deck, not this contract, so when the next
+	# column only offers elites or the boss, roll a fresh contract (which keeps
+	# the deck) rather than fail on the map's luck.
+	var combat_fixture := preload("res://tests/combat_fixture.gd")
+	if not combat_fixture.offers_standard_security(_flow):
+		combat_fixture.roll_new_contract(_flow)
+	var entered: Dictionary = combat_fixture.enter(_flow)
 	_check(entered.get("ok", false), "the next encounter loads")
 	await _settle()
 	var combat := _screen()
@@ -418,19 +444,19 @@ func _run() -> void:
 	var draw: Node = combat.draw_phase
 	draw.hand_size = draw.hand_names().size() + draw.draw_pile_count() + draw.discard_pile_count()
 	combat._draw_hand()
-	var hand: PackedStringArray = draw.hand_names()
+	var hand: PackedStringArray = draw.hand_ids()
 	var checked := {}
-	for card_name in bought:
-		if checked.has(card_name):
+	for card_id in bought:
+		if checked.has(card_id):
 			continue
-		checked[card_name] = true
-		var expected: int = int(copies_before[card_name]) + bought.count(card_name)
-		var drawn := _count_in(hand, card_name)
+		checked[card_id] = true
+		var expected: int = int(copies_before[card_id]) + bought.count(card_id)
+		var drawn := _count_in(hand, card_id)
 		_check(
 			drawn == expected,
 			(
 				"every copy of the bought card '%s' can be drawn in a later encounter (%d of %d)"
-				% [card_name, drawn, expected]
+				% [card_id, drawn, expected]
 			)
 		)
 

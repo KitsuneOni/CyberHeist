@@ -40,6 +40,46 @@ use sentry_node::SentryNode;
 /// top-level autoload — confirm this path matches your actual scene tree.
 const RUN_DECK_PATH: &str = "/root/FlowCoordinator/RunDeck";
 
+// Where the shared autoloads live. Every Rust node that reaches one looks it
+// up by these, so renaming an autoload only touches this one place.
+pub(crate) const CARD_DATABASE_PATH: &str = "/root/CardDatabaseGlobal";
+pub(crate) const PLAYER_STATE_PATH: &str = "/root/PlayerStateGlobal";
+pub(crate) const NOISE_METER_PATH: &str = "/root/NoiseMeterGlobal";
+pub(crate) const KNOWLEDGE_METER_PATH: &str = "/root/KnowledgeMeterGlobal";
+
+/// `{ok: false, error}`: how every Rust node reports a refusal to GDScript.
+pub(crate) fn failure(error: &str) -> VarDictionary {
+    vdict! {
+        "ok" => false,
+        "error" => error,
+    }
+}
+
+/// A card's player-facing details as a dictionary, the shape every screen
+/// that describes a card reads: `{name, type, rarity, cost, cost_text,
+/// noise_text, description, keywords: [{label, explanation}]}`. Callers add
+/// their own fields on top, such as an id or a shop price.
+pub(crate) fn card_detail_dictionary(detail: &card_text::CardDetail) -> VarDictionary {
+    let mut keywords: Array<VarDictionary> = Array::new();
+    for keyword in &detail.keywords {
+        keywords.push(&vdict! {
+            "label" => keyword.label.as_str(),
+            "explanation" => keyword.explanation.as_str(),
+        });
+    }
+
+    vdict! {
+        "name" => detail.name.as_str(),
+        "type" => detail.card_type.as_str(),
+        "rarity" => detail.rarity.as_str(),
+        "cost" => detail.cost,
+        "cost_text" => detail.cost_text.as_str(),
+        "noise_text" => detail.noise_text.as_str(),
+        "description" => detail.description.as_str(),
+        "keywords" => &keywords,
+    }
+}
+
 struct CyberHeistExtension;
 
 #[gdextension]
@@ -139,8 +179,8 @@ impl PlayerState {
 
 impl PlayerState {
     /// The credit balance itself, for a Rust rule that has to check and spend
-    /// it in one step. `ShopNode` lends it to `ShopVisit::buy`, which refuses
-    /// rather than take the balance below zero.
+    /// it in one step. `ShopNode` lends it to `RunState::buy_from_shop`, which
+    /// refuses rather than take the balance below zero.
     pub(crate) fn credits_mut(&mut self) -> &mut i64 {
         &mut self.money
     }
@@ -211,10 +251,7 @@ impl INode for DrawPhase {
     }
 
     fn ready(&mut self) {
-        self.noise_meter = Some(
-            self.base()
-                .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
-        );
+        self.noise_meter = Some(self.base().get_node_as::<NoiseMeter>(NOISE_METER_PATH));
 
         // Shield is per-encounter; clearing it here — not just at end_turn —
         // means it can't leak in regardless of how the previous encounter
@@ -228,12 +265,10 @@ impl INode for DrawPhase {
         // deliberately NOT reset here — it carries across encounters.
         self.knowledge_meter = Some(
             self.base()
-                .get_node_as::<KnowledgeMeter>("/root/KnowledgeMeterGlobal"),
+                .get_node_as::<KnowledgeMeter>(KNOWLEDGE_METER_PATH),
         );
 
-        let card_db = self
-            .base()
-            .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
+        let card_db = self.base().get_node_as::<CardDatabase>(CARD_DATABASE_PATH);
         let card_db = card_db.bind();
 
         // The run's cards live on RunDeckNode, not starter_deck.ron directly.
@@ -339,6 +374,17 @@ impl DrawPhase {
         }
     }
 
+    /// The card ids in the hand, in the same order as `hand_names`. Unlike a
+    /// name, an id does not change with noise, so this is what to compare
+    /// against the run's deck.
+    #[func]
+    fn hand_ids(&self) -> PackedStringArray {
+        self.hand
+            .iter()
+            .map(|card| GString::from(card.id.as_str()))
+            .collect()
+    }
+
     #[func]
     fn hand_names(&self) -> PackedStringArray {
         let noise = self.current_noise();
@@ -358,27 +404,9 @@ impl DrawPhase {
         };
 
         let noise = self.current_noise();
-        let detail = card_text::describe(card, noise);
-
-        let mut keywords: Array<VarDictionary> = Array::new();
-        for keyword in &detail.keywords {
-            keywords.push(&vdict! {
-                "label" => keyword.label.as_str(),
-                "explanation" => keyword.explanation.as_str(),
-            });
-        }
-
-        vdict! {
-            "ok" => true,
-            "name" => detail.name.as_str(),
-            "type" => detail.card_type.as_str(),
-            "rarity" => detail.rarity.as_str(),
-            "cost" => detail.cost,
-            "cost_text" => detail.cost_text.as_str(),
-            "noise_text" => detail.noise_text.as_str(),
-            "description" => detail.description.as_str(),
-            "keywords" => &keywords,
-        }
+        let mut detail = card_detail_dictionary(&card_text::describe(card, noise));
+        detail.set("ok", true);
+        detail
     }
 
     #[func]

@@ -13,6 +13,7 @@ use crate::card_reward;
 use crate::card_text;
 use crate::run_deck::RunDeck;
 use crate::starter_deck;
+use crate::{CARD_DATABASE_PATH, card_detail_dictionary};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -42,16 +43,17 @@ impl RunDeckNode {
     }
 
     /// The run's deck itself, for a Rust rule that adds a card as part of a
-    /// larger step. `ShopNode` lends it to `ShopVisit::buy`, so a bought card
-    /// is added in the same operation that takes its price. Every id the shop
-    /// sells comes from the card database, so it needs no check here.
+    /// larger step. `ShopNode` lends it to `RunState::buy_from_shop`, so a
+    /// bought card is added in the same operation that takes its price.
+    /// Every id the shop sells was drawn from the card database when its stock
+    /// was rolled, so it needs no second check here.
     pub(crate) fn deck_mut(&mut self) -> &mut RunDeck {
         &mut self.deck
     }
 
     fn card_database(&self) -> Option<Gd<CardDatabase>> {
         self.base()
-            .try_get_node_as::<CardDatabase>("/root/CardDatabaseGlobal")
+            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
     }
 
     /// The reward screen's description of each card in `card_ids`, skipping
@@ -74,16 +76,9 @@ impl RunDeckNode {
             };
             // Rewards are chosen outside an encounter, so a card is shown on
             // its strong side rather than whatever the last fight's noise was.
-            let detail = card_text::describe(card, 0);
-            described.push(&vdict! {
-                "id" => id,
-                "name" => detail.name.as_str(),
-                "type" => detail.card_type.as_str(),
-                "rarity" => detail.rarity.as_str(),
-                "cost_text" => detail.cost_text.as_str(),
-                "noise_text" => detail.noise_text.as_str(),
-                "description" => detail.description.as_str(),
-            });
+            let mut detail = card_detail_dictionary(&card_text::describe(card, 0));
+            detail.set("id", id);
+            described.push(&detail);
         }
 
         described
@@ -174,9 +169,16 @@ impl RunDeckNode {
         self.describe_reward_cards(ids.iter().map(String::as_str))
     }
 
+    /// How many cards the reward screen offers after a fight
+    /// (`card_reward::OFFER_SIZE`), which a saved reward is checked against.
+    #[func]
+    fn reward_offer_size() -> i64 {
+        card_reward::OFFER_SIZE as i64
+    }
+
     /// The cards of an offer already rolled, such as one restored from a save,
-    /// each with what the player needs to choose between them: `{id, name,
-    /// type, rarity, cost_text, noise_text, description}`. An id the card
+    /// each with what the player needs to choose between them: the card's
+    /// details (see `card_detail_dictionary`) plus its `id`. An id the card
     /// database does not know is left out.
     #[func]
     fn describe_cards(&self, card_ids: PackedStringArray) -> Array<VarDictionary> {

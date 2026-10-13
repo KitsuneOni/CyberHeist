@@ -135,12 +135,10 @@ jobs:
       - name: Run headless elite encounter test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/elite_encounter_test.gd
 
-      # Clicks a shop on the map and shops through the screen: five priced
-      # cards, buying deducts the exact price and marks the slot sold, an
-      # unaffordable card's button is disabled with its price in red, Leave
-      # completes the node, and a bought card is drawn in the next encounter.
-      - name: Run headless dark web shop test
-        run: ~/godot-bin/godot --headless --path godot -s res://tests/shop_test.gd
+      # Gets caught in a real standard combat and checks it paid nothing, then
+      # retries and wins the same fight to check it pays.
+      - name: Run headless combat credits test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/combat_credits_test.gd
 
       # Chooses a contract on the hub's offer picker (and changes it once)
       # and plays it to its final boss: earlier bosses only open the next
@@ -160,6 +158,13 @@ jobs:
       # twice. A corrupt, incompatible or version 1 save starts fresh.
       - name: Run headless save and continue test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/save_continue_test.gd
+
+      # Clicks a shop on the map and shops through the screen: five priced
+      # cards, buying deducts the exact price and marks the slot sold, an
+      # unaffordable card's button is disabled with its price in red, Leave
+      # completes the node, and a bought card is drawn in the next encounter.
+      - name: Run headless dark web shop test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/shop_test.gd
 
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh

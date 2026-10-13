@@ -3,13 +3,16 @@
 use godot::builtin::{VarDictionary, Variant};
 use godot::prelude::*;
 
+use crate::card_data::Rarity;
 use crate::contract_map::{EncounterNode, EncounterSelection};
 use crate::contract_offer::ContractOffer;
 use crate::encounter_reward;
 use crate::encounter_text::{
     all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
 };
+use crate::run_deck::RunDeck;
 use crate::run_state::{RunState, RunStateError};
+use crate::shop::{Purchase, ShopError, ShopVisit};
 
 /// Where `FlowCoordinator` keeps the run. Other nodes that need the run look
 /// it up here, and treat it as optional so their scenes still run on their
@@ -44,6 +47,30 @@ impl RunStateNode {
     /// hands over a run that passed `RunState::validate_restored`.
     pub(crate) fn restore_state(&mut self, state: RunState) {
         self.state = state;
+    }
+}
+
+/// The shop visit lives on the run, so `ShopNode` reaches it through here
+/// rather than holding its own copy. See `RunState::open_shop_visit`.
+impl RunStateNode {
+    pub(crate) fn open_shop_visit(
+        &mut self,
+        pool: &[(String, Rarity)],
+    ) -> Result<&ShopVisit, RunStateError> {
+        self.state.open_shop_visit(pool, &mut rand::rng())
+    }
+
+    pub(crate) fn shop_visit(&self) -> Option<&ShopVisit> {
+        self.state.shop_visit()
+    }
+
+    pub(crate) fn buy_from_shop(
+        &mut self,
+        slot: usize,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+    ) -> Result<Purchase, ShopError> {
+        self.state.buy_from_shop(slot, credits, deck)
     }
 }
 
@@ -226,6 +253,14 @@ impl RunStateNode {
         self.state.needs_contract_choice()
     }
 
+    /// Whether an encounter on the current contract has been entered, even if
+    /// the player was caught in it and so completed nothing. Once it has, the
+    /// run is committed to this contract.
+    #[func]
+    fn contract_started(&self) -> bool {
+        self.state.contract_started()
+    }
+
     /// Takes on the offer at `index` and rebuilds the contract map from it.
     /// `{ok: true}`, or `{ok: false, error}` for an index that is not on offer,
     /// outside the hub, or once an encounter on the contract has been entered.
@@ -283,8 +318,8 @@ impl RunStateNode {
     }
 
     /// Records a card going into the run's deck. Called by
-    /// `FlowCoordinator.add_card_to_deck` once the deck has accepted it, and
-    /// by `ShopNode` for a card bought in the shop.
+    /// `FlowCoordinator.add_card_to_deck` once the deck has accepted it. A
+    /// card bought in the shop is recorded by `RunState::buy_from_shop`.
     #[func]
     pub(crate) fn record_card_added(&mut self) {
         self.state.record_card_added();
@@ -365,18 +400,25 @@ impl RunStateNode {
 
     #[func]
     fn snapshot(&self) -> VarDictionary {
-        let active_encounter = match self.state.active_encounter() {
-            Some(encounter) => Variant::from(vdict! {
-                "id" => encounter.id(),
-                "type" => encounter.encounter_type().as_str(),
-            }),
-            None => Variant::nil(),
-        };
+        snapshot_dictionary(&self.state)
+    }
+}
 
-        vdict! {
-            "phase" => self.state.phase().as_str(),
-            "active_encounter" => &active_encounter,
-        }
+/// Where `state` stands, as `FlowCoordinator` reads it to choose a screen:
+/// `{phase, active_encounter}`, where `active_encounter` is `{id, type}` or
+/// null.
+pub(crate) fn snapshot_dictionary(state: &RunState) -> VarDictionary {
+    let active_encounter = match state.active_encounter() {
+        Some(encounter) => Variant::from(vdict! {
+            "id" => encounter.id(),
+            "type" => encounter.encounter_type().as_str(),
+        }),
+        None => Variant::nil(),
+    };
+
+    vdict! {
+        "phase" => state.phase().as_str(),
+        "active_encounter" => &active_encounter,
     }
 }
 

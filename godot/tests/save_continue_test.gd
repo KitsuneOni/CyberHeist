@@ -12,8 +12,10 @@
 #     Given the save file is corrupt, or from another save version, including
 #     version 1, which kept a claimed flag and a separate contract payout
 #     When the game opens
-#     Then nothing from it is loaded, Continue run is unavailable and the
-#     menu says the save could not be loaded
+#     Then its run is not loaded, Continue run is unavailable and the menu
+#     says the save could not be loaded
+#     And the file is kept as a .unreadable copy, and the credit balance it
+#     names is kept when it still names one, since that carries between runs
 #     And New contract replaces it with a good save
 #
 #   Scenario: The game saves without the player asking
@@ -74,7 +76,9 @@ const MAX_SHOPS_IN_A_ROW := 4
 # Credits to walk into the shop with, enough for any card on sale.
 const SHOP_CREDITS := 200
 # The save layout this build writes (SAVE_VERSION in save_game.rs).
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
+# Where a save that will not load is copied before it can be replaced.
+const UNREADABLE_COPY_PATH := SAVE_PATH + ".unreadable"
 # How long the resumed victory screen may take to count its balance up.
 const BALANCE_COUNT_TIMEOUT_SECONDS := 5.0
 
@@ -242,6 +246,7 @@ func _run() -> void:
 	_remove_test_files()
 	await _check_first_launch()
 	await _check_unreadable_saves()
+	_check_a_card_reward_naming_a_non_card_is_not_saved()
 	if not await _start_and_accept_a_contract():
 		_finish("")
 		return
@@ -283,6 +288,7 @@ func _run() -> void:
 func _remove_test_files() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(EXPECTED_PATH))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(UNREADABLE_COPY_PATH))
 
 
 func _check_first_launch() -> void:
@@ -306,10 +312,16 @@ func _check_first_launch() -> void:
 func _check_unreadable_saves() -> void:
 	var credits_before: int = _player.money()
 
-	_write_file(SAVE_PATH, "{\"version\": 1, \"meta\": {\"credits\": 999")
+	var corrupt_text := "{\"version\": 1, \"meta\": {\"credits\": 999"
+	_write_file(SAVE_PATH, corrupt_text)
 	var corrupt: Dictionary = _flow.use_save_file(SAVE_PATH)
 	_check(not corrupt.get("ok", true), "a corrupt save is refused")
 	_check(not _flow.has_saved_run(), "a corrupt save leaves no run to continue")
+	_check(_player.money() == credits_before, "a corrupt save changes no credits")
+	_check(
+		FileAccess.get_file_as_string(UNREADABLE_COPY_PATH) == corrupt_text,
+		"a corrupt save is kept as a .unreadable copy before anything replaces it"
+	)
 	var menu := await _reopen_menu()
 	_check(
 		menu != null and menu.continue_button.disabled,
@@ -330,7 +342,8 @@ func _check_unreadable_saves() -> void:
 		"a save from another version is refused as incompatible"
 	)
 	_check(not _flow.has_saved_run(), "an incompatible save leaves no run to continue")
-	_check(_player.money() == credits_before, "nothing from a refused save is applied")
+	_check(_player.money() == 999, "an incompatible save's credit balance is kept")
+	_player.add_credits(credits_before - _player.money())
 
 	# Version 1 kept whether the contract reward was claimed, and the payout
 	# beside the screen, rather than the reward run state now records.
@@ -353,8 +366,29 @@ func _check_unreadable_saves() -> void:
 		"a version 1 save is refused as incompatible"
 	)
 	_check(not _flow.has_saved_run(), "a version 1 save leaves no run to continue")
-	_check(_player.money() == credits_before, "nothing from a version 1 save is applied")
+	_check(_player.money() == 999, "a version 1 save's credit balance is kept")
+	_player.add_credits(credits_before - _player.money())
 	await _reopen_menu()
+
+
+# A card id that is not a string (a null from a missing "id", say) is refused
+# when saving, rather than written out as text that would make the next launch
+# refuse the whole save as naming an unknown card.
+func _check_a_card_reward_naming_a_non_card_is_not_saved() -> void:
+	var before := FileAccess.get_file_as_string(SAVE_PATH)
+	var screen_results := {
+		"pending_reward": {"credits": 25, "guaranteed_rare": false, "offered_card_ids": [null]},
+		"caught_penalty": {},
+	}
+	var written: Dictionary = _flow.get_node("SaveGame").write_save(SAVE_PATH, screen_results)
+	_check(
+		not written.get("ok", true) and str(written.get("error", "")).contains("not a name"),
+		"a card reward naming a non-card is refused for that reason"
+	)
+	_check(
+		FileAccess.get_file_as_string(SAVE_PATH) == before,
+		"the refused save leaves the file as it was"
+	)
 
 
 # New contract from the menu, then the offer shown first, accepted on the
@@ -392,6 +426,14 @@ func _start_and_accept_a_contract() -> bool:
 		"accepting the offer is saved straight away"
 	)
 	return accepted.get("ok", false)
+
+
+# A run can only get under way on an accepted offer (a save of one that has
+# not is refused), so a freshly rolled run takes its first offer straight away,
+# as the hub's picker would.
+func _accept_first_offer() -> void:
+	var accepted: Dictionary = _flow.accept_contract_offer(0)
+	_check(accepted.get("ok", false), "a fresh run accepts its first offer")
 
 
 # Cycles the hub's offer picker to the offer with `index` and accepts it.
@@ -548,6 +590,7 @@ func _check_shop_resume() -> void:
 	for _roll in MAX_SHOP_ROLLS:
 		_flow.start_new_run()
 		await _settle()
+		_accept_first_offer()
 		shop = _first_selectable(["shop"])
 		if not shop.is_empty():
 			break
@@ -570,7 +613,8 @@ func _check_shop_resume() -> void:
 		return
 	screen._buy_buttons[slot].pressed.emit()
 	await _settle()
-	var saved_stock: Array = _saved().get("run", {}).get("shop_visit", {}).get("slots", [])
+	var saved_visit = _saved().get("run", {}).get("run_state", {}).get("shop_visit")
+	var saved_stock: Array = saved_visit.get("slots", []) if saved_visit is Dictionary else []
 	_check(
 		slot < saved_stock.size() and saved_stock[slot].get("sold", false),
 		"buying a card is saved with its slot sold"
@@ -591,6 +635,7 @@ func _check_card_reward_resume() -> void:
 	for _roll in MAX_FIGHT_ROLLS:
 		_flow.start_new_run()
 		await _settle()
+		_accept_first_offer()
 		fight = _first_selectable(["combat", "elite"])
 		if not fight.is_empty():
 			break

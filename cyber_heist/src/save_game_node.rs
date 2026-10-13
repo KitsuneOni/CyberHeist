@@ -12,29 +12,21 @@ use godot::builtin::VarDictionary;
 use godot::classes::ProjectSettings;
 use godot::prelude::*;
 
+use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
-use crate::contract_map::EncounterType;
 use crate::knowledge::KnowledgeMeter;
 use crate::noise_meter::NoiseMeter;
 use crate::run_deck::RunDeck;
 use crate::run_deck_node::RunDeckNode;
-use crate::run_state::ContractPhase;
-use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
+use crate::run_state_node::{RUN_STATE_PATH, RunStateNode, snapshot_dictionary};
 use crate::save_game::{
-    CaughtPenalty, MetaProgress, PendingCardReward, SaveGame, SavedRun, ScreenState,
-    read_save_file, write_save_file,
+    CaughtPenalty, MetaProgress, PendingCardReward, SaveError, SaveGame, SavedRun, ScreenState,
+    keep_unreadable_save, read_save_file, write_save_file,
 };
-use crate::shop::ShopVisit;
-use crate::{PlayerState, RUN_DECK_PATH};
-
-/// Where `FlowCoordinator` keeps this node. `ShopNode` looks it up here and
-/// treats it as optional, so the shop screen still runs on its own.
-pub(crate) const SAVE_GAME_PATH: &str = "/root/FlowCoordinator/SaveGame";
-
-const PLAYER_STATE_PATH: &str = "/root/PlayerStateGlobal";
-const NOISE_METER_PATH: &str = "/root/NoiseMeterGlobal";
-const KNOWLEDGE_METER_PATH: &str = "/root/KnowledgeMeterGlobal";
-const CARD_DATABASE_PATH: &str = "/root/CardDatabaseGlobal";
+use crate::{
+    CARD_DATABASE_PATH, KNOWLEDGE_METER_PATH, NOISE_METER_PATH, PLAYER_STATE_PATH, PlayerState,
+    RUN_DECK_PATH, failure,
+};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -42,12 +34,6 @@ pub(crate) struct SaveGameNode {
     /// The run read from the save at launch, waiting for Continue. Taken by
     /// `restore_saved_run`, and dropped when a new contract starts instead.
     saved_run: Option<SavedRun>,
-    /// The stock of the shop screen now open, kept up to date by `ShopNode`
-    /// so a save made in the shop includes it.
-    open_shop: Option<ShopVisit>,
-    /// The stock of a shop being resumed by Continue, for the shop screen's
-    /// `ShopNode` to take instead of rolling a new one.
-    resumed_shop: Option<ShopVisit>,
     base: Base<Node>,
 }
 
@@ -56,8 +42,6 @@ impl INode for SaveGameNode {
     fn init(base: Base<Node>) -> Self {
         Self {
             saved_run: None,
-            open_shop: None,
-            resumed_shop: None,
             base,
         }
     }
@@ -71,19 +55,27 @@ impl SaveGameNode {
     ///
     /// Returns `{ok: true, has_run}`; `has_run` is false when there is no
     /// save yet. A corrupt, incompatible or impossible save returns
-    /// `{ok: false, error}` and loads nothing, so the game starts fresh.
+    /// `{ok: false, error}` and its run is not loaded, so the game starts
+    /// fresh. The next save would replace that file, so it is first copied
+    /// to `<path>.unreadable`, and if it still says what the credit balance
+    /// was, that balance is kept: it is the one thing meant to carry over.
     #[func]
     fn load_save(&mut self, path: GString) -> VarDictionary {
         self.saved_run = None;
+        let path = globalized(&path);
 
-        let save = match read_save_file(&globalized(&path)) {
+        let loaded = read_save_file(&path).and_then(|save| match save {
+            Some(save) => self
+                .check_against_this_build(&save.run)
+                .map(|()| Some(save))
+                .map_err(SaveError::InvalidRun),
+            None => Ok(None),
+        });
+        let save = match loaded {
             Ok(Some(save)) => save,
             Ok(None) => return vdict! { "ok" => true, "has_run" => false },
-            Err(error) => return failure(&error.to_string()),
+            Err(error) => return self.recover_unreadable_save(&path, &error),
         };
-        if let Err(error) = self.check_against_this_build(&save.run) {
-            return failure(&format!("the saved run is invalid: {error}"));
-        }
         let Some(mut player_state) = self.player_state() else {
             return failure("PlayerStateGlobal is not available");
         };
@@ -91,6 +83,25 @@ impl SaveGameNode {
         *player_state.bind_mut().credits_mut() = save.meta.credits;
         self.saved_run = Some(save.run);
         vdict! { "ok" => true, "has_run" => true }
+    }
+
+    /// Where the saved run waiting for Continue stands, in the shape
+    /// `FlowCoordinator.run_snapshot()` uses, `{phase, active_encounter}`,
+    /// plus `card_reward_waiting`: whether it was saved before a fight's card
+    /// reward was chosen. The coordinator prepares the screen it belongs on
+    /// before restoring anything, so a screen that cannot be prepared leaves
+    /// the current run untouched. `{}` when there is no saved run.
+    #[func]
+    fn saved_run_snapshot(&self) -> VarDictionary {
+        let Some(saved) = &self.saved_run else {
+            return VarDictionary::new();
+        };
+        let mut snapshot = snapshot_dictionary(&saved.run_state);
+        snapshot.set(
+            "card_reward_waiting",
+            saved.screen.pending_card_reward.is_some(),
+        );
+        snapshot
     }
 
     /// Whether `load_save` found a run that Continue can resume.
@@ -106,8 +117,9 @@ impl SaveGameNode {
         self.saved_run = None;
     }
 
-    /// Puts the saved run back: run state, deck, upgrades, noise, knowledge
-    /// and, in a shop, its stock. Returns `{ok: true, pending_reward,
+    /// Puts the saved run back: run state (with a shop's stock), deck,
+    /// upgrades, noise and knowledge. Every node is found before any is
+    /// changed, so it restores all of them or none. Returns `{ok: true, pending_reward,
     /// caught_penalty}` with the screen results the coordinator was holding,
     /// each an empty dictionary when there was none, or `{ok: false, error}`
     /// with nothing changed. A won contract's reward needs neither: it is
@@ -144,7 +156,6 @@ impl SaveGameNode {
         knowledge_meter
             .bind_mut()
             .restore_knowledge(saved.knowledge);
-        self.resumed_shop = saved.shop_visit;
 
         let mut result = screen_state_dictionary(&saved.screen);
         result.set("ok", true);
@@ -176,16 +187,24 @@ impl SaveGameNode {
 }
 
 impl SaveGameNode {
-    /// Called by `ShopNode` when the shop opens and after every purchase, so
-    /// a save made in the shop has its current stock.
-    pub(crate) fn track_open_shop(&mut self, visit: &ShopVisit) {
-        self.open_shop = Some(visit.clone());
-    }
-
-    /// The stock of the shop Continue is resuming, if any. Taken, so only the
-    /// first shop screen after Continue reopens it.
-    pub(crate) fn take_resumed_shop(&mut self) -> Option<ShopVisit> {
-        self.resumed_shop.take()
+    /// Keeps a save that would not load (see `load_save`) and reports why it
+    /// would not.
+    fn recover_unreadable_save(&self, path: &std::path::Path, error: &SaveError) -> VarDictionary {
+        let mut message = error.to_string();
+        match keep_unreadable_save(path) {
+            Ok(kept) => {
+                message.push_str(&format!("; a copy was kept at {}", kept.kept_at.display()));
+                if let (Some(credits), Some(mut player_state)) = (kept.credits, self.player_state())
+                {
+                    *player_state.bind_mut().credits_mut() = credits;
+                    message.push_str(", and its credit balance was kept");
+                }
+            }
+            Err(copy_error) => {
+                godot_error!("SaveGameNode: could not keep the unreadable save: {copy_error}");
+            }
+        }
+        failure(&message)
     }
 
     fn capture(&self, screen: ScreenState) -> Result<SaveGame, String> {
@@ -211,10 +230,6 @@ impl SaveGameNode {
             .ok_or_else(|| unavailable("KnowledgeMeterGlobal"))?;
 
         let run_state = run_state.bind().state().clone();
-        let in_shop = run_state.phase() == ContractPhase::EncounterActive
-            && run_state
-                .active_encounter()
-                .is_some_and(|encounter| encounter.encounter_type() == EncounterType::Shop);
         let player_state = player_state.bind();
 
         let run = SavedRun {
@@ -223,11 +238,6 @@ impl SaveGameNode {
             upgrades: player_state.upgrade_names(),
             noise: noise_meter.bind().get_noise(),
             knowledge: knowledge_meter.bind().get_knowledge(),
-            shop_visit: if in_shop {
-                self.open_shop.clone()
-            } else {
-                None
-            },
             screen,
         };
         let meta = MetaProgress {
@@ -236,19 +246,37 @@ impl SaveGameNode {
         SaveGame::new(meta, run).map_err(|error| error.to_string())
     }
 
-    /// The checks a save cannot make on its own: every card it names, in the
-    /// deck, a shop's stock or a card reward's offer, exists in this build's
-    /// card database, and noise and knowledge are within the meters' caps.
+    /// The checks a save cannot make without the card database: every card
+    /// it names, in the deck, a shop's stock or a card reward's offer, exists
+    /// in this build; a shop's cards are priced by their rarity; and a reward
+    /// that guarantees a Rare offers one. (Noise and knowledge are checked
+    /// against their caps by `SavedRun::validate`, which needs no nodes.)
     fn check_against_this_build(&self, run: &SavedRun) -> Result<(), String> {
         let database = self
             .base()
             .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
             .ok_or("CardDatabaseGlobal is not available to check its cards")?;
         let database = database.bind();
+        let rarity_of = |card_id: &str| database.get(card_id).map(|card| card.rarity);
+
+        if let Some(visit) = run.run_state.shop_visit() {
+            visit.validate_restored(rarity_of)?;
+        }
+        if let Some(reward) = &run.screen.pending_card_reward
+            && reward.guaranteed_rare
+            && !reward.offered_card_ids.is_empty()
+            && !reward
+                .offered_card_ids
+                .iter()
+                .any(|id| rarity_of(id).is_some_and(|rarity| rarity >= Rarity::Rare))
+        {
+            return Err("a card reward guaranteeing a Rare offers none".to_string());
+        }
 
         let shop_cards = run
-            .shop_visit
-            .iter()
+            .run_state
+            .shop_visit()
+            .into_iter()
             .flat_map(|visit| visit.slots())
             .map(|slot| slot.card_id());
         let reward_cards = run
@@ -263,19 +291,6 @@ impl SaveGameNode {
             .find(|id| database.get(id).is_none())
         {
             return Err(format!("it names a card that does not exist: '{unknown}'"));
-        }
-
-        if let Some(meter) = self.base().try_get_node_as::<NoiseMeter>(NOISE_METER_PATH)
-            && run.noise > meter.bind().get_max_noise()
-        {
-            return Err(format!("noise {} is above the meter's cap", run.noise));
-        }
-        if let Some(meter) = self
-            .base()
-            .try_get_node_as::<KnowledgeMeter>(KNOWLEDGE_METER_PATH)
-            && run.knowledge > meter.bind().get_max_knowledge()
-        {
-            return Err(format!("knowledge {} is above its cap", run.knowledge));
         }
         Ok(())
     }
@@ -379,7 +394,9 @@ fn field<T: FromGodot>(dictionary: &VarDictionary, key: &str) -> Result<T, Strin
         .map_err(|_| format!("'{key}' has the wrong type"))
 }
 
-/// A list of names, typed or untyped, as GDScript may hold either.
+/// A list of names, typed or untyped, as GDScript may hold either. Anything
+/// in it that is not a string (a null id, say) is refused here, at save time,
+/// rather than written out as text that would make the save unreadable later.
 fn string_list(dictionary: &VarDictionary, key: &str) -> Result<Vec<String>, String> {
     let value = dictionary
         .get(key)
@@ -390,12 +407,12 @@ fn string_list(dictionary: &VarDictionary, key: &str) -> Result<Vec<String>, Str
     let names: VarArray = value
         .try_to()
         .map_err(|_| format!("'{key}' is not a list"))?;
-    Ok(names.iter_shared().map(|name| name.to_string()).collect())
-}
-
-fn failure(message: &str) -> VarDictionary {
-    vdict! {
-        "ok" => false,
-        "error" => message,
-    }
+    names
+        .iter_shared()
+        .map(|name| {
+            name.try_to::<GString>()
+                .map(|name| name.to_string())
+                .map_err(|_| format!("'{key}' holds something that is not a name: {name}"))
+        })
+        .collect()
 }

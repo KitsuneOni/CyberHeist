@@ -1,5 +1,9 @@
 use godot::prelude::*;
 
+/// The shared meter's cap: detection is total at this much noise.
+/// `NoiseMeterGlobal` is built with it, and a save holding more is refused.
+pub const MAX_NOISE: i32 = 100;
+
 /// Noise plus the shield currently protecting it. Shield absorbs positive
 /// noise before any of it reaches the meter — 1 shield blocks 1 noise,
 /// regardless of whether that noise came from the player's own card or from
@@ -128,7 +132,7 @@ pub struct NoiseMeter {
 #[godot_api]
 impl INode for NoiseMeter {
     fn init(base: Base<Node>) -> Self {
-        let level = NoiseLevel::new(100);
+        let level = NoiseLevel::new(MAX_NOISE);
         Self {
             noise: PhantomVar::default(),
             max_noise: PhantomVar::default(),

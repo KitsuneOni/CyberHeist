@@ -171,12 +171,17 @@ FlowCoordinator.can_change_contract()
 
 FlowCoordinator.accepted_contract_offer()
 # the accepted offer's fields plus "ok": true, or {"ok": false}
+
+FlowCoordinator.contract_started()
+# true once an encounter on this contract has been entered
 ```
 
-Offers are listed shortest first. Accepting only changes run state; it does
-not navigate. The hub's offer picker accepts and then redraws the map itself.
-The accepted offer's `credit_reward` is what winning the contract pays (see
-below).
+Offers are listed shortest first. An offer can be swapped for another until
+`contract_started()` turns true, when the first encounter is entered. That
+stays true if the player is caught in it, even though nothing has been
+completed. Accepting only changes run state; it does not navigate. The hub's
+offer picker accepts and then redraws the map itself. The accepted offer's
+`credit_reward` is what winning the contract pays (see below).
 
 Run the headless check with a built extension:
 
@@ -259,91 +264,6 @@ Run the headless check with a built extension:
 ```sh
 godot --headless --path godot -s res://tests/run_stats_test.gd
 ```
-
-## The dark web shop (story #38)
-
-A shop node opens `scenes/shop.tscn`, a dark web market where the player
-spends credits on cards for the rest of the run. It delivers the epic through
-two stories: S1 shop stock and pricing (#104) and S2 buying with credits
-(#105). The rules are plain Rust in `cyber_heist/src/shop.rs`; `ShopNode`
-(`shop_node.rs`) sits on the shop screen as its bridge, as `EventNode` does for
-events.
-
-**Stock.** When the screen opens, `ShopNode` rolls a `ShopVisit` of five
-distinct cards (`STOCK_SIZE`) from the card database. Cursed cards are not in
-that pool. Each card's price comes from its rarity (`price_for`):
-
-| Rarity | Price |
-| --- | --- |
-| Common | 50 |
-| Uncommon | 75 |
-| Rare | 100 |
-| Legendary | 150 |
-
-The stock is fixed for the visit and never restocks. A bought card's slot is
-marked sold rather than removed, so the other cards keep their places and the
-screen shows `SOLD` in that row.
-
-**Buying.** `ShopVisit::buy` is the only thing that spends credits in the shop.
-It checks the slot and the balance before changing anything, then takes the
-exact price from `PlayerStateGlobal` and adds the card to the run's deck on
-`RunDeckNode`, all in one call. A refusal (`not_enough_credits`,
-`already_sold`, `no_such_slot`) changes neither the credits, the deck nor the
-stock, and a purchase can never take the balance below zero. A balance already
-below zero from a caught fine simply affords nothing. A bought card is in the
-run's deck at once, so `DrawPhase` deals it in the next encounter.
-
-The screen reads `affordable` for each slot against the current balance. A
-card the player cannot afford has its buy button disabled and its price in
-red, and the screen re-reads the stock after every purchase.
-
-**Leaving.** Leave calls `FlowCoordinator.complete_active_encounter()`. Shops
-pay no encounter reward and are not in `REWARDING_ENCOUNTERS`, so the player
-goes straight back to the map with the shop node marked completed. Shops are
-not fights, so they do not count as wins.
-
-```gdscript
-$ShopNode.stock()
-# [{"slot": 0, "id": "vpn", "name": "VPN", "type": "Skill", "rarity": "Common",
-#   "cost_text": "Costs 2 energy", "noise_text": "Reduces noise by 10",
-#   "description": "...", "keywords": [{"label", "explanation"}],
-#   "price": 50, "sold": false, "affordable": true}, ...]
-
-$ShopNode.buy(0)
-# {"ok": true, "id": "vpn", "price": 50, "credits": 70},
-# or {"ok": false, "error": "not_enough_credits"} with nothing changed
-```
-
-`ShopVisit` holds everything about one visit, so the later shop stories can
-build on it without restructuring:
-
-- **Scrub Logs (#106):** a once-per-visit noise reduction service, added as a
-  `scrub_logs_used` flag on the visit and a method that pays through the same
-  private `charge` step before lowering noise.
-- **Reroll (#107):** a paid reroll of the unsold stock pays through `charge`
-  too, then refills only the slots still for sale with `roll_slots`. Sold slots
-  stay sold, which is why each slot keeps its own sold state.
-
-The visual design of this screen belongs to Neel (see the S1/S2 cards). The
-current screen is a plain, functional version in the main menu's terminal
-style that reads everything from `ShopNode`, so a redesign only has to replace
-`shop.gd` and `shop.tscn`.
-
-Run the headless check with a built extension:
-
-```sh
-godot --headless --path godot -s res://tests/shop_test.gd
-```
-
-It starts from the main menu, accepts a contract on the hub's offer picker, and
-rolls new runs until a first-zone route offers a shop, then clicks the shop on
-the map with 120 credits. It checks the five rows and their details and prices,
-buys through the buy buttons until a card is out of reach, and checks the exact
-deduction, the sold slot, the unchanged stock, and that the out-of-reach card's
-button is disabled, its price red and a forced attempt changes nothing. Then it
-presses Leave and checks the map, not the offer picker, and the completed node.
-Finally it enters the next encounter and draws the whole deck to find every
-card it bought.
 
 ## Winning a contract (stories #89 and #23)
 
@@ -435,6 +355,107 @@ victory screen, checks the hub asks for a contract again, accepts one through
 the picker, and checks that being caught on it costs the fine and pays no
 reward.
 
+## The dark web shop (story #38)
+
+A shop node opens `scenes/shop.tscn`, a dark web market where the player
+spends credits on cards for the rest of the run. It delivers the epic through
+two stories: S1 shop stock and pricing (#104) and S2 buying with credits
+(#105). The rules are plain Rust in `cyber_heist/src/shop.rs`; `ShopNode`
+(`shop_node.rs`) sits on the shop screen as its bridge, as `EventNode` does for
+events.
+
+**Stock.** The first time the screen opens during a shop encounter, `ShopNode`
+asks the run to open its `ShopVisit` (`RunState::open_shop_visit`), which rolls
+five distinct cards (`STOCK_SIZE`) from the card database. Cursed cards are not
+in that pool. Each card's price comes from its rarity (`price_for`):
+
+| Rarity | Price |
+| --- | --- |
+| Common | 50 |
+| Uncommon | 75 |
+| Rare | 100 |
+| Legendary | 150 |
+
+The visit is kept on the run, not on the screen, until the shop encounter
+ends. Rebuilding the screen during the visit therefore shows the same stock
+with the same sold slots rather than a free reroll; leaving (or any other end
+to the encounter) drops it, so the next shop rolls its own. The stock is fixed
+for the visit and never restocks. A bought card's slot is marked sold rather
+than removed, so the other cards keep their places and the screen shows `SOLD`
+in that row.
+
+**Buying.** `RunState::buy_from_shop` is the only thing that spends credits in
+the shop, and it only works while the run is in a shop encounter whose visit
+is open (otherwise `not_in_shop`). Through `ShopVisit::buy` it checks the slot
+and the balance before changing anything, then takes the exact price from
+`PlayerStateGlobal`, adds the card to the run's deck on `RunDeckNode` and
+records the spend and the card on the run's stats, all in one call. A refusal
+(`not_enough_credits`, `already_sold`, `no_such_slot`, `not_in_shop`) changes
+neither the credits, the deck, the stock nor the stats, and a purchase can
+never take the balance below zero. A balance already below zero from a caught
+fine simply affords nothing. A bought card is in the run's deck at once, so
+`DrawPhase` deals it in the next encounter.
+
+This is the shop's counterpart to `FlowCoordinator.change_credits` and
+`add_card_to_deck`, which cannot refuse a payment the player cannot cover, so
+a purchase does not go through them. Every card the shop sells was drawn from
+the card database when the stock was rolled, which is the check
+`RunDeckNode.add_card` would otherwise make.
+
+The screen reads `affordable` for each slot against the current balance. A
+card the player cannot afford has its buy button disabled and its price in
+red, and the screen re-reads the stock after every purchase. Its rows are
+matched to the stock by `slot`, the same number `buy` takes.
+
+**Leaving.** Leave calls `FlowCoordinator.complete_active_encounter()`. Shops
+pay no encounter reward and are not in `REWARDING_ENCOUNTERS`, so the player
+goes straight back to the map with the shop node marked completed. Shops are
+not fights, so they do not count as wins.
+
+```gdscript
+$ShopNode.stock()
+# [{"slot": 0, "id": "vpn", "name": "VPN", "type": "Skill", "rarity": "Common",
+#   "cost": 2, "cost_text": "Costs 2 energy", "noise_text": "Reduces noise by 10",
+#   "description": "...", "keywords": [{"label", "explanation"}],
+#   "price": 50, "sold": false, "affordable": true}, ...]
+
+$ShopNode.buy(0)
+# {"ok": true, "id": "vpn", "price": 50, "credits": 70},
+# or {"ok": false, "error": "not_enough_credits"} with nothing changed
+```
+
+`ShopVisit` holds everything about one visit, so the later shop stories can
+build on it without restructuring:
+
+- **Scrub Logs (#106):** a once-per-visit noise reduction service, added as a
+  `scrub_logs_used` flag on the visit and a method that pays through the same
+  private `charge` step before lowering noise.
+- **Reroll (#107):** a paid reroll of the unsold stock pays through `charge`
+  too, then refills only the slots still for sale with `roll_slots`. Sold slots
+  stay sold, which is why each slot keeps its own sold state.
+
+The visual design of this screen belongs to Neel (see the S1/S2 cards). The
+current screen is a plain, functional version in the main menu's terminal
+style that reads everything from `ShopNode`, so a redesign only has to replace
+`shop.gd` and `shop.tscn`.
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/shop_test.gd
+```
+
+It starts from the main menu, accepts a contract on the hub's offer picker, and
+rolls new runs until a first-zone route offers a shop, then clicks the shop on
+the map with 120 credits. It checks the five rows and their details and prices,
+buys through the buy buttons until a card is out of reach, and checks the exact
+deduction, the sold slot, the unchanged stock (also after rebuilding the shop
+screen mid-visit), and that the out-of-reach card's button is disabled, its
+price red and a forced attempt changes nothing. Then it presses Leave and
+checks the map, not the offer picker, and the completed node. Finally it enters
+the next encounter and draws the whole deck to find every card it bought, by
+id.
+
 ## Saving and continuing (story #10)
 
 The game saves itself; there is no save button. One JSON file,
@@ -448,8 +469,8 @@ The game saves itself; there is no save button. One JSON file,
 - **The run** at its last safe point: the contract phase, the offers and the
   accepted one, whether an encounter on the contract has been entered yet,
   the map with its completed and locked nodes and open zones, the contract
-  reward once the contract is won, the run's stats, its deck, the contract's
-  upgrades, noise and knowledge.
+  reward once the contract is won, the run's stats, a shop's stock while the
+  run is in one, its deck, the contract's upgrades, noise and knowledge.
 
 The format is plain Rust in `cyber_heist/src/save_game.rs`, serialised with
 serde. `SaveGameNode` (`save_game_node.rs`) sits under `FlowCoordinator` beside
@@ -464,13 +485,18 @@ contract, and `start_new_run()`. Nothing is saved in the middle of a fight or
 an event: `SaveGame::new` refuses that phase. Quitting during one therefore
 resumes at the map as it was before the encounter was entered, with the noise
 picked up inside it gone and the node still to play. A shop is the one
-encounter that is a safe point, saved with its stock (`ShopVisit`) so a resumed
-shop has the same cards and sold slots rather than a reroll.
+encounter that is a safe point. Its stock (`ShopVisit`) lives on the run (see
+the dark web shop), opened as the shop screen appears and before the save made
+on entering, so it is saved with the run and a resumed shop has the same cards
+and sold slots rather than a reroll.
 
 **Continue** on the main menu is enabled when a run was read at launch.
 `continue_run()` restores it and opens the screen it was saved on: the map, a
 fight's card reward still to choose, the shop, the caught screen or the
-victory screen. The coordinator's screen results are saved with the run, so a
+victory screen. It is all or nothing: the screen is prepared from the saved
+run (`SaveGameNode.saved_run_snapshot()`) before anything is restored, and the
+restore finds every node it writes to before changing any, so a failure leaves
+the run behind the menu exactly as it was. The coordinator's screen results are saved with the run, so a
 resumed screen shows what was already paid rather than paying it again: the
 pending card reward and the caught penalty. The caught
 screen takes its fine through `FlowCoordinator.apply_caught_penalty(fine)`,
@@ -497,23 +523,40 @@ offers the change.
 behind the menu. The credit balance read from the save stays.
 
 **Missing, corrupt or incompatible saves.** Every save has a `version`
-(`SAVE_VERSION`, currently 2), read before anything else. A missing file is a
+(`SAVE_VERSION`, currently 3), read before anything else. A missing file is a
 first launch: Continue is unavailable and no error is shown. A file that is not
 valid JSON, is missing fields, was written with another version, or describes a
-run the game could never reach (for example a current node that is not on the
-map, an accepted offer that was never offered, an offer whose shape or reward
-no contract is offered with, a fight in progress, a card this build does not
-have, a contract reward on a contract not won or one that is not the accepted
-offer's `credit_reward` (0 on the default contract), a won contract without
-one, or progress on a contract marked as not started, which Change contract
-would throw away) loads nothing at all. The game starts fresh with
-Continue unavailable, and the menu says the save could not be loaded. The next
-save overwrites it. Saves are written to a temporary file and renamed into
-place, so closing the game mid-write leaves the previous save intact. Bump
-`SAVE_VERSION` whenever a change to anything saved would stop an older file
-reading back correctly. Version 2 replaced version 1's claimed-reward flag and
-separate contract payout with the reward run state records, so a version 1
-save is refused as incompatible.
+run the game could never reach is refused. That covers, for example: a
+current node that is not on the map; a map that is not the one the accepted
+offer builds from its seed and shape; a contract under way on no accepted
+offer; an accepted offer that was never offered; an offer whose shape or reward
+no contract is offered with; a fight in progress; a card this build does not
+have; a contract reward on a contract not won, or one that is not the accepted
+offer's `credit_reward`; a won contract without one; progress on a contract
+marked as not started, which Change contract would throw away; noise or
+knowledge outside the meters' caps (`MAX_NOISE`, `MAX_KNOWLEDGE`, checked as
+constants so the check does not depend on the order the autoloads start in);
+a shop's stock outside a shop, with more than five cards, a card twice or a
+price that is not its card's rarity price; and a card reward whose credits or
+Rare guarantee are not those of the fight just won, that offers more cards
+than the reward screen (`card_reward::OFFER_SIZE`) or a card twice, or that
+guarantees a Rare and offers none.
+
+A refused save's run is not loaded. The game starts with Continue
+unavailable, and the menu says the save could not be loaded. Before anything
+can replace the file, it is copied to `<save>.unreadable`, and if it still
+names a credit balance (an older version, say) that balance is kept, since it
+is the one thing meant to carry between runs. The next save then replaces the
+original.
+
+Saves are written to a temporary file, flushed to disk, renamed into place,
+and the directory flushed in turn, so closing the game or losing power
+mid-write leaves either the previous save or the new one. Bump `SAVE_VERSION`
+whenever a change to anything saved would stop an older file reading back
+correctly. Version 2 replaced version 1's claimed-reward flag and separate
+contract payout with the reward run state records, and version 3 moved a
+shop's stock into the run state, so earlier saves are refused as
+incompatible.
 
 ```gdscript
 FlowCoordinator.has_saved_run()       # true when Continue can resume a run
@@ -524,8 +567,10 @@ FlowCoordinator.use_save_file(path)   # {"ok": true, "has_run"}, or {"ok": false
 ```
 
 **Tests and the save file.** Headless tests drive the game from their own
-`SceneTree` script, and `FlowCoordinator` turns saving off when one is running,
-so no test reads the player's save, another test's, or writes one. A test that
+`SceneTree` script under `res://tests/`, and `FlowCoordinator` turns saving off
+when the main loop runs one of those, so no test reads the player's save,
+another test's, or writes one. Only a script under `res://tests/` counts, so a
+custom `MainLoop` the game itself might use would keep saving. A test that
 wants saving calls `use_save_file()` with its own `user://` file.
 
 Run the headless check with a built extension:
@@ -535,8 +580,10 @@ godot --headless --path godot -s res://tests/save_continue_test.gd
 ```
 
 It opens the game with no save, then with a corrupt one, one from an unknown
-version and a version 1 one, and checks Continue stays unavailable, nothing is
-applied and New contract replaces the bad file. It accepts an offer on the
+version and a version 1 one, and checks Continue stays unavailable, the corrupt
+file is kept as `.unreadable`, the balance an incompatible file names is kept
+and New contract replaces the bad file. It checks a card reward naming
+something that is not a card id is refused at save time. It accepts an offer on the
 picker and uses Change contract to swap it, then resumes in a second process,
 which checks the map still offers Change contract and that changing again is
 saved. It plays two encounters and checks each was saved without being asked,
@@ -796,9 +843,17 @@ The smoke test seeds 90/100, then checks six announced actions through queue
 wrap and the final clamped +1. Both run in the stress workflow.
 
 The generated contract does not guarantee an opening combat option. The shared
-`tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle, selecting
-a reachable node and mounting combat content if that node has another type.
-These tests exercise combat, not the random encounter scene registry.
+`tests/combat_fixture.gd` keeps the real coordinator and Rust lifecycle and only
+enters from the hub. On a contract where nothing has been entered yet
+(`contract_started()` is false) it always enters a real combat node, rolling
+fresh contracts in place (`RunStateNode.start_new_run`) until column one offers
+one. Once an encounter has been entered it never replaces the run, even after
+being caught in the first one, so re-entering is that encounter's retry. It
+prefers a combat node, otherwise mounts combat content on an event or shop
+node, and fails if only elites or the boss are offered, since those field their
+own construct rather than WARDEN-7. These tests exercise combat, not the random
+encounter scene registry. The shared noise test moves to a fresh contract
+explicitly when the column after its first encounter holds only elites.
 
 For the zone boss slice, run:
 
@@ -826,6 +881,19 @@ with 60 integrity, an ability and its resistance on the shared meter. It then
 checks that Reinforce is announced, restores integrity and is reported on
 screen, and that beating it pays more than that standard combat and offers a
 Rare.
+
+For credits from combat (#114), run:
+
+```sh
+godot --headless --path godot -s res://tests/combat_credits_test.gd
+```
+
+It fills the meter during a first-zone standard combat and checks that being
+caught pays nothing: only the fine comes off, credits earned and wins are
+unchanged, and nothing is paid when leaving the caught screen. It then retries
+the same fight and wins it by playing a Strike, the card-play win path, to check
+that it pays 25 credits, counts them in the run's stats and shows them on the
+reward screen.
 
 For cross-component sharing and the authored social threshold (50), run:
 
@@ -858,6 +926,7 @@ ordinary encounter progression still carries noise forward.
 FlowCoordinator.contract_offers()
 FlowCoordinator.accept_contract_offer(index: int)
 FlowCoordinator.accepted_contract_offer()
+FlowCoordinator.contract_started()
 FlowCoordinator.needs_contract_choice()
 FlowCoordinator.can_change_contract()
 FlowCoordinator.active_encounter_wins_contract()

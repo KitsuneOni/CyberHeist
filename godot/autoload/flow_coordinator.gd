@@ -49,13 +49,27 @@ var _save_path := ""
 var _save_load_error := ""
 
 
+# Where the headless tests live. A test drives the game from its own
+# SceneTree script in here.
+const TEST_SCRIPT_DIRECTORY := "res://tests/"
+
+
 func _ready() -> void:
-	# A headless test drives the game from its own SceneTree script. It gets
-	# no save file unless it picks one with use_save_file, so tests never read
-	# the player's save or each other's, and never write one.
-	if Engine.get_main_loop().get_script() != null:
+	# A headless test gets no save file unless it picks one with
+	# use_save_file, so tests never read the player's save or each other's,
+	# and never write one. Only a main loop script under res://tests/ counts,
+	# so a custom MainLoop the game itself might use one day keeps saving.
+	if _is_running_a_test():
 		return
 	use_save_file(DEFAULT_SAVE_PATH)
+
+
+func _is_running_a_test() -> bool:
+	var main_loop_script: Script = Engine.get_main_loop().get_script()
+	return (
+		main_loop_script != null
+		and main_loop_script.resource_path.begins_with(TEST_SCRIPT_DIRECTORY)
+	)
 
 
 func bind_screen_host(host: Node) -> void:
@@ -103,17 +117,32 @@ func save_load_error() -> String:
 # the caught screen or the victory screen. A run is never saved in the middle
 # of a fight or an event, so one quit there resumes from the safe point
 # before it.
+#
+# It is all or nothing. The screen is prepared from the saved run before
+# anything is restored, so a screen that cannot be prepared leaves the run,
+# deck and meters behind the menu as they were and Continue can be tried
+# again. Restoring then either puts every piece back or none.
 func continue_run() -> Dictionary:
 	if not has_saved_run():
 		return _failure("There is no saved run to continue.")
 
+	var saved: Dictionary = _save_game.saved_run_snapshot()
+	var destination := _destination_for_snapshot(saved, saved.get("card_reward_waiting", false))
+	if not destination.get("ok", false):
+		return destination
+	var prepared := _prepare_screen(destination["path"])
+	if not prepared.get("ok", false):
+		return prepared
+
 	var restored: Dictionary = _save_game.restore_saved_run()
 	if not restored.get("ok", false):
+		_dispose_screen(prepared["screen"])
 		return restored
 
 	_pending_reward = restored.get("pending_reward", {})
 	_caught_penalty = restored.get("caught_penalty", {})
-	return _show_current_run_screen()
+	_replace_screen(prepared["screen"])
+	return {"ok": true}
 
 
 # Chooses the save file and reads it: its credit balance is applied at once
@@ -156,7 +185,7 @@ func save_progress() -> Dictionary:
 # Shows whichever screen the run's current phase belongs on: the map, the
 # active encounter, the caught screen or the victory screen.
 func _show_current_run_screen() -> Dictionary:
-	var destination := _destination_for_snapshot(run_snapshot())
+	var destination := _destination_for_snapshot(run_snapshot(), not _pending_reward.is_empty())
 	if not destination.get("ok", false):
 		return destination
 
@@ -196,6 +225,13 @@ func map_key() -> Dictionary:
 # dictionary of {index, name, target, credit_reward, zone_count, encounter_count}.
 func contract_offers() -> Array:
 	return _run_state.contract_offers()
+
+
+# Whether an encounter on the current contract has been entered, even one the
+# player was caught in and so never completed. From then on the run is
+# committed to the contract and accept_contract_offer refuses.
+func contract_started() -> bool:
+	return _run_state.contract_started()
 
 
 # Takes on the offer at `index` and rebuilds the contract map from it. Returns
@@ -341,6 +377,12 @@ func contract_reward() -> Dictionary:
 	return _run_state.contract_reward()
 
 
+# How many cards the reward screen offers. The Rust rules own the number, so
+# a saved reward can be checked against it.
+func card_reward_offer_size() -> int:
+	return _run_deck.reward_offer_size()
+
+
 # Cards on offer after clearing an encounter. Each is a dictionary of
 # {id, name, type, rarity, cost_text, noise_text, description}.
 # An elite or boss offer always includes at least one Rare.
@@ -378,8 +420,9 @@ func take_card_reward(card_id: String) -> bool:
 # Adds a card to the run's deck and counts it in the run's stats. Card rewards
 # go through here, so the end screen's count cannot miss one or count one
 # twice. False, with nothing counted, for an id the card database does not
-# know. A shop purchase does not come through here: ShopNode takes the price
-# and adds the card in one Rust call, and records the card itself.
+# know. A shop purchase does not come through here: RunState::buy_from_shop
+# takes the price, adds the card and records both in one Rust call, so a
+# purchase the player cannot cover is refused before anything changes.
 func add_card_to_deck(card_id: String) -> bool:
 	if not _run_deck.add_card(card_id):
 		return false
@@ -569,13 +612,15 @@ func _screen_host_is_ready() -> bool:
 	return _screen_host != null and is_instance_valid(_screen_host)
 
 
-func _destination_for_snapshot(snapshot: Dictionary) -> Dictionary:
+# The screen a run at `snapshot` belongs on. `card_reward_waiting` says a
+# fight's card reward has not been chosen yet.
+func _destination_for_snapshot(snapshot: Dictionary, card_reward_waiting: bool) -> Dictionary:
 	var phase: String = snapshot.get("phase", "")
 	match phase:
 		"hub":
 			# A fight's card reward is chosen at the hub phase, so a run saved
 			# before choosing one resumes on it.
-			if not _pending_reward.is_empty():
+			if card_reward_waiting:
 				return {"ok": true, "path": CARD_REWARD_SCENE_PATH}
 			return {"ok": true, "path": HUB_SCENE_PATH}
 		"encounter_active":

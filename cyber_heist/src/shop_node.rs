@@ -1,18 +1,15 @@
 //! Thin Godot adapter for the shop model in `shop.rs`.
 //!
-//! Lives on the shop screen, as `EventNode` does on the event screen, and
-//! holds that visit's [`ShopVisit`]. The stock is rolled once when the node
-//! enters the tree, so it stays fixed for as long as the player is in the shop.
+//! Lives on the shop screen, as `EventNode` does on the event screen. The
+//! visit itself belongs to the run (`RunState::open_shop_visit`), not to this
+//! node: the stock is rolled the first time the screen opens during a shop
+//! encounter, and a screen rebuilt during the same visit finds the same stock
+//! and sold slots rather than rolling new ones.
 //!
 //! Buying borrows the player's credits from `PlayerStateGlobal` and the run's
-//! deck from `RunDeckNode` and hands both to [`ShopVisit::buy`] in one call, so
-//! the price is taken and the card added together or not at all. The spend and
-//! the card are then recorded on the run for the end screen, as rewards and
-//! events do.
-//!
-//! A shop is the one encounter a run can be saved in. The node keeps
-//! `SaveGameNode` told about its stock, and a shop resumed by Continue opens
-//! with the stock it was saved with instead of rolling a new one.
+//! deck from `RunDeckNode` and hands both to `RunState::buy_from_shop` in one
+//! call, which takes the price, adds the card and records both on the run's
+//! stats together or not at all.
 
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
@@ -22,42 +19,31 @@ use crate::card_database::CardDatabase;
 use crate::card_text;
 use crate::run_deck_node::RunDeckNode;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
-use crate::save_game_node::{SAVE_GAME_PATH, SaveGameNode};
-use crate::shop::ShopVisit;
-use crate::{PlayerState, RUN_DECK_PATH};
-
-const CARD_DATABASE_PATH: &str = "/root/CardDatabaseGlobal";
-const PLAYER_STATE_PATH: &str = "/root/PlayerStateGlobal";
+use crate::{
+    CARD_DATABASE_PATH, PLAYER_STATE_PATH, PlayerState, RUN_DECK_PATH, card_detail_dictionary,
+    failure,
+};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct ShopNode {
-    /// This visit's stock. `None` only if the card database was missing when
-    /// the shop opened, in which case there is nothing to sell.
-    visit: Option<ShopVisit>,
     base: Base<Node>,
 }
 
 #[godot_api]
 impl INode for ShopNode {
     fn init(base: Base<Node>) -> Self {
-        Self { visit: None, base }
+        Self { base }
     }
 
+    /// Opens the run's shop visit, rolling its stock if this is the first time
+    /// the screen has opened during this shop encounter.
     fn ready(&mut self) {
-        let resumed = self
-            .save_game()
-            .and_then(|mut save_game| save_game.bind_mut().take_resumed_shop());
-        if let Some(visit) = resumed {
-            self.visit = Some(visit);
-            self.track_stock_for_saving();
+        let Some(mut run_state) = self.run_state() else {
+            godot_error!("ShopNode: no RunState, so there is no shop visit to open.");
             return;
-        }
-
-        let Some(db) = self
-            .base()
-            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
-        else {
+        };
+        let Some(db) = self.card_database() else {
             godot_error!("ShopNode: no CardDatabaseGlobal, so the shop has no stock.");
             return;
         };
@@ -67,64 +53,50 @@ impl INode for ShopNode {
             .all()
             .map(|card| (card.id.clone(), card.rarity))
             .collect();
-        self.visit = Some(ShopVisit::open(&pool, &mut rand::rng()));
-        self.track_stock_for_saving();
+        if let Err(error) = run_state.bind_mut().open_shop_visit(&pool) {
+            godot_error!("ShopNode: {error}");
+        }
     }
 }
 
 #[godot_api]
 impl ShopNode {
-    /// The stock in display order, one dictionary per slot:
-    /// `{slot, id, name, type, rarity, cost_text, noise_text, description,
-    ///   keywords: [{label, explanation}], price, sold, affordable}`.
+    /// The stock in display order, one dictionary per slot: the card's
+    /// details (see `card_detail_dictionary`) plus `{slot, id, price, sold,
+    /// affordable}`. `slot` is the position to pass to `buy`.
     ///
     /// `affordable` is measured against the player's credits right now, so
     /// the screen can disable a buy button the moment it stops being one.
     #[func]
     fn stock(&self) -> Array<VarDictionary> {
         let mut stock: Array<VarDictionary> = Array::new();
-        let Some(visit) = self.visit.as_ref() else {
+        let (Some(run_state), Some(db)) = (self.run_state(), self.card_database()) else {
             return stock;
         };
-        let Some(db) = self
-            .base()
-            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
-        else {
+        let run_state = run_state.bind();
+        let Some(visit) = run_state.shop_visit() else {
             return stock;
         };
         let db = db.bind();
         let credits = self.credits();
 
         for (index, slot) in visit.slots().iter().enumerate() {
+            // Every stocked id came from the database, so this only skips a
+            // card if the database has changed since. The screen matches rows
+            // by `slot`, not by position in this list, so a skipped card does
+            // not shift the others.
             let Some(card) = db.get(slot.card_id()) else {
                 continue;
             };
             // Bought outside an encounter, so a card is shown on its strong
             // side, the same as a card reward.
-            let detail = card_text::describe(card, 0);
-
-            let mut keywords: Array<VarDictionary> = Array::new();
-            for keyword in &detail.keywords {
-                keywords.push(&vdict! {
-                    "label" => keyword.label.as_str(),
-                    "explanation" => keyword.explanation.as_str(),
-                });
-            }
-
-            stock.push(&vdict! {
-                "slot" => index as i64,
-                "id" => slot.card_id(),
-                "name" => detail.name.as_str(),
-                "type" => detail.card_type.as_str(),
-                "rarity" => detail.rarity.as_str(),
-                "cost_text" => detail.cost_text.as_str(),
-                "noise_text" => detail.noise_text.as_str(),
-                "description" => detail.description.as_str(),
-                "keywords" => &keywords,
-                "price" => slot.price(),
-                "sold" => slot.is_sold(),
-                "affordable" => visit.can_afford(index, credits),
-            });
+            let mut entry = card_detail_dictionary(&card_text::describe(card, 0));
+            entry.set("slot", index as i64);
+            entry.set("id", slot.card_id());
+            entry.set("price", slot.price());
+            entry.set("sold", slot.is_sold());
+            entry.set("affordable", visit.can_afford(index, credits));
+            stock.push(&entry);
         }
 
         stock
@@ -133,9 +105,9 @@ impl ShopNode {
     /// Buys the card in `slot`. Returns `{ok: true, id, price, credits}` with
     /// the balance after paying, or `{ok: false, error}` with nothing changed.
     ///
-    /// `error` is `no_such_slot`, `already_sold` or `not_enough_credits` from
-    /// the shop's own rules, or `shop_closed` / `no_player_state` /
-    /// `no_run_deck` when the screen has no run to buy for.
+    /// `error` is `no_such_slot`, `already_sold`, `not_enough_credits` or
+    /// `not_in_shop` from the shop's own rules, or `no_player_state` /
+    /// `no_run_deck` / `no_run_state` when the screen has no run to buy for.
     #[func]
     fn buy(&mut self, slot: i64) -> VarDictionary {
         let Ok(slot) = usize::try_from(slot) else {
@@ -150,33 +122,42 @@ impl ShopNode {
         let Some(mut run_deck) = self.base().try_get_node_as::<RunDeckNode>(RUN_DECK_PATH) else {
             return failure("no_run_deck");
         };
-        let Some(visit) = self.visit.as_mut() else {
-            return failure("shop_closed");
+        let Some(mut run_state) = self.run_state() else {
+            return failure("no_run_state");
         };
 
         let result = {
             let mut player_state = player_state.bind_mut();
             let mut run_deck = run_deck.bind_mut();
-            visit.buy(slot, player_state.credits_mut(), run_deck.deck_mut())
+            run_state.bind_mut().buy_from_shop(
+                slot,
+                player_state.credits_mut(),
+                run_deck.deck_mut(),
+            )
         };
 
         match result {
-            Ok(purchase) => {
-                self.record_purchase_on_run(purchase.price);
-                self.track_stock_for_saving();
-                vdict! {
-                    "ok" => true,
-                    "id" => purchase.card_id.as_str(),
-                    "price" => purchase.price,
-                    "credits" => purchase.credits_left,
-                }
-            }
+            Ok(purchase) => vdict! {
+                "ok" => true,
+                "id" => purchase.card_id.as_str(),
+                "price" => purchase.price,
+                "credits" => purchase.credits_left,
+            },
             Err(error) => failure(error.code()),
         }
     }
 }
 
 impl ShopNode {
+    fn run_state(&self) -> Option<Gd<RunStateNode>> {
+        self.base().try_get_node_as::<RunStateNode>(RUN_STATE_PATH)
+    }
+
+    fn card_database(&self) -> Option<Gd<CardDatabase>> {
+        self.base()
+            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
+    }
+
     fn credits(&self) -> i64 {
         match self
             .base()
@@ -185,39 +166,5 @@ impl ShopNode {
             Some(player_state) => player_state.bind().money(),
             None => 0,
         }
-    }
-
-    fn save_game(&self) -> Option<Gd<SaveGameNode>> {
-        self.base().try_get_node_as::<SaveGameNode>(SAVE_GAME_PATH)
-    }
-
-    /// Hands the current stock to `SaveGameNode`, so the next save made in
-    /// this shop has it. Skipped when the shop screen is open on its own.
-    fn track_stock_for_saving(&self) {
-        let (Some(visit), Some(mut save_game)) = (self.visit.as_ref(), self.save_game()) else {
-            return;
-        };
-        save_game.bind_mut().track_open_shop(visit);
-    }
-
-    /// Tells the run about the spend and the card gained, so the end screen
-    /// counts the card. A spend is a loss, which the run does not count as
-    /// earned, but it is recorded like every other credit change. Skipped when
-    /// the shop screen is open on its own with no run behind it.
-    fn record_purchase_on_run(&self, price: i64) {
-        let Some(mut run_state) = self.base().try_get_node_as::<RunStateNode>(RUN_STATE_PATH)
-        else {
-            return;
-        };
-        let mut run_state = run_state.bind_mut();
-        run_state.record_credit_change(-price);
-        run_state.record_card_added();
-    }
-}
-
-fn failure(error: &str) -> VarDictionary {
-    vdict! {
-        "ok" => false,
-        "error" => error,
     }
 }

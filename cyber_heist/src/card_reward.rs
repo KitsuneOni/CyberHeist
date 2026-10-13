@@ -15,6 +15,10 @@ use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::card_data::Rarity;
 
+/// How many cards the reward screen offers after a fight. A saved reward
+/// offering more than this is refused.
+pub const OFFER_SIZE: usize = 3;
+
 /// Picks up to `count` distinct cards from `pool` to offer as a reward.
 ///
 /// Distinct within a single offer, so the player never chooses between three

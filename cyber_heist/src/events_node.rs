@@ -8,9 +8,9 @@
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
-use crate::PlayerState;
 use crate::events::{EventDefinition, random_event};
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
+use crate::{PLAYER_STATE_PATH, PlayerState, failure};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -86,7 +86,7 @@ impl EventNode {
 
         let Some(mut player_state) = self
             .base()
-            .try_get_node_as::<PlayerState>("/root/PlayerStateGlobal")
+            .try_get_node_as::<PlayerState>(PLAYER_STATE_PATH)
         else {
             return failure("PlayerStateGlobal is not available to apply the outcome");
         };
@@ -124,12 +124,5 @@ impl EventNode {
             return;
         };
         run_state.bind_mut().record_credit_change(credits);
-    }
-}
-
-fn failure(message: &str) -> VarDictionary {
-    vdict! {
-        "ok" => false,
-        "error" => message,
     }
 }

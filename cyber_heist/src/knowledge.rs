@@ -8,6 +8,10 @@
 
 use godot::prelude::*;
 
+/// The most the player can know about the target. `KnowledgeMeterGlobal` is
+/// built with it, and a save holding more is refused.
+pub const MAX_KNOWLEDGE: i32 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Knowledge {
     level: i32,
@@ -78,7 +82,7 @@ pub struct KnowledgeMeter {
 impl INode for KnowledgeMeter {
     fn init(base: Base<Node>) -> Self {
         Self {
-            state: Knowledge::new(3),
+            state: Knowledge::new(MAX_KNOWLEDGE),
             knowledge: PhantomVar::default(),
             max_knowledge: PhantomVar::default(),
             base,

@@ -8,12 +8,15 @@ use std::fmt;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::card_data::Rarity;
 use crate::contract_map::{
     ContractMap, ContractMapError, ContractProgress, ContractShape, EncounterNode,
     EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
 use crate::contract_offer::{ContractOffer, generate_offers};
+use crate::run_deck::RunDeck;
 use crate::run_stats::RunStats;
+use crate::shop::{Purchase, ShopError, ShopVisit};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -108,6 +111,11 @@ pub struct RunState {
     /// What this run has achieved, for the end screen. Owned here so that
     /// it starts and ends with the run.
     stats: RunStats,
+    /// The stock of the shop the run is in. Rolled the first time the shop
+    /// screen opens and kept until the shop encounter ends, so reopening the
+    /// screen during the same visit cannot reroll it. Always `None` outside a
+    /// shop encounter.
+    shop_visit: Option<ShopVisit>,
 }
 
 impl Default for RunState {
@@ -121,6 +129,7 @@ impl Default for RunState {
             contract_started: false,
             contract_reward: None,
             stats: RunStats::default(),
+            shop_visit: None,
         }
     }
 }
@@ -155,6 +164,7 @@ impl RunState {
             contract_started: false,
             contract_reward: None,
             stats: RunStats::default(),
+            shop_visit: None,
         }
     }
 
@@ -226,6 +236,15 @@ impl RunState {
         self.can_accept_contract_offer() && self.accepted_offer_index.is_none()
     }
 
+    /// Whether an encounter on the current contract has been entered, whether
+    /// it was then completed or the player was caught in it. This is what
+    /// separates a contract nobody has touched from one whose first encounter
+    /// failed: neither has completed anything, but only the first can still
+    /// be swapped for another offer.
+    pub fn contract_started(&self) -> bool {
+        self.contract_started
+    }
+
     /// Takes on the offer at `index`, replacing the contract map with the one
     /// it describes.
     ///
@@ -294,6 +313,7 @@ impl RunState {
 
         self.phase = ContractPhase::EncounterActive;
         self.contract_started = true;
+        self.shop_visit = None;
         self.active_encounter = Some(ActiveEncounter {
             id: selection.node_id.to_string(),
             encounter_type: selection.encounter_type,
@@ -322,6 +342,7 @@ impl RunState {
             self.stats
                 .record_encounter_completed(completed.encounter_type());
         }
+        self.shop_visit = None;
         if wins_contract {
             self.phase = ContractPhase::ContractWon;
             self.contract_reward = Some(self.reward_for_winning());
@@ -395,6 +416,72 @@ impl RunState {
         }
     }
 
+    /// Whether the run is in a shop encounter: the only time there is a shop
+    /// visit to open or buy from.
+    pub fn is_in_shop(&self) -> bool {
+        self.phase == ContractPhase::EncounterActive
+            && self
+                .active_encounter
+                .as_ref()
+                .is_some_and(|encounter| encounter.encounter_type() == EncounterType::Shop)
+    }
+
+    /// The shop visit the run is in, opening it with stock rolled from `pool`
+    /// if this is the first look at it. Every later call during the same shop
+    /// encounter returns that same visit, sold slots included, so the stock
+    /// does not change however often the shop screen is rebuilt.
+    ///
+    /// Refused outside a shop encounter.
+    pub fn open_shop_visit(
+        &mut self,
+        pool: &[(String, Rarity)],
+        rng: &mut impl Rng,
+    ) -> Result<&ShopVisit, RunStateError> {
+        if !self.is_in_shop() {
+            return Err(RunStateError::NotInShop { phase: self.phase });
+        }
+        Ok(self
+            .shop_visit
+            .get_or_insert_with(|| ShopVisit::open(pool, rng)))
+    }
+
+    /// The shop visit the run is in, once it has been opened.
+    pub fn shop_visit(&self) -> Option<&ShopVisit> {
+        self.shop_visit.as_ref()
+    }
+
+    /// The type and zone of the encounter completed most recently, which is
+    /// what a card reward waiting at the hub was paid for. `None` before any
+    /// encounter on the contract has been completed.
+    pub fn last_completed_encounter(&self) -> Option<(EncounterType, usize)> {
+        let node_id = self.contract_map.last_completed_node()?;
+        let (node, zone) = self.contract_map.node_and_zone(node_id)?;
+        Some((node.encounter_type(), zone))
+    }
+
+    /// Buys the card in `slot` of the open shop visit: takes its price from
+    /// `credits`, adds the card to `deck`, and records the spend and the card
+    /// on the run's stats, all in this one call (see [`ShopVisit::buy`]).
+    ///
+    /// Refused with [`ShopError::NotInShop`] unless the run is in a shop
+    /// encounter whose visit has been opened. A refusal changes nothing.
+    pub fn buy_from_shop(
+        &mut self,
+        slot: usize,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+    ) -> Result<Purchase, ShopError> {
+        if !self.is_in_shop() {
+            return Err(ShopError::NotInShop);
+        }
+        let visit = self.shop_visit.as_mut().ok_or(ShopError::NotInShop)?;
+
+        let purchase = visit.buy(slot, credits, deck)?;
+        self.stats.record_credit_change(-purchase.price);
+        self.stats.record_card_added();
+        Ok(purchase)
+    }
+
     pub fn report_caught(&mut self) -> Result<(), RunStateError> {
         self.require_phase("report caught", ContractPhase::EncounterActive)?;
         self.phase = ContractPhase::Caught;
@@ -408,6 +495,7 @@ impl RunState {
             .map_err(RunStateError::ContractMap)?;
         self.phase = ContractPhase::Hub;
         self.active_encounter = None;
+        self.shop_visit = None;
         Ok(())
     }
 
@@ -427,10 +515,23 @@ impl RunState {
     /// played on its map, since Change contract is offered then and would
     /// throw that progress away. A contract reward is recorded exactly when
     /// the contract is won, and it is what winning that contract pays.
+    ///
+    /// The map itself must be the one the accepted offer builds from its
+    /// seed and shape, whatever progress has been made on it, so an edited
+    /// save cannot shorten the contract or change what its nodes are. A
+    /// generated run cannot get under way without accepting an offer, so one
+    /// that has started on none is refused. A shop's stock is only kept while
+    /// the run is in that shop.
     pub fn validate_restored(&self) -> Result<(), RunStateError> {
         self.contract_map
             .validate_restored()
             .map_err(RunStateError::ContractMap)?;
+        self.validate_restored_map_layout()?;
+        if self.shop_visit.is_some() && !self.is_in_shop() {
+            return Err(RunStateError::InconsistentRun(
+                "a shop's stock is kept for a run not in a shop",
+            ));
+        }
 
         if !self.contract_offers.iter().all(ContractOffer::is_offerable) {
             return Err(RunStateError::InconsistentRun(
@@ -461,6 +562,23 @@ impl RunState {
             _ => Err(RunStateError::InconsistentRun(
                 "the phase and the encounter under way disagree",
             )),
+        }
+    }
+
+    /// The accepted offer's map, laid out exactly as that offer builds it.
+    /// Offers are only ever empty on the authored run the tests use, which
+    /// has no offer to compare with.
+    fn validate_restored_map_layout(&self) -> Result<(), RunStateError> {
+        match self.accepted_offer() {
+            Some(offer) if !self.contract_map.has_same_layout(&offer.build_map()) => {
+                Err(RunStateError::InconsistentRun(
+                    "the map is not the one the accepted contract builds",
+                ))
+            }
+            None if self.contract_started && !self.contract_offers.is_empty() => Err(
+                RunStateError::InconsistentRun("a contract under way was never accepted"),
+            ),
+            _ => Ok(()),
         }
     }
 
@@ -560,6 +678,10 @@ pub enum RunStateError {
     /// A run read back from a save breaks one of the rules its transitions
     /// keep. Says which.
     InconsistentRun(&'static str),
+    /// A shop visit was asked for while the run is not in a shop encounter.
+    NotInShop {
+        phase: ContractPhase,
+    },
 }
 
 impl fmt::Display for RunStateError {
@@ -583,6 +705,11 @@ impl fmt::Display for RunStateError {
             Self::InconsistentRun(reason) => {
                 write!(formatter, "the saved run is invalid: {reason}")
             }
+            Self::NotInShop { phase } => write!(
+                formatter,
+                "cannot open a shop while not in a shop encounter (phase is {})",
+                phase.as_str()
+            ),
         }
     }
 }
@@ -897,6 +1024,30 @@ mod tests {
         );
         assert_eq!(state, before);
         assert_eq!(state.accepted_offer_index(), Some(1));
+    }
+
+    /// Being caught in the first encounter completes nothing, so progress
+    /// alone cannot tell that contract apart from an untouched one.
+    #[test]
+    fn a_contract_counts_as_started_from_its_first_encounter_even_when_caught() {
+        let mut state = generated_run(5);
+        assert!(!state.contract_started(), "a new run has entered nothing");
+
+        enter_first_encounter(&mut state);
+        assert!(state.contract_started(), "entering an encounter starts it");
+
+        state.report_caught().expect("the encounter is active");
+        state.finish_caught().expect("the run was caught");
+        assert_eq!(state.progress().completed, 0);
+        assert!(
+            state.contract_started(),
+            "being caught does not undo the start"
+        );
+
+        state
+            .start_new_run(&mut StdRng::seed_from_u64(3))
+            .expect("a new run can start from the hub");
+        assert!(!state.contract_started(), "a new run starts afresh");
     }
 
     /// Getting caught does not complete anything, but the run has still
@@ -1648,5 +1799,138 @@ mod tests {
             state.validate_restored(),
             Err(RunStateError::InconsistentRun(_))
         ));
+    }
+
+    // --- the shop visit belongs to the run --------------------------------
+
+    fn shop_pool() -> Vec<(String, Rarity)> {
+        [
+            ("strike", Rarity::Common),
+            ("vpn", Rarity::Common),
+            ("phish", Rarity::Uncommon),
+            ("rootkit", Rarity::Uncommon),
+            ("zero_day", Rarity::Rare),
+            ("wannacry", Rarity::Rare),
+            ("stuxnet", Rarity::Legendary),
+        ]
+        .iter()
+        .map(|(card_id, rarity)| (card_id.to_string(), *rarity))
+        .collect()
+    }
+
+    /// The authored contract with its shop (node 3) entered.
+    fn in_shop() -> RunState {
+        let mut state = RunState::new();
+        state.select_encounter(1).unwrap();
+        state.complete_encounter().unwrap();
+        state.select_encounter(3).unwrap();
+        state
+    }
+
+    #[test]
+    fn only_a_shop_encounter_is_in_a_shop() {
+        let mut state = RunState::new();
+        assert!(!state.is_in_shop(), "the hub is not a shop");
+
+        state.select_encounter(1).unwrap();
+        assert!(!state.is_in_shop(), "a combat is not a shop");
+
+        assert!(in_shop().is_in_shop());
+    }
+
+    #[test]
+    fn reopening_the_shop_during_a_visit_keeps_its_stock_and_sold_slots() {
+        let mut state = in_shop();
+        let first = state
+            .open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(1))
+            .unwrap()
+            .clone();
+        let mut credits = 1_000;
+        let mut deck = RunDeck::default();
+        state.buy_from_shop(0, &mut credits, &mut deck).unwrap();
+
+        // A different seed would roll different stock if it rolled at all.
+        let reopened = state
+            .open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(99))
+            .unwrap();
+
+        assert_eq!(reopened.slots().len(), first.slots().len());
+        for (index, (now, was)) in reopened.slots().iter().zip(first.slots()).enumerate() {
+            assert_eq!(now.card_id(), was.card_id(), "slot {index} changed card");
+            assert_eq!(now.is_sold(), index == 0, "slot {index} sold state");
+        }
+    }
+
+    #[test]
+    fn a_shop_cannot_be_opened_or_bought_from_outside_a_shop_encounter() {
+        let mut state = active_combat();
+        let mut credits = 1_000;
+        let mut deck = RunDeck::default();
+
+        assert_eq!(
+            state.open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(1)),
+            Err(RunStateError::NotInShop {
+                phase: ContractPhase::EncounterActive
+            })
+        );
+        assert_eq!(
+            state.buy_from_shop(0, &mut credits, &mut deck),
+            Err(ShopError::NotInShop)
+        );
+        assert_eq!(credits, 1_000);
+        assert!(deck.is_empty());
+    }
+
+    #[test]
+    fn buying_before_the_shop_is_opened_is_refused() {
+        let mut state = in_shop();
+        let mut credits = 1_000;
+        let mut deck = RunDeck::default();
+
+        assert_eq!(
+            state.buy_from_shop(0, &mut credits, &mut deck),
+            Err(ShopError::NotInShop)
+        );
+        assert_eq!(credits, 1_000);
+    }
+
+    #[test]
+    fn a_purchase_records_the_spend_and_the_card_on_the_run() {
+        let mut state = in_shop();
+        state
+            .open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(2))
+            .unwrap();
+        let earned_before = state.summary().stats.credits_earned();
+        let mut credits = 1_000;
+        let mut deck = RunDeck::default();
+
+        let purchase = state.buy_from_shop(1, &mut credits, &mut deck).unwrap();
+
+        assert_eq!(credits, 1_000 - purchase.price);
+        assert_eq!(deck.count_of(&purchase.card_id), 1);
+        assert_eq!(state.summary().stats.cards_added(), 1);
+        assert_eq!(
+            state.summary().stats.credits_earned(),
+            earned_before,
+            "a spend is not earnings"
+        );
+    }
+
+    #[test]
+    fn leaving_the_shop_ends_the_visit_and_the_next_shop_rolls_afresh() {
+        let mut state = in_shop();
+        state
+            .open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(3))
+            .unwrap();
+
+        state.complete_encounter().unwrap();
+
+        assert_eq!(state.shop_visit(), None);
+        assert_eq!(
+            state.open_shop_visit(&shop_pool(), &mut StdRng::seed_from_u64(3)),
+            Err(RunStateError::NotInShop {
+                phase: ContractPhase::Hub
+            })
+        );
     }
 }
