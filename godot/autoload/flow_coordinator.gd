@@ -8,6 +8,7 @@ const PLACEHOLDER_ENCOUNTER_SCENE_PATH := "res://scenes/placeholder_encounter.ts
 const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
+const VICTORY_SCENE_PATH := "res://scenes/victory_screen.tscn"
 const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
@@ -82,7 +83,7 @@ func close_settings() -> Dictionary:
 
 
 # Shows whichever screen the run's current phase belongs on: the map, the
-# active encounter, or the caught screen.
+# active encounter, the caught screen or the victory screen.
 func _show_current_run_screen() -> Dictionary:
 	var destination := _destination_for_snapshot(run_snapshot())
 	if not destination.get("ok", false):
@@ -132,12 +133,19 @@ func contract_offers() -> Array:
 	return _run_state.contract_offers()
 
 
+# Whether an encounter on the current contract has been entered, even one the
+# player was caught in and so never completed. From then on the run is
+# committed to the contract and accept_contract_offer refuses.
+func contract_started() -> bool:
+	return _run_state.contract_started()
+
+
 # Takes on the offer at `index` and rebuilds the contract map from it. Returns
 # {ok: true} or {ok: false, error}; a rejection changes nothing. Allowed only
 # from the hub before any encounter on the contract has been entered.
 #
-# This only changes run state. It does not navigate, so the selection or
-# details screen decides where to go next once it has the result.
+# This only changes run state. It does not navigate: the hub's offer picker
+# calls it and redraws the map itself once it has the result.
 func accept_contract_offer(index: int) -> Dictionary:
 	return _run_state.accept_contract_offer(index)
 
@@ -146,6 +154,24 @@ func accept_contract_offer(index: int) -> Dictionary:
 # still on the contract it started with.
 func accepted_contract_offer() -> Dictionary:
 	return _run_state.accepted_contract_offer()
+
+
+# Whether the hub should ask the player to choose a contract before showing
+# the map: a new run that has offers on the table and has not yet accepted one
+# or entered any encounter. Every new run, from the main menu or the victory
+# screen, starts here, so the reward for winning is always an offer's reward.
+#
+# An authored run has no offers and goes straight to the map, and so does a
+# run that has already accepted an offer or started on its contract.
+func needs_contract_choice() -> bool:
+	return _run_state.needs_contract_choice()
+
+
+# Whether the player can still swap the accepted contract for another offer:
+# true at the hub until any encounter on the contract has been entered. The
+# hub shows Change contract on the map while it is.
+func can_change_contract() -> bool:
+	return _run_state.can_accept_contract_offer()
 
 
 func select_encounter(node_id: int) -> Dictionary:
@@ -170,15 +196,15 @@ func select_encounter(node_id: int) -> Dictionary:
 	return transition
 
 
+# Completes the active encounter and shows what comes next: the card reward
+# after a fight, the hub after an event or shop, or the victory screen when the
+# encounter was the final zone's boss and the contract is won. An earlier
+# zone's boss only opens the next zone, so it gets the usual card reward.
 func complete_active_encounter() -> Dictionary:
-	# Read the encounter type before completing, because completing clears it.
-	var next_scene := HUB_SCENE_PATH
-	var active = run_snapshot().get("active_encounter")
-	if typeof(active) == TYPE_DICTIONARY and active.get("type", "") in REWARDING_ENCOUNTERS:
-		next_scene = CARD_REWARD_SCENE_PATH
-	var reward: Dictionary = _run_state.active_encounter_reward()
-
-	var prepared := _prepare_screen(next_scene)
+	# Read everything about the encounter before completing, because
+	# completing clears it.
+	var completion: Dictionary = _run_state.active_encounter_completion()
+	var prepared := _prepare_screen(_scene_after_completing(completion))
 	if not prepared.get("ok", false):
 		return prepared
 
@@ -193,17 +219,55 @@ func complete_active_encounter() -> Dictionary:
 	#
 	# This does not check that the construct was beaten. The combat screen's
 	# Complete Encounter button is a testing shortcut that comes through here
-	# too, so for now skipping a fight pays the same as winning it. See
-	# _on_complete_encounter_pressed in combat.gd.
+	# too, so for now skipping a fight pays the same as winning it. That
+	# button is disabled on the final boss, so it can never win the contract
+	# reward. See _on_complete_encounter_pressed in combat.gd.
 	_pending_reward = {
-		"credits": int(reward.get("credits", 0)),
-		"guaranteed_rare": bool(reward.get("guaranteed_rare", false)),
+		"credits": int(completion.get("credits", 0)),
+		"guaranteed_rare": bool(completion.get("guaranteed_rare", false)),
 	}
 	# Through change_credits rather than straight onto PlayerStateGlobal, so
 	# the payout also counts as credits earned in the run's stats.
 	change_credits(_pending_reward["credits"])
+	_pay_contract_reward()
 	_replace_screen(prepared["screen"])
 	return transition
+
+
+# The screen to show once the encounter described by `completion` (from
+# active_encounter_completion) completes. Winning the contract ends the run, so
+# there is no card reward for a deck about to be reset.
+func _scene_after_completing(completion: Dictionary) -> String:
+	if completion.get("wins_contract", false):
+		return VICTORY_SCENE_PATH
+	if completion.get("type", "") in REWARDING_ENCOUNTERS:
+		return CARD_REWARD_SCENE_PATH
+	return HUB_SCENE_PATH
+
+
+# Pays the reward for a contract the encounter just completed has won.
+# Completing the final boss records the reward in run state, and that can only
+# happen once per contract because the won phase is terminal. Called straight
+# after each successful completion, so it pays exactly once. Any other
+# completion has no reward recorded and pays nothing.
+func _pay_contract_reward() -> void:
+	var reward: Dictionary = contract_reward()
+	if reward.get("ok", false):
+		change_credits(int(reward.get("credits", 0)))
+
+
+# Whether completing the active encounter would win the contract, because it
+# is the final zone's boss. False between encounters.
+func active_encounter_wins_contract() -> bool:
+	return _run_state.active_encounter_completion().get("wins_contract", false)
+
+
+# What winning the contract paid: {ok: true, credits} once it has been won,
+# {ok: false} before then. Read from run state rather than kept here, so the
+# victory screen shows the right reward however it is reached. The credits are
+# already in PlayerStateGlobal by the time this can be read.
+func contract_reward() -> Dictionary:
+	return _run_state.contract_reward()
 
 
 # Cards on offer after clearing an encounter. Each is a dictionary of
@@ -312,10 +376,11 @@ func run_snapshot() -> Dictionary:
 # its starting level, the starter deck and no contract upgrades. Returns
 # {ok: true}, or {ok: false, error} with nothing changed.
 #
-# Allowed from the hub and the caught screen, where a run ends. Refused during
-# an encounter, because its screen would carry on against a run that no longer
-# exists. Credits on PlayerStateGlobal are the player's balance, not the run's,
-# so they carry over; upgrades are earned "for this contract", so they do not.
+# Allowed from the hub, the caught screen and the victory screen, where a run
+# ends. Refused during an encounter, because its screen would carry on against
+# a run that no longer exists. Credits on PlayerStateGlobal are the player's
+# balance, not the run's, so they carry over (a contract reward included);
+# upgrades are earned "for this contract", so they do not.
 func start_new_run() -> Dictionary:
 	var prepared := _prepare_screen(HUB_SCENE_PATH)
 	if not prepared.get("ok", false):
@@ -413,6 +478,8 @@ func _destination_for_snapshot(snapshot: Dictionary) -> Dictionary:
 			return {"ok": true, "path": ENCOUNTER_SCENES[encounter_type]}
 		"caught":
 			return {"ok": true, "path": CAUGHT_SCENE_PATH}
+		"contract_won":
+			return {"ok": true, "path": VICTORY_SCENE_PATH}
 		_:
 			return _failure("Unknown contract phase '%s'." % phase)
 

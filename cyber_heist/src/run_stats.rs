@@ -5,8 +5,8 @@
 //! starts them again from zero.
 //!
 //! Wins are counted by `RunState` itself as encounters complete. Credits and
-//! cards are gained elsewhere (an event, a card reward, later a combat payout
-//! or the contract payout), so whatever applies one also records it through
+//! cards are gained elsewhere (an event, a card reward, a combat payout or
+//! the contract payout), so whatever applies one also records it through
 //! `RunState::record_credit_change` or `RunState::record_card_added`.
 
 use crate::contract_map::EncounterType;
