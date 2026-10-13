@@ -64,7 +64,7 @@ horizontal_alignment = 2
 [node name="Tagline" type="Label" parent="Content/Column"]
 layout_mode = 2
 theme_type_variation = &"DimLabel"
-text = "stock is rolled for this visit and never restocks_"
+text = "stock is rolled for this visit; pay to reroll what is still for sale_"
 
 [node name="StockScroll" type="ScrollContainer" parent="Content/Column"]
 layout_mode = 2
@@ -83,13 +83,73 @@ custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 theme_type_variation = &"DimLabel"
 
-[node name="LeaveButton" type="Button" parent="Content/Column"]
+[node name="Footer" type="HBoxContainer" parent="Content/Column"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="LeaveButton" type="Button" parent="Content/Column/Footer"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 0
 theme_type_variation = &"TerminalMenuButton"
 text = "> Leave"
 alignment = 0
+
+[node name="Services" type="HBoxContainer" parent="Content/Column/Footer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 40
+alignment = 2
+
+[node name="ScrubLogsService" type="HBoxContainer" parent="Content/Column/Footer/Services"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ScrubLogsDetails" type="Label" parent="Content/Column/Footer/Services/ScrubLogsService"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 1
+theme_override_font_sizes/font_size = 16
+text = "SCRUB LOGS"
+vertical_alignment = 1
+
+[node name="ScrubLogsPriceLabel" type="Label" parent="Content/Column/Footer/Services/ScrubLogsService"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="ScrubLogsButton" type="Button" parent="Content/Column/Footer/Services/ScrubLogsService"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 22
+text = "[ scrub ]"
+
+[node name="RerollService" type="HBoxContainer" parent="Content/Column/Footer/Services"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="RerollDetails" type="Label" parent="Content/Column/Footer/Services/RerollService"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 1
+theme_override_font_sizes/font_size = 16
+text = "REROLL STOCK"
+vertical_alignment = 1
+
+[node name="RerollPriceLabel" type="Label" parent="Content/Column/Footer/Services/RerollService"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="RerollButton" type="Button" parent="Content/Column/Footer/Services/RerollService"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 22
+text = "[ reroll ]"
 
 [node name="CrtOverlay" type="ColorRect" parent="."]
 material = SubResource("ShaderMaterial_crt")
