@@ -100,6 +100,9 @@ jobs:
       - name: Run headless detection recovery test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/lower_detection_test.gd
 
+      - name: Run headless card hover tooltip test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/card_hover_test.gd
+
       - name: Run headless card reward and run deck test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/card_reward_test.gd
 
