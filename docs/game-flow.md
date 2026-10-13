@@ -12,7 +12,9 @@ Feature scenes must not change `run/main_scene`, call
 navigation goes through `FlowCoordinator`.
 
 `FlowCoordinator` owns the persistent `RunStateNode`. Replacing a screen does
-not recreate that node, so contract state survives every screen transition.
+not recreate that node, so contract state survives every screen transition. Between sessions the
+run is saved to disk at safe points and Continue restores it (see
+[Saving and continuing](#saving-and-continuing-story-10)).
 Player money and upgrades remain a separate concern and use the
 `PlayerStateGlobal` autoload rather than being added to run state.
 
@@ -307,9 +309,10 @@ FlowCoordinator.contract_reward()
 
 The reward lives in run state rather than in FlowCoordinator, so the victory
 screen shows the same thing whenever the run's current screen is rebuilt while
-it is `contract_won` (Continue run, once saving lands). The final boss's own
-encounter credits are only known straight after the fight, so a rebuilt screen
-leaves that line out.
+it is `contract_won`, including by Continue run (see Saving and continuing).
+The final boss's own encounter credits are FlowCoordinator's pending reward,
+which the save keeps too, so Continue shows that line again; a screen rebuilt
+without it leaves the line out.
 
 The victory screen names the contract, summarises the run from
 `run_summary()`, says what the contract and final boss paid, and counts the
@@ -615,6 +618,152 @@ files so it never overwrites a developer's own.
 The sounds are synthesised by `tools/generate_audio.py` (Python and numpy),
 so there is no third-party audio to license; see `godot/assets/CREDITS.md`.
 
+## Saving and continuing (story #10)
+
+The game saves itself; there is no save button. One JSON file,
+`user://cyberheist_save.json`, holds two things:
+
+- **Meta progress**, what the player keeps between runs: the credit balance.
+  It is applied as soon as the game opens, so it carries into a new contract
+  as well as a continued one. Upgrades last only for the contract they were
+  earned on and zones open per contract, so both are part of the run instead;
+  nothing else is unlocked between runs yet.
+- **The run** at its last safe point: the contract phase, the offers and the
+  accepted one, whether an encounter on the contract has been entered yet,
+  the map with its completed and locked nodes and open zones, the contract
+  reward once the contract is won, the run's stats, a shop's stock while the
+  run is in one, its deck, the contract's upgrades, noise and knowledge.
+
+The format is plain Rust in `cyber_heist/src/save_game.rs`, serialised with
+serde. `SaveGameNode` (`save_game_node.rs`) sits under `FlowCoordinator` beside
+`RunState` and `RunDeck`, gathers those pieces from the scene tree to save them
+and puts each one back on Continue.
+
+**Safe points.** `FlowCoordinator.save_progress()` replaces the save at every
+one: New contract, accepting an offer, entering a shop and each purchase in it
+(the shop screen calls it), every completed encounter, leaving the card reward,
+being caught (once the fine is taken) and leaving the caught screen, winning a
+contract, and `start_new_run()`. Nothing is saved in the middle of a fight or
+an event: `SaveGame::new` refuses that phase. Quitting during one therefore
+resumes at the map as it was before the encounter was entered, with the noise
+picked up inside it gone and the node still to play. A shop is the one
+encounter that is a safe point. Its stock (`ShopVisit`) lives on the run (see
+the dark web shop), opened as the shop screen appears and before the save made
+on entering, so it is saved with the run and a resumed shop has the same cards
+and sold slots rather than a reroll.
+
+**Continue** on the main menu is enabled when a run was read at launch.
+`continue_run()` restores it and opens the screen it was saved on: the map, a
+fight's card reward still to choose, the shop, the caught screen or the
+victory screen. It is all or nothing: the screen is prepared from the saved
+run (`SaveGameNode.saved_run_snapshot()`) before anything is restored, and the
+restore finds every node it writes to before changing any, so a failure leaves
+the run behind the menu exactly as it was. The coordinator's screen results are saved with the run, so a
+resumed screen shows what was already paid rather than paying it again: the
+pending card reward and the caught penalty. The caught
+screen takes its fine through `FlowCoordinator.apply_caught_penalty(fine)`,
+which charges once per capture, so a caught screen reopened by Continue never
+fines twice. The card reward's offer is rolled once and kept with the pending
+reward (`offered_card_ids`), so a resumed card reward offers the same three
+cards rather than a free reroll.
+
+A won contract needs no screen result of its own. `RunState` records the
+contract reward (`contract_reward`) in the transition into `contract_won`, and
+it is saved with the run, as is the balance it was already paid into. The
+resumed victory screen reads the reward from run state and counts up to the
+saved balance, and nothing pays it again: only completing the final boss pays
+it, and a won contract has no encounter left to complete.
+
+Accepting an offer does not commit the run to it until an encounter is
+entered, and that survives Continue: run state saves whether the contract has
+started, so a run saved after accepting, or changing, an offer resumes on the
+map with **Change contract** offered, and one saved before accepting resumes
+on the offer picker. Once an encounter has been entered, Continue no longer
+offers the change.
+
+**New contract** on the menu replaces the saved run at once with the fresh run
+behind the menu. The credit balance read from the save stays.
+
+**Missing, corrupt or incompatible saves.** Every save has a `version`
+(`SAVE_VERSION`, currently 3), read before anything else. A missing file is a
+first launch: Continue is unavailable and no error is shown. A file that is not
+valid JSON, is missing fields, was written with another version, or describes a
+run the game could never reach is refused. That covers, for example: a
+current node that is not on the map; a map that is not the one the accepted
+offer builds from its seed and shape; a contract under way on no accepted
+offer; an accepted offer that was never offered; an offer whose shape or reward
+no contract is offered with; a fight in progress; a card this build does not
+have; a contract reward on a contract not won, or one that is not the accepted
+offer's `credit_reward`; a won contract without one; progress on a contract
+marked as not started, which Change contract would throw away; noise or
+knowledge outside the meters' caps (`MAX_NOISE`, `MAX_KNOWLEDGE`, checked as
+constants so the check does not depend on the order the autoloads start in);
+a shop's stock outside a shop, with more than five cards, a card twice or a
+price that is not its card's rarity price; and a card reward whose credits or
+Rare guarantee are not those of the fight just won, that offers more cards
+than the reward screen (`card_reward::OFFER_SIZE`) or a card twice, or that
+guarantees a Rare and offers none.
+
+A refused save's run is not loaded. The game starts with Continue
+unavailable, and the menu says the save could not be loaded. Before anything
+can replace the file, it is copied to `<save>.unreadable`, and if it still
+names a credit balance (an older version, say) that balance is kept, since it
+is the one thing meant to carry between runs. The next save then replaces the
+original.
+
+Saves are written to a temporary file, flushed to disk, renamed into place,
+and the directory flushed in turn, so closing the game or losing power
+mid-write leaves either the previous save or the new one. Bump `SAVE_VERSION`
+whenever a change to anything saved would stop an older file reading back
+correctly. Version 2 replaced version 1's claimed-reward flag and separate
+contract payout with the reward run state records, and version 3 moved a
+shop's stock into the run state, so earlier saves are refused as
+incompatible.
+
+```gdscript
+FlowCoordinator.has_saved_run()       # true when Continue can resume a run
+FlowCoordinator.continue_run()        # {"ok": true}, or {"ok": false, "error"}
+FlowCoordinator.save_progress()       # {"ok": true}, or {"ok": false, "error"}
+FlowCoordinator.save_load_error()     # "" unless the save could not be read
+FlowCoordinator.use_save_file(path)   # {"ok": true, "has_run"}, or {"ok": false, "error"}
+```
+
+**Tests and the save file.** Headless tests drive the game from their own
+`SceneTree` script under `res://tests/`, and `FlowCoordinator` turns saving off
+when the main loop runs one of those, so no test reads the player's save,
+another test's, or writes one. Only a script under `res://tests/` counts, so a
+custom `MainLoop` the game itself might use would keep saving. A test that
+wants saving calls `use_save_file()` with its own `user://` file.
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/save_continue_test.gd
+```
+
+It opens the game with no save, then with a corrupt one, one from an unknown
+version and a version 1 one, and checks Continue stays unavailable, the corrupt
+file is kept as `.unreadable`, the balance an incompatible file names is kept
+and New contract replaces the bad file. It checks a card reward naming
+something that is not a card id is refused at save time. It accepts an offer on the
+picker and uses Change contract to swap it, then resumes in a second process,
+which checks the map still offers Change contract and that changing again is
+saved. It plays two encounters and checks each was saved without being asked,
+passes through any shops that are all the map offers next, then enters a
+fight or an event and quits partway through it. A second Godot process opens the same save, presses
+Continue and checks the contract, offers, map, completed nodes, zone, credits,
+deck, upgrades, noise, knowledge, stats, phase and screen against what the
+first process wrote down at the hub. It does the same on the caught screen,
+where the fine must not be taken twice, in a shop after buying a card,
+where the stock must come back with that slot sold, and on a fight's card
+reward before a card is chosen, where the same cards must be offered again.
+After the hub resume it checks Change contract is no longer offered. Last, it
+plays a contract to its final boss, checks the save records the contract
+reward in run state and keeps no separate payout, and resumes on the victory
+screen: the same reward and boss payout are shown, the count ends on the saved
+balance without paying again, and Take another contract starts a new run at the
+offer picker.
+
 ## The sentry's turn
 
 Combat alternates a player turn and the sentry's turn. A sentry is the named
@@ -752,7 +901,7 @@ regained as `integrity_restored` in the turn outcome. There is nothing for the
 combat screen to apply, unlike a lockdown; it only says so.
 
 Payouts live in `cyber_heist/src/encounter_reward.rs`. `FlowCoordinator`
-reads `RunStateNode.active_encounter_reward()` before completing an encounter
+reads `RunStateNode.active_encounter_completion()` before completing an encounter
 (completing clears it), and adds the credits to `PlayerStateGlobal` only once
 the transition succeeds. The card reward screen then reads the guarantee
 through `offer_card_reward()` and shows the payout with
@@ -958,6 +1107,10 @@ FlowCoordinator.complete_active_encounter()
 FlowCoordinator.report_caught()
 FlowCoordinator.finish_caught()
 FlowCoordinator.run_snapshot()
+FlowCoordinator.has_saved_run()
+FlowCoordinator.continue_run()
+FlowCoordinator.save_progress()
+FlowCoordinator.apply_caught_penalty(fine: int)
 ```
 
 Every transition method returns a result dictionary. A destination is checked
@@ -987,6 +1140,8 @@ Finishing caught does not complete the selected map node. It returns to the hub
 with only that committed encounter available to retry; the branch declined at
 selection remains locked.
 
-The caught screen applies its separate `PlayerStateGlobal` penalty once, while
-the coordinator continues to own navigation. Both autoloads remain registered,
+The caught screen applies its separate `PlayerStateGlobal` penalty once per
+capture, through `FlowCoordinator.apply_caught_penalty(fine)`, so a caught
+screen reopened by Continue does not charge it again. The coordinator continues
+to own navigation. Both autoloads remain registered,
 and the Rust crate registers the caught-penalty and game-flow classes together.

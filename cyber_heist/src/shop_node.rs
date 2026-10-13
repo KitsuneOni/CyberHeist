@@ -26,11 +26,10 @@ use crate::noise_meter::NoiseMeter;
 use crate::run_deck_node::RunDeckNode;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
 use crate::shop::{SCRUB_LOGS_NOISE_REDUCTION, SCRUB_LOGS_PRICE};
-use crate::{PlayerState, RUN_DECK_PATH, card_detail_dictionary};
-
-const CARD_DATABASE_PATH: &str = "/root/CardDatabaseGlobal";
-const PLAYER_STATE_PATH: &str = "/root/PlayerStateGlobal";
-const NOISE_METER_PATH: &str = "/root/NoiseMeterGlobal";
+use crate::{
+    CARD_DATABASE_PATH, NOISE_METER_PATH, PLAYER_STATE_PATH, PlayerState, RUN_DECK_PATH,
+    card_detail_dictionary, failure,
+};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -318,12 +317,5 @@ impl ShopNode {
             Some(player_state) => player_state.bind().money(),
             None => 0,
         }
-    }
-}
-
-fn failure(error: &str) -> VarDictionary {
-    vdict! {
-        "ok" => false,
-        "error" => error,
     }
 }

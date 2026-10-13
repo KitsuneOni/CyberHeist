@@ -18,6 +18,8 @@ mod run_deck_node;
 mod run_state;
 mod run_state_node;
 mod run_stats;
+mod save_game;
+mod save_game_node;
 mod sentry;
 mod sentry_node;
 mod shop;
@@ -39,6 +41,21 @@ use sentry_node::SentryNode;
 /// comment it's a child of the `FlowCoordinator` autoload, not its own
 /// top-level autoload — confirm this path matches your actual scene tree.
 const RUN_DECK_PATH: &str = "/root/FlowCoordinator/RunDeck";
+
+// Where the shared autoloads live. Every Rust node that reaches one looks it
+// up by these, so renaming an autoload only touches this one place.
+pub(crate) const CARD_DATABASE_PATH: &str = "/root/CardDatabaseGlobal";
+pub(crate) const PLAYER_STATE_PATH: &str = "/root/PlayerStateGlobal";
+pub(crate) const NOISE_METER_PATH: &str = "/root/NoiseMeterGlobal";
+pub(crate) const KNOWLEDGE_METER_PATH: &str = "/root/KnowledgeMeterGlobal";
+
+/// `{ok: false, error}`: how every Rust node reports a refusal to GDScript.
+pub(crate) fn failure(error: &str) -> VarDictionary {
+    vdict! {
+        "ok" => false,
+        "error" => error,
+    }
+}
 
 /// A card's player-facing details as a dictionary, the shape every screen
 /// that describes a card reads: `{name, type, rarity, cost, cost_text,
@@ -169,6 +186,20 @@ impl PlayerState {
     pub(crate) fn credits_mut(&mut self) -> &mut i64 {
         &mut self.money
     }
+
+    /// The current contract's upgrades, for saving the run.
+    pub(crate) fn upgrade_names(&self) -> Vec<String> {
+        self.upgrades.iter().map(GString::to_string).collect()
+    }
+
+    /// Replaces the current contract's upgrades, for a run resumed from a
+    /// save.
+    pub(crate) fn restore_upgrades(&mut self, names: &[String]) {
+        self.upgrades = names
+            .iter()
+            .map(|name| GString::from(name.as_str()))
+            .collect();
+    }
 }
 
 /// Godot-facing node for the draw phase.
@@ -222,10 +253,7 @@ impl INode for DrawPhase {
     }
 
     fn ready(&mut self) {
-        self.noise_meter = Some(
-            self.base()
-                .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal"),
-        );
+        self.noise_meter = Some(self.base().get_node_as::<NoiseMeter>(NOISE_METER_PATH));
 
         // Shield is per-encounter; clearing it here — not just at end_turn —
         // means it can't leak in regardless of how the previous encounter
@@ -239,12 +267,10 @@ impl INode for DrawPhase {
         // deliberately NOT reset here — it carries across encounters.
         self.knowledge_meter = Some(
             self.base()
-                .get_node_as::<KnowledgeMeter>("/root/KnowledgeMeterGlobal"),
+                .get_node_as::<KnowledgeMeter>(KNOWLEDGE_METER_PATH),
         );
 
-        let card_db = self
-            .base()
-            .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
+        let card_db = self.base().get_node_as::<CardDatabase>(CARD_DATABASE_PATH);
         let card_db = card_db.bind();
 
         // The run's cards live on RunDeckNode, not starter_deck.ron directly.

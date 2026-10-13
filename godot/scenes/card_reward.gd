@@ -5,8 +5,6 @@
 # still owned at the next encounter.
 extends Control
 
-const OFFER_SIZE := 3
-
 @onready var offer_container: VBoxContainer = $Page/RewardPanel/Margin/Content/OfferContainer
 @onready var deck_label: Label = $Page/RewardPanel/Margin/Content/DeckLabel
 @onready var status_label: Label = $Page/RewardPanel/Margin/Content/StatusLabel
@@ -19,7 +17,7 @@ var choice_made := false
 
 
 func _ready() -> void:
-	offered = FlowCoordinator.offer_card_reward(OFFER_SIZE)
+	offered = FlowCoordinator.offer_card_reward(FlowCoordinator.card_reward_offer_size())
 	_build_offer_buttons()
 	_update_deck_label()
 	_show_credits_earned()

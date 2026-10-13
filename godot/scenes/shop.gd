@@ -277,6 +277,9 @@ func _on_buy_pressed(slot: int) -> void:
 			_card_names.get(slot, "the card"),
 			int(result.get("price", 0)),
 		]
+		# A purchase is a safe point, so the card and the spend survive
+		# quitting while still in the shop.
+		FlowCoordinator.save_progress()
 	else:
 		status_label.text = _refusal_text(String(result.get("error", "")), "that card")
 

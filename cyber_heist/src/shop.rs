@@ -34,6 +34,7 @@ use std::collections::HashMap;
 
 use rand::Rng;
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 
 use crate::card_data::Rarity;
 use crate::card_reward;
@@ -77,7 +78,7 @@ pub fn price_for(rarity: Rarity) -> i64 {
 
 /// One place in the shop's stock: a card, its rarity and price, and whether
 /// it has gone.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShopSlot {
     card_id: String,
     rarity: Rarity,
@@ -174,7 +175,9 @@ impl ShopError {
 }
 
 /// Everything about one visit to a shop node.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Saved with the run while the player is in a shop (see `save_game.rs`), so
+/// a resumed visit keeps its stock and what has already been bought.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShopVisit {
     /// The distinct cards this shop can stock, sorted by id so the same seed
     /// always rolls the same cards. Kept for rerolls.
@@ -202,6 +205,58 @@ impl ShopVisit {
     /// The stock in display order, sold slots included.
     pub fn slots(&self) -> &[ShopSlot] {
         &self.slots
+    }
+
+    /// Checks a visit read back from a save is one `open` could have rolled
+    /// and buying could have left: no more than [`STOCK_SIZE`] slots, no card
+    /// twice, and every slot holding its card's real rarity and priced by it.
+    /// The pool a reroll draws from is checked the same way: every card real,
+    /// listed once, with its real rarity. `rarity_of` looks a card up in the
+    /// card database, `None` for one that does not exist.
+    ///
+    /// Without this an edited save could make every card free on Continue, or
+    /// slip a cheap or made-up card into the stock through a reroll.
+    pub fn validate_restored(
+        &self,
+        rarity_of: impl Fn(&str) -> Option<Rarity>,
+    ) -> Result<(), String> {
+        if self.slots.len() > STOCK_SIZE {
+            return Err(format!("a shop has more than {STOCK_SIZE} cards"));
+        }
+        let mut stocked = std::collections::HashSet::new();
+        for slot in &self.slots {
+            if !stocked.insert(slot.card_id.as_str()) {
+                return Err(format!("a shop stocks '{}' twice", slot.card_id));
+            }
+            let Some(rarity) = rarity_of(&slot.card_id) else {
+                return Err(format!(
+                    "a shop stocks a card that does not exist: '{}'",
+                    slot.card_id
+                ));
+            };
+            if slot.rarity != rarity {
+                return Err(format!(
+                    "'{}' is stocked with the wrong rarity",
+                    slot.card_id
+                ));
+            }
+            if slot.price != price_for(rarity) {
+                return Err(format!("'{}' is not priced by its rarity", slot.card_id));
+            }
+        }
+
+        let mut pooled = std::collections::HashSet::new();
+        for (card_id, rarity) in &self.pool {
+            if !pooled.insert(card_id.as_str()) {
+                return Err(format!("a shop's pool lists '{card_id}' twice"));
+            }
+            if rarity_of(card_id) != Some(*rarity) {
+                return Err(format!(
+                    "a shop's pool has '{card_id}', which does not exist or has another rarity"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Whether `credits` would cover the card in `slot`. False for a sold or
@@ -1133,5 +1188,93 @@ mod tests {
         }
         assert_eq!(credits, 160 - SCRUB_LOGS_PRICE - 25 - 50);
         assert!(credits >= 0);
+    }
+
+    // --- a visit read back from a save ------------------------------------
+
+    fn rarity_in_pool(card_id: &str) -> Option<Rarity> {
+        pool()
+            .into_iter()
+            .find(|(id, _)| id == card_id)
+            .map(|(_, rarity)| rarity)
+    }
+
+    #[test]
+    fn a_rolled_and_partly_bought_visit_passes_the_restore_check() {
+        let mut shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(40));
+        let mut credits = 1_000;
+        shop.buy(1, &mut credits, &mut RunDeck::default())
+            .expect("affordable");
+
+        assert_eq!(shop.validate_restored(rarity_in_pool), Ok(()));
+    }
+
+    #[test]
+    fn an_edited_visit_is_refused() {
+        let shop = ShopVisit::open(&pool(), &mut StdRng::seed_from_u64(41));
+        let free = {
+            let mut edited = shop.clone();
+            edited.slots[0].price = 0;
+            edited
+        };
+        let repeated = {
+            let mut edited = shop.clone();
+            edited.slots[1] = edited.slots[0].clone();
+            edited
+        };
+        let oversized = {
+            let mut edited = shop.clone();
+            edited
+                .slots
+                .push(ShopSlot::for_sale("stuxnet".to_string(), Rarity::Legendary));
+            edited
+        };
+        let unknown = shop_selling("not_a_real_card", 50);
+        let wrong_slot_rarity = {
+            let mut edited = shop.clone();
+            edited.slots[0].rarity = match edited.slots[0].rarity {
+                Rarity::Common => Rarity::Legendary,
+                _ => Rarity::Common,
+            };
+            edited
+        };
+        let unknown_in_pool = {
+            let mut edited = shop.clone();
+            edited
+                .pool
+                .push(("not_a_real_card".to_string(), Rarity::Common));
+            edited
+        };
+        let cheapened_in_pool = {
+            let mut edited = shop.clone();
+            for (card_id, rarity) in &mut edited.pool {
+                if card_id == "stuxnet" {
+                    *rarity = Rarity::Common;
+                }
+            }
+            edited
+        };
+        let repeated_in_pool = {
+            let mut edited = shop.clone();
+            let first = edited.pool[0].clone();
+            edited.pool.push(first);
+            edited
+        };
+
+        for (description, edited) in [
+            ("a free card", free),
+            ("a card twice", repeated),
+            ("too many cards", oversized),
+            ("an unknown card", unknown),
+            ("a slot's rarity changed", wrong_slot_rarity),
+            ("an unknown card in its pool", unknown_in_pool),
+            ("a Legendary made Common in its pool", cheapened_in_pool),
+            ("a card twice in its pool", repeated_in_pool),
+        ] {
+            assert!(
+                edited.validate_restored(rarity_in_pool).is_err(),
+                "a visit with {description} was not refused"
+            );
+        }
     }
 }

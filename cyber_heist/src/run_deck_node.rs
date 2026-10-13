@@ -9,11 +9,11 @@ use godot::prelude::*;
 
 use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
-use crate::card_detail_dictionary;
 use crate::card_reward;
 use crate::card_text;
 use crate::run_deck::RunDeck;
 use crate::starter_deck;
+use crate::{CARD_DATABASE_PATH, card_detail_dictionary};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -53,7 +53,35 @@ impl RunDeckNode {
 
     fn card_database(&self) -> Option<Gd<CardDatabase>> {
         self.base()
-            .try_get_node_as::<CardDatabase>("/root/CardDatabaseGlobal")
+            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
+    }
+
+    /// The reward screen's description of each card in `card_ids`, skipping
+    /// any the card database does not know.
+    fn describe_reward_cards<'a>(
+        &self,
+        card_ids: impl Iterator<Item = &'a str>,
+    ) -> Array<VarDictionary> {
+        let mut described: Array<VarDictionary> = Array::new();
+
+        let Some(db) = self.card_database() else {
+            godot_error!("RunDeckNode: no CardDatabaseGlobal, cannot describe cards.");
+            return described;
+        };
+        let db = db.bind();
+
+        for id in card_ids {
+            let Some(card) = db.get(id) else {
+                continue;
+            };
+            // Rewards are chosen outside an encounter, so a card is shown on
+            // its strong side rather than whatever the last fight's noise was.
+            let mut detail = card_detail_dictionary(&card_text::describe(card, 0));
+            detail.set("id", id);
+            described.push(&detail);
+        }
+
+        described
     }
 }
 
@@ -118,22 +146,19 @@ impl RunDeckNode {
     }
 
     /// A reward offer of up to `count` distinct cards drawn from the whole
-    /// card pool, each with what the player needs to choose between them: the
-    /// card's details (see `card_detail_dictionary`) plus its `id`.
+    /// card pool, each described as `describe_cards` describes it.
     ///
     /// `guaranteed_rare` makes sure at least one of them is Rare or better,
     /// which is what clearing an elite or boss earns.
     #[func]
     fn offer_reward(&self, count: i32, guaranteed_rare: bool) -> Array<VarDictionary> {
-        let mut offered: Array<VarDictionary> = Array::new();
-
         let Some(db) = self.card_database() else {
             godot_error!("RunDeckNode: no CardDatabaseGlobal, cannot offer a reward.");
-            return offered;
+            return Array::new();
         };
-        let db = db.bind();
 
         let pool: Vec<(String, Rarity)> = db
+            .bind()
             .all()
             .map(|card| (card.id.clone(), card.rarity))
             .collect();
@@ -141,17 +166,23 @@ impl RunDeckNode {
         let guaranteed = guaranteed_rare.then_some(Rarity::Rare);
         let ids = card_reward::offer_with_guarantee(&pool, count, guaranteed, &mut rand::rng());
 
-        for id in ids {
-            let Some(card) = db.get(&id) else {
-                continue;
-            };
-            // Rewards are chosen outside an encounter, so a card is shown on
-            // its strong side rather than whatever the last fight's noise was.
-            let mut detail = card_detail_dictionary(&card_text::describe(card, 0));
-            detail.set("id", id.as_str());
-            offered.push(&detail);
-        }
+        self.describe_reward_cards(ids.iter().map(String::as_str))
+    }
 
-        offered
+    /// How many cards the reward screen offers after a fight
+    /// (`card_reward::OFFER_SIZE`), which a saved reward is checked against.
+    #[func]
+    fn reward_offer_size() -> i64 {
+        card_reward::OFFER_SIZE as i64
+    }
+
+    /// The cards of an offer already rolled, such as one restored from a save,
+    /// each with what the player needs to choose between them: the card's
+    /// details (see `card_detail_dictionary`) plus its `id`. An id the card
+    /// database does not know is left out.
+    #[func]
+    fn describe_cards(&self, card_ids: PackedStringArray) -> Array<VarDictionary> {
+        let ids: Vec<String> = card_ids.as_slice().iter().map(GString::to_string).collect();
+        self.describe_reward_cards(ids.iter().map(String::as_str))
     }
 }

@@ -7,6 +7,7 @@
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
+use crate::NOISE_METER_PATH;
 use crate::noise_meter::NoiseMeter;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
 use crate::sentry::{SecurityTier, Sentry};
@@ -36,9 +37,7 @@ impl INode for SentryNode {
     }
 
     fn ready(&mut self) {
-        let mut meter = self
-            .base()
-            .get_node_as::<NoiseMeter>("/root/NoiseMeterGlobal");
+        let mut meter = self.base().get_node_as::<NoiseMeter>(NOISE_METER_PATH);
 
         // Which construct is on the other side of this encounter is decided by
         // where the player has got to on the contract, not by the scene: a

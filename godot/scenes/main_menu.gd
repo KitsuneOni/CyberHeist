@@ -49,6 +49,10 @@ func _ready() -> void:
 	continue_button.focus_mode = Control.FOCUS_ALL if can_continue else Control.FOCUS_NONE
 	if not can_continue:
 		_labels[continue_button] = "Continue run   [no save]"
+	# An unreadable save is set aside rather than crashing the game. Say so,
+	# since the player may have expected to carry on.
+	if not FlowCoordinator.save_load_error().is_empty():
+		status_label.text = "Your saved run could not be loaded, so New contract starts fresh."
 
 	for button: Button in _labels:
 		button.focus_entered.connect(_on_selection_changed.bind(button))

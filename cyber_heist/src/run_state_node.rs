@@ -38,6 +38,19 @@ impl INode for RunStateNode {
     }
 }
 
+impl RunStateNode {
+    /// The run as it stands, for `SaveGameNode` to save.
+    pub(crate) fn state(&self) -> &RunState {
+        &self.state
+    }
+
+    /// Replaces the run with one resumed from a save. `SaveGameNode` only
+    /// hands over a run that passed `RunState::validate_restored`.
+    pub(crate) fn restore_state(&mut self, state: RunState) {
+        self.state = state;
+    }
+}
+
 /// The shop visit lives on the run, so `ShopNode` reaches it through here
 /// rather than holding its own copy. See `RunState::open_shop_visit`.
 impl RunStateNode {
@@ -400,18 +413,25 @@ impl RunStateNode {
 
     #[func]
     fn snapshot(&self) -> VarDictionary {
-        let active_encounter = match self.state.active_encounter() {
-            Some(encounter) => Variant::from(vdict! {
-                "id" => encounter.id(),
-                "type" => encounter.encounter_type().as_str(),
-            }),
-            None => Variant::nil(),
-        };
+        snapshot_dictionary(&self.state)
+    }
+}
 
-        vdict! {
-            "phase" => self.state.phase().as_str(),
-            "active_encounter" => &active_encounter,
-        }
+/// Where `state` stands, as `FlowCoordinator` reads it to choose a screen:
+/// `{phase, active_encounter}`, where `active_encounter` is `{id, type}` or
+/// null.
+pub(crate) fn snapshot_dictionary(state: &RunState) -> VarDictionary {
+    let active_encounter = match state.active_encounter() {
+        Some(encounter) => Variant::from(vdict! {
+            "id" => encounter.id(),
+            "type" => encounter.encounter_type().as_str(),
+        }),
+        None => Variant::nil(),
+    };
+
+    vdict! {
+        "phase" => state.phase().as_str(),
+        "active_encounter" => &active_encounter,
     }
 }
 
