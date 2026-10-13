@@ -176,11 +176,13 @@ impl SentryNode {
         self.sentry.take_damage(amount)
     }
 
-    /// Name of the action the sentry will take next, or an empty string if it
-    /// has nothing queued.
+    /// Name of the action the sentry will take next at the current noise, or
+    /// an empty string if it has nothing queued. It can change during the
+    /// player's turn as noise crosses `ALERT_NOISE`, so the combat screen
+    /// reads it again after every card.
     #[func]
     fn queued_action_name(&self) -> GString {
-        match self.sentry.queued_action() {
+        match self.sentry.queued_action(self.noise()) {
             Some(action) => GString::from(action.name.as_str()),
             None => GString::new(),
         }
@@ -190,7 +192,16 @@ impl SentryNode {
     /// deciding to end the turn.
     #[func]
     fn queued_action_noise(&self) -> i32 {
-        self.sentry.queued_action().map_or(0, |action| action.noise)
+        self.sentry
+            .queued_action(self.noise())
+            .map_or(0, |action| action.noise)
+    }
+
+    /// Whether the queued action comes from the alert set because noise is at
+    /// or above `ALERT_NOISE`, so the intent can be marked as escalated.
+    #[func]
+    fn queued_action_escalated(&self) -> bool {
+        self.sentry.queued_action(self.noise()).is_some() && self.sentry.is_on_alert(self.noise())
     }
 
     /// What the queued action does beyond the noise, e.g. "-2 energy", or an
@@ -199,7 +210,7 @@ impl SentryNode {
     /// surprise after they have committed to ending the turn.
     #[func]
     fn queued_action_ability(&self) -> GString {
-        match self.sentry.queued_action() {
+        match self.sentry.queued_action(self.noise()) {
             Some(action) => GString::from(&action.ability.describe()),
             None => GString::new(),
         }
@@ -252,7 +263,10 @@ impl SentryNode {
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed,
     /// energy_drain, ability, integrity_restored, corruption_purged, firewall,
     /// malware_planted, corruption_damage, corruption, phase, escalated,
-    /// defeated}`.
+    /// alert, defeated}`.
+    ///
+    /// `alert` is true when the action came from the alert set, because noise
+    /// was at or above `ALERT_NOISE` as the turn began.
     ///
     /// `escalated` is true when the corruption tick took the construct into
     /// its second phase. It spends that turn escalating, so `ok` is false and
@@ -280,12 +294,17 @@ impl SentryNode {
             && !self.sentry.is_defeated()
             && !escalated
         {
-            self.sentry.perform_queued_action()
+            // Noise as the turn begins decides between the standard and the
+            // alert action, which is what the intent showed the player last.
+            let noise = meter.bind().get_noise();
+            self.sentry
+                .perform_queued_action(noise)
+                .map(|action| (action, self.sentry.is_on_alert(noise)))
         } else {
             None
         };
         match action {
-            Some(action) => {
+            Some((action, alert)) => {
                 let mut meter = meter;
                 let noise_added = meter.bind_mut().add_noise(action.noise);
                 let noise = meter.bind().get_noise();
@@ -334,6 +353,7 @@ impl SentryNode {
                     "corruption" => self.sentry.corruption(),
                     "phase" => self.sentry.phase(),
                     "escalated" => false,
+                    "alert" => alert,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }
@@ -360,6 +380,7 @@ impl SentryNode {
                     "corruption" => corruption,
                     "phase" => self.sentry.phase(),
                     "escalated" => escalated,
+                    "alert" => false,
                     "defeated" => self.sentry.is_defeated(),
                 }
             }

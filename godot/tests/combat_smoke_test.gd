@@ -9,11 +9,18 @@
 # Exits non-zero on the first failed expectation, so it works as a CI gate.
 extends SceneTree
 
-const EXPECTED_NOISE := [87, 88, 90, 91, 94, 95, 96, 98, 99, 100]
 const ACTION_NAMES := ["Packet Sniff", "Firewall Up", "Trace Sweep", "Inject Malware", "Lockdown Probe"]
 const ACTION_NOISE := [1, 1, 2, 1, 3]
 # What each action announces beside its noise, or "" when it only makes noise.
 const ACTION_ABILITY := ["", "blocks 8 damage", "", "adds 1 Injected Malware to your discard", ""]
+# The same slots from the alert set, which WARDEN-7 runs once noise is at or
+# above 60 (story #101). The turns below all start above that.
+const ALERT_NAMES := [
+	"Deep Packet Inspection", "Firewall Surge", "Active Trace", "Malware Flood", "Lockdown Sweep"
+]
+const ALERT_ACTION_NOISE := [2, 2, 3, 2, 4]
+const ALERT_ABILITY := ["", "blocks 10 damage", "", "adds 2 Injected Malware to your discard", ""]
+const EXPECTED_NOISE := [88, 90, 93, 95, 99, 100]
 const EXPECTED_FINE := 50
 
 # A script error inside _run kills the coroutine part way through, so the run
@@ -75,19 +82,21 @@ func _on_turn_resolved(outcome: Dictionary) -> void:
 	_resolved_turns.append(outcome.duplicate())
 
 
-func _check_intent(combat: Node, action_index: int) -> void:
-	var action: String = ACTION_NAMES[action_index]
-	var noise: int = ACTION_NOISE[action_index]
-	var ability: String = ACTION_ABILITY[action_index]
+func _check_intent(combat: Node, action_index: int, alert: bool) -> void:
+	var action: String = (ALERT_NAMES if alert else ACTION_NAMES)[action_index]
+	var noise: int = (ALERT_ACTION_NOISE if alert else ACTION_NOISE)[action_index]
+	var ability: String = (ALERT_ABILITY if alert else ACTION_ABILITY)[action_index]
 	_check(
 		combat.sentry.queued_action_name() == action
 		and combat.sentry.queued_action_noise() == noise
-		and combat.sentry.queued_action_ability() == ability,
+		and combat.sentry.queued_action_ability() == ability
+		and combat.sentry.queued_action_escalated() == alert,
 		"the queued action is %s with authored noise %d" % [action, noise]
 	)
-	var expected_intent := "WARDEN-7 will: %s (+%d noise)" % [action, noise]
+	var shown: String = action + (" [ESCALATED]" if alert else "")
+	var expected_intent := "WARDEN-7 will: %s (+%d noise)" % [shown, noise]
 	if ability != "":
-		expected_intent = "WARDEN-7 will: %s (+%d noise, %s)" % [action, noise, ability]
+		expected_intent = "WARDEN-7 will: %s (+%d noise, %s)" % [shown, noise, ability]
 	_check(
 		combat.intent_label.is_visible_in_tree()
 		and combat.intent_label.text == expected_intent,
@@ -164,11 +173,12 @@ func _run() -> void:
 
 	# --- the opening state, before a turn is taken ---
 	_check(combat.noise_label.text == "Noise: 0 / 100", "the meter starts empty (got '%s')" % combat.noise_label.text)
-	_check_intent(combat, 0)
+	_check_intent(combat, 0, false)
 	_check(combat.draw_phase.hand_names().size() == 3, "intent is shown with a playable hand")
 
 	# Use a real near-cap shared value so the turns cover differing actions,
-	# queue wrap and the final authored +3 clamped to an actual +1.
+	# queue wrap and the final authored +2 clamped to an actual +1. It is past
+	# the alert line, so the intent flips to the alert set straight away.
 	root.get_node("NoiseMeterGlobal").add_noise(86)
 	combat._refresh_status_labels()
 
@@ -181,7 +191,7 @@ func _run() -> void:
 			break
 
 		var action_index := i % ACTION_NAMES.size()
-		_check_intent(combat, action_index)
+		_check_intent(combat, action_index, true)
 		var noise_before: int = combat.sentry.noise()
 		var previous_turn: int = combat.draw_phase.turn_number
 		combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
@@ -192,10 +202,11 @@ func _run() -> void:
 		if _resolved_turns.size() != turn_number:
 			break
 		var outcome: Dictionary = _resolved_turns.back()
-		var expected_delta: int = mini(ACTION_NOISE[action_index], 100 - noise_before)
+		var expected_delta: int = mini(ALERT_ACTION_NOISE[action_index], 100 - noise_before)
 		_check(
 			outcome.get("ok", false)
-			and outcome.get("action", "") == ACTION_NAMES[action_index]
+			and outcome.get("alert", false)
+			and outcome.get("action", "") == ALERT_NAMES[action_index]
 			and outcome.get("noise_added", -1) == expected_delta
 			and outcome.get("noise", -1) == EXPECTED_NOISE[i],
 			"the announced action executes with its value, clamped only at the cap"
@@ -207,7 +218,7 @@ func _run() -> void:
 		)
 
 		if is_instance_valid(combat) and not combat.is_queued_for_deletion():
-			_check_intent(combat, (action_index + 1) % ACTION_NAMES.size())
+			_check_intent(combat, (action_index + 1) % ACTION_NAMES.size(), true)
 			_check(
 				combat.draw_phase.turn_number == previous_turn + 1
 				and combat.draw_phase.energy == 3

@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn vpn_recovers_before_detection_without_advancing_the_intent() {
         let mut combat = Combat::with_card("vpn", 99);
-        let intent = combat.sentry.queued_action().cloned();
+        let intent = combat.sentry.queued_action(0).cloned();
         let played = combat.play(0).unwrap();
 
         assert_eq!(played.name, "VPN");
@@ -396,13 +396,13 @@ mod tests {
         assert_eq!(played.knowledge_change, 0);
         assert_eq!(played.max_energy_gained, 0);
         assert_eq!(combat.noise.noise(), 89);
-        assert_eq!(combat.sentry.queued_action(), intent.as_ref());
+        assert_eq!(combat.sentry.queued_action(0), intent.as_ref());
         assert_eq!(combat.energy, 1);
         assert!(combat.hand.is_empty());
         assert_eq!(combat.deck.discard_pile_len(), 1);
         assert!(!combat.noise.is_at_cap());
 
-        let action = combat.sentry.perform_queued_action().unwrap();
+        let action = combat.sentry.perform_queued_action(0).unwrap();
         assert_eq!(action.name, "Packet Sniff");
         assert_eq!(combat.noise.add(action.noise), 1);
         assert_eq!(combat.noise.noise(), 90);
@@ -416,7 +416,7 @@ mod tests {
     fn malware_costs_one_does_nothing_and_leaves_the_encounter() {
         let mut combat = Combat::with_cursed_card("injected_malware", 20);
         let health = combat.sentry.health();
-        let intent = combat.sentry.queued_action().cloned();
+        let intent = combat.sentry.queued_action(0).cloned();
 
         let played = combat.play(0).unwrap();
 
@@ -430,7 +430,7 @@ mod tests {
         assert_eq!(played.shield_added, 0);
         assert_eq!(played.cards_drawn, 0);
         assert_eq!(played.knowledge_change, 0);
-        assert_eq!(combat.sentry.queued_action(), intent.as_ref());
+        assert_eq!(combat.sentry.queued_action(0), intent.as_ref());
         assert!(combat.hand.is_empty());
         assert_eq!(combat.deck.discard_pile_len(), 0, "not discarded");
         assert_eq!(combat.deck.draw_pile_len(), 0);

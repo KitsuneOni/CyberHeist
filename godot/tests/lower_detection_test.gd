@@ -100,7 +100,7 @@ func _run() -> void:
 	_arrange_hand(99)
 	_check(
 		_combat.intent_label.is_visible_in_tree()
-		and _combat.intent_label.text == "WARDEN-7 will: Packet Sniff (+1 noise)",
+		and _combat.intent_label.text == "WARDEN-7 will: Deep Packet Inspection [ESCALATED] (+2 noise)",
 		"the announced action and value are visible before choosing a recovery card"
 	)
 	if not _select("VPN"):
@@ -133,7 +133,7 @@ func _run() -> void:
 		_combat.sentry.queued_action_name() == before.intent
 		and _combat.sentry.queued_action_noise() == before.intent_noise
 		and _combat.intent_label.text == before.intent_text,
-		"recovery preserves the announced action, value and visible intent"
+		"recovery that stays above the alert line preserves the announced action, value and visible intent"
 	)
 	_check(_flow.run_snapshot().phase == "encounter_active", "recovery avoids caught")
 	_check(_screen() == _combat, "the combat screen remains active")
@@ -149,15 +149,17 @@ func _run() -> void:
 	_combat.draw_phase.hand_size = 3
 	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
 	_check(
-		_combat.noise_label.text == "Noise: 90 / 100",
+		_combat.noise_label.text == "Noise: 91 / 100",
 		"the next sentry turn acts on the recovered meter"
 	)
 	_check(
-		_combat.intent_label.text == "WARDEN-7 will: Firewall Up (+1 noise, blocks 8 damage)",
+		_combat.intent_label.text
+		== "WARDEN-7 will: Firewall Surge [ESCALATED] (+2 noise, blocks 10 damage)",
 		"the next intent displays its new action and value after recovery and the sentry turn"
 	)
 	_check(
-		_combat.status_label.text == "WARDEN-7 ran Packet Sniff and added 1 noise.",
+		_combat.status_label.text
+		== "WARDEN-7 ran Deep Packet Inspection [ESCALATED] and added 2 noise.",
 		"the originally announced action and value ran after VPN"
 	)
 	_check(_combat.draw_phase.energy == 3, "ending the turn refreshes energy")
@@ -213,6 +215,28 @@ func _run() -> void:
 			"invalid index %d is rejected" % index
 		)
 		_check(_state() == before, "invalid index %d changes no state" % index)
+
+	# Story #101: the intent follows the meter during the turn. VPN taking
+	# noise back under the alert line swaps the escalated action for the
+	# standard one in the same slot, before the turn ends.
+	_arrange_hand(65)
+	var alert_intent: String = _combat.intent_label.text
+	_check(
+		_combat.sentry.queued_action_escalated() and alert_intent.contains("[ESCALATED]"),
+		"at 65 noise the intent is marked as escalated (got '%s')" % alert_intent
+	)
+	if not _select("VPN"):
+		_finish()
+		return
+	_press_play()
+	_check(_combat.noise_label.text == "Noise: 55 / 100", "VPN takes noise under the alert line")
+	_check(
+		not _combat.sentry.queued_action_escalated()
+		and not _combat.intent_label.text.contains("[ESCALATED]")
+		and _combat.intent_label.text != alert_intent,
+		"below the alert line the intent drops back to the standard action (got '%s')"
+		% _combat.intent_label.text
+	)
 
 	# The same signed path must apply ordinary positive/zero noise exactly once.
 	_arrange_hand(1)
