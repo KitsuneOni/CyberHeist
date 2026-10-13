@@ -9,6 +9,7 @@ use godot::prelude::*;
 
 use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
+use crate::card_detail_dictionary;
 use crate::card_reward;
 use crate::card_text;
 use crate::run_deck::RunDeck;
@@ -39,6 +40,15 @@ impl RunDeckNode {
     /// The run's cards, for `DrawPhase` to resolve into an encounter deck.
     pub(crate) fn owned_card_ids(&self) -> Vec<String> {
         self.deck.card_ids().to_vec()
+    }
+
+    /// The run's deck itself, for a Rust rule that adds a card as part of a
+    /// larger step. `ShopNode` lends it to `RunState::buy_from_shop`, so a
+    /// bought card is added in the same operation that takes its price.
+    /// Every id the shop sells was drawn from the card database when its stock
+    /// was rolled, so it needs no second check here.
+    pub(crate) fn deck_mut(&mut self) -> &mut RunDeck {
+        &mut self.deck
     }
 
     fn card_database(&self) -> Option<Gd<CardDatabase>> {
@@ -108,8 +118,8 @@ impl RunDeckNode {
     }
 
     /// A reward offer of up to `count` distinct cards drawn from the whole
-    /// card pool, each with what the player needs to choose between them:
-    /// `{id, name, type, rarity, cost_text, noise_text, description}`.
+    /// card pool, each with what the player needs to choose between them: the
+    /// card's details (see `card_detail_dictionary`) plus its `id`.
     ///
     /// `guaranteed_rare` makes sure at least one of them is Rare or better,
     /// which is what clearing an elite or boss earns.
@@ -137,16 +147,9 @@ impl RunDeckNode {
             };
             // Rewards are chosen outside an encounter, so a card is shown on
             // its strong side rather than whatever the last fight's noise was.
-            let detail = card_text::describe(card, 0);
-            offered.push(&vdict! {
-                "id" => id.as_str(),
-                "name" => detail.name.as_str(),
-                "type" => detail.card_type.as_str(),
-                "rarity" => detail.rarity.as_str(),
-                "cost_text" => detail.cost_text.as_str(),
-                "noise_text" => detail.noise_text.as_str(),
-                "description" => detail.description.as_str(),
-            });
+            let mut detail = card_detail_dictionary(&card_text::describe(card, 0));
+            detail.set("id", id.as_str());
+            offered.push(&detail);
         }
 
         offered
