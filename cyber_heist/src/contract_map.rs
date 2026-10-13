@@ -10,10 +10,12 @@ use std::fmt;
 
 use rand::Rng;
 use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 
 pub type NodeId = u32;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EncounterType {
     Entry,
     Combat,
@@ -48,7 +50,7 @@ impl EncounterType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EncounterNode {
     id: NodeId,
     encounter_type: EncounterType,
@@ -174,7 +176,7 @@ pub struct ContractProgress {
 /// A contract is a run of zones. Each zone is `zone_length` columns of
 /// ordinary encounters followed by a single boss column, so the boss is
 /// always the last node of its zone and the only way into the next one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractShape {
     /// Zones on the contract, each ending in its own boss.
     pub zone_count: usize,
@@ -216,6 +218,12 @@ pub enum ContractMapError {
     NoEncounterInProgress,
     EncounterNotReachable { from: NodeId, requested: NodeId },
     ZoneSealed { requested: NodeId, zone: usize },
+    // Found only in a map restored from a save (`validate_restored`): a node
+    // filed under another node's id, progress naming a node that is not on
+    // the map, and more zones open than the contract has.
+    MismatchedNodeId { key: NodeId, id: NodeId },
+    UnknownNode(NodeId),
+    TooManyUnlockedZones { unlocked: usize, total: usize },
 }
 
 impl fmt::Display for ContractMapError {
@@ -255,11 +263,23 @@ impl fmt::Display for ContractMapError {
                 "encounter {requested} is in zone {} and stays sealed until this zone's boss is beaten",
                 zone + 1
             ),
+            Self::MismatchedNodeId { key, id } => {
+                write!(formatter, "encounter {id} is filed under encounter {key}")
+            }
+            Self::UnknownNode(node_id) => {
+                write!(formatter, "encounter {node_id} is not on the contract")
+            }
+            Self::TooManyUnlockedZones { unlocked, total } => write!(
+                formatter,
+                "{unlocked} zones are unlocked but the contract only has {total}"
+            ),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Serialised as part of a saved run (see `save_game.rs`). Read back with
+/// `validate_restored`, since a save file can say anything.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractMap {
     nodes: BTreeMap<NodeId, EncounterNode>,
     /// Where the run began. `current_node` moves as the player advances, so
@@ -288,32 +308,7 @@ impl ContractMap {
             }
         }
 
-        if node_map.is_empty() {
-            return Err(ContractMapError::EmptyMap);
-        }
-        if !node_map.contains_key(&start_node) {
-            return Err(ContractMapError::UnknownStartNode(start_node));
-        }
-        for node in node_map.values() {
-            let mut connections = BTreeSet::new();
-            for next_node in &node.next_nodes {
-                if !connections.insert(*next_node) {
-                    return Err(ContractMapError::DuplicateConnection {
-                        from: node.id,
-                        to: *next_node,
-                    });
-                }
-                if !node_map.contains_key(next_node) {
-                    return Err(ContractMapError::UnknownConnection {
-                        from: node.id,
-                        to: *next_node,
-                    });
-                }
-            }
-        }
-        if graph_contains_cycle(&node_map) {
-            return Err(ContractMapError::CyclicGraph);
-        }
+        validate_graph(&node_map, start_node)?;
 
         Ok(Self {
             nodes: node_map,
@@ -801,6 +796,120 @@ impl ContractMap {
             .ok_or(ContractMapError::NoEncounterInProgress)?;
         Ok(())
     }
+
+    /// Whether nothing has been played on this map yet: the player is still
+    /// at its entry, with no encounter under way or completed, no branch
+    /// locked off and no zone past the first opened.
+    pub fn is_untouched(&self) -> bool {
+        self.current_node == self.start_node
+            && self.active_node.is_none()
+            && self.locked_nodes.is_empty()
+            && self.completed_nodes.is_empty()
+            && self.unlocked_zones == 0
+    }
+
+    /// The encounter being played, if one is under way.
+    pub fn active_node(&self) -> Option<NodeId> {
+        self.active_node
+    }
+
+    /// The encounter completed most recently, if any has been. Completing an
+    /// encounter moves the player onto it, so it is the current node once
+    /// that node is completed (the entry node never is until it is left).
+    pub fn last_completed_node(&self) -> Option<NodeId> {
+        self.completed_nodes
+            .contains(&self.current_node)
+            .then_some(self.current_node)
+    }
+
+    /// Whether `other` has the same nodes, encounter types, connections and
+    /// entry as this map, whatever progress either has made on it.
+    pub fn has_same_layout(&self, other: &ContractMap) -> bool {
+        self.nodes == other.nodes && self.start_node == other.start_node
+    }
+
+    /// The node with `node_id` and the zone it sits in, if it is on the map.
+    pub fn node_and_zone(&self, node_id: NodeId) -> Option<(&EncounterNode, usize)> {
+        let node = self.nodes.get(&node_id)?;
+        let zone = self.node_zones().get(&node_id).copied().unwrap_or(0);
+        Some((node, zone))
+    }
+
+    /// Checks a map read back from a save file holds together the way one
+    /// built by `new` or `generate` and then played always does: a valid
+    /// graph, progress that only names nodes on it, and no more zones open
+    /// than the contract has.
+    ///
+    /// The other methods rely on these rules without checking them again (a
+    /// missing current node would panic), so a restored map must pass this
+    /// before anything reads it.
+    pub fn validate_restored(&self) -> Result<(), ContractMapError> {
+        validate_graph(&self.nodes, self.start_node)?;
+        for (key, node) in &self.nodes {
+            if *key != node.id {
+                return Err(ContractMapError::MismatchedNodeId {
+                    key: *key,
+                    id: node.id,
+                });
+            }
+        }
+
+        let progress_nodes = std::iter::once(self.current_node)
+            .chain(self.active_node)
+            .chain(self.locked_nodes.iter().copied())
+            .chain(self.completed_nodes.iter().copied());
+        for node_id in progress_nodes {
+            if !self.nodes.contains_key(&node_id) {
+                return Err(ContractMapError::UnknownNode(node_id));
+            }
+        }
+
+        // Beating the final boss opens one zone past the last, so the most
+        // that can be unlocked is the number of zones itself.
+        let total_zones = self.zone_progress().total_zones;
+        if self.unlocked_zones > total_zones {
+            return Err(ContractMapError::TooManyUnlockedZones {
+                unlocked: self.unlocked_zones,
+                total: total_zones,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// The rules every contract graph keeps: at least one node, a start node that
+/// exists, connections that lead somewhere and only once, and no cycles.
+fn validate_graph(
+    nodes: &BTreeMap<NodeId, EncounterNode>,
+    start_node: NodeId,
+) -> Result<(), ContractMapError> {
+    if nodes.is_empty() {
+        return Err(ContractMapError::EmptyMap);
+    }
+    if !nodes.contains_key(&start_node) {
+        return Err(ContractMapError::UnknownStartNode(start_node));
+    }
+    for node in nodes.values() {
+        let mut connections = BTreeSet::new();
+        for next_node in &node.next_nodes {
+            if !connections.insert(*next_node) {
+                return Err(ContractMapError::DuplicateConnection {
+                    from: node.id,
+                    to: *next_node,
+                });
+            }
+            if !nodes.contains_key(next_node) {
+                return Err(ContractMapError::UnknownConnection {
+                    from: node.id,
+                    to: *next_node,
+                });
+            }
+        }
+    }
+    if graph_contains_cycle(nodes) {
+        return Err(ContractMapError::CyclicGraph);
+    }
+    Ok(())
 }
 
 fn graph_contains_cycle(nodes: &BTreeMap<NodeId, EncounterNode>) -> bool {

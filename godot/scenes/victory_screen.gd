@@ -9,8 +9,9 @@
 # The contract, run summary, reward and balance all come from run state and
 # the player's balance rather than anything FlowCoordinator keeps in memory,
 # so the screen is the same whether it opens straight after the fight or is
-# rebuilt later from the run (Continue run, once saving lands). Only the final
-# boss's own payout line needs the fight to have just happened.
+# rebuilt later from the run, as Continue run does. The final boss's own payout
+# line comes from FlowCoordinator's pending reward, which the save keeps too;
+# a screen rebuilt without it leaves that line out.
 #
 # Navigation goes through FlowCoordinator like every other screen.
 extends Control
@@ -88,8 +89,9 @@ func _show_reward(reward: Dictionary) -> void:
 		reward_label.text = "This contract carried no reward."
 
 	# The final boss pays its own encounter credits on top, the same as any
-	# boss. Those were already in the balance before the count starts. Only
-	# known straight after the fight, so a rebuilt screen leaves this line out.
+	# boss. Those were already in the balance before the count starts. Continue
+	# restores them from the save's pending reward, so a resumed screen shows
+	# this line too. It is left out only when no pending reward is held.
 	var boss_credits: int = FlowCoordinator.pending_reward_credits()
 	if boss_credits > 0:
 		reward_label.text += "\nFinal boss payout: +%d credits" % boss_credits

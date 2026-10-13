@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use crate::card_data::{CardData, Keyword};
+use crate::card_data::{CardData, CardType, Keyword};
 use crate::deck::Deck;
 use crate::knowledge::Knowledge;
 use crate::noise_meter::NoiseLevel;
@@ -16,6 +16,8 @@ pub enum PlayError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PlayedCard {
     pub name: String,
+    /// Which kind of card it was, so the screen can play that type's sound.
+    pub card_type: CardType,
     pub noise_change: i32,
     pub damage_dealt: i32,
     /// Plain damage the construct's firewall absorbed before it reached
@@ -236,6 +238,7 @@ pub fn play_card(
 
     let played = PlayedCard {
         name: card.display_name(pre_play_noise),
+        card_type: card.card_type,
         noise_change,
         damage_dealt: effects.damage_dealt,
         damage_blocked: effects.damage_blocked,
@@ -307,6 +310,7 @@ pub fn resolve_end_of_turn_effects(
 
         resolved.push(PlayedCard {
             name: card.display_name(current_noise),
+            card_type: card.card_type,
             noise_change,
             damage_dealt: effects.damage_dealt,
             damage_blocked: effects.damage_blocked,
@@ -475,6 +479,24 @@ mod tests {
             2,
             "a negative count plants nothing"
         );
+    }
+
+    /// The combat screen picks the card's sound from this, so every type has
+    /// to come through as the type that was authored.
+    #[test]
+    fn a_played_card_reports_its_type() {
+        for (id, card_type) in [
+            ("strike", CardType::Attack),
+            ("shield", CardType::Defence),
+            ("vpn", CardType::Skill),
+            ("background_check", CardType::Recon),
+            ("nigerian_king", CardType::SocialEngineering),
+        ] {
+            let mut combat = Combat::with_card(id, 0);
+            combat.energy = 10;
+            let played = combat.play(0).unwrap();
+            assert_eq!(played.card_type, card_type, "{id}");
+        }
     }
 
     #[test]
