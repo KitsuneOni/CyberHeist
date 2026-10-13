@@ -157,22 +157,30 @@ impl RunStateNode {
         }
     }
 
-    /// What clearing the active encounter pays: `{ok, credits,
-    /// guaranteed_rare}`. Read by `FlowCoordinator` before it completes the
+    /// What completing the active encounter leads to: `{ok, type, credits,
+    /// guaranteed_rare, wins_contract}`. `credits` and `guaranteed_rare` are
+    /// what clearing it pays, and `wins_contract` is whether it is the final
+    /// zone's boss.
+    ///
+    /// Read by `FlowCoordinator` in one call before it completes the
     /// encounter, since completing clears it. With nothing active it pays
-    /// nothing.
+    /// nothing and wins nothing.
     #[func]
-    fn active_encounter_reward(&self) -> VarDictionary {
+    fn active_encounter_completion(&self) -> VarDictionary {
         match self.state.active_encounter() {
             Some(encounter) => vdict! {
                 "ok" => true,
+                "type" => encounter.encounter_type().as_str(),
                 "credits" => encounter_reward::credits_for(encounter.encounter_type(), encounter.zone()),
                 "guaranteed_rare" => encounter_reward::guaranteed_rarity(encounter.encounter_type()).is_some(),
+                "wins_contract" => self.state.active_encounter_wins_contract(),
             },
             None => vdict! {
                 "ok" => false,
+                "type" => "",
                 "credits" => 0_i64,
                 "guaranteed_rare" => false,
+                "wins_contract" => false,
             },
         }
     }
@@ -187,6 +195,30 @@ impl RunStateNode {
             offers.push(&offer_dictionary(index, offer));
         }
         offers
+    }
+
+    /// Whether `accept_contract_offer` would currently take an offer: at the
+    /// hub, with offers to choose from, before any encounter on the contract
+    /// has been entered. Still true once an offer is accepted, so the hub
+    /// reads it to offer Change contract on the map.
+    #[func]
+    fn can_accept_contract_offer(&self) -> bool {
+        self.state.can_accept_contract_offer()
+    }
+
+    /// Whether the hub should show the offer picker instead of the map: an
+    /// offer could be accepted and none has been yet.
+    #[func]
+    fn needs_contract_choice(&self) -> bool {
+        self.state.needs_contract_choice()
+    }
+
+    /// Whether an encounter on the current contract has been entered, even if
+    /// the player was caught in it and so completed nothing. Once it has, the
+    /// run is committed to this contract.
+    #[func]
+    fn contract_started(&self) -> bool {
+        self.state.contract_started()
     }
 
     /// Takes on the offer at `index` and rebuilds the contract map from it.
@@ -294,6 +326,26 @@ impl RunStateNode {
     #[func]
     fn complete_encounter(&mut self) -> VarDictionary {
         transition_result(self.state.complete_encounter())
+    }
+
+    /// What winning this contract paid: `{ok: true, credits}` once it has
+    /// been won, where `credits` is the accepted offer's `credit_reward` (0 on
+    /// the default contract). `{ok: false}` before then and on a contract the
+    /// player was caught on.
+    ///
+    /// Run state records the amount when the final boss is completed.
+    /// `FlowCoordinator` applies it with `change_credits` straight after that
+    /// transition, and the victory screen reads it from here, so it can be
+    /// rebuilt from run state alone.
+    #[func]
+    fn contract_reward(&self) -> VarDictionary {
+        match self.state.contract_reward() {
+            Some(credits) => vdict! {
+                "ok" => true,
+                "credits" => credits,
+            },
+            None => vdict! { "ok" => false },
+        }
     }
 
     #[func]
