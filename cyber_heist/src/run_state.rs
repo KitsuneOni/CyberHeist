@@ -14,7 +14,7 @@ use crate::contract_map::{
     EncounterSelection, EncounterType, NodeId, NodeProgress, ZoneProgress,
 };
 use crate::contract_offer::{ContractOffer, generate_offers};
-use crate::events::{EventDefinition, random_event};
+use crate::events::{EventDefinition, event_catalogue, random_event};
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_stats::RunStats;
@@ -115,6 +115,11 @@ pub struct RunState {
     stats: RunStats,
     /// Ids of the events this run has already shown, so an event node does
     /// not repeat one. Owned here so a new run starts with a fresh pool.
+    ///
+    /// Defaults to none when missing, so a save made before events were
+    /// tracked still loads. An id can appear twice: once every event has been
+    /// seen, `random_event` draws from the whole catalogue again.
+    #[serde(default)]
     seen_events: Vec<String>,
     /// The stock of the shop the run is in. Rolled the first time the shop
     /// screen opens and kept until the shop encounter ends, so reopening the
@@ -566,12 +571,13 @@ impl RunState {
     /// save cannot shorten the contract or change what its nodes are. A
     /// generated run cannot get under way without accepting an offer, so one
     /// that has started on none is refused. A shop's stock is only kept while
-    /// the run is in that shop.
+    /// the run is in that shop, and every event the run has seen must exist.
     pub fn validate_restored(&self) -> Result<(), RunStateError> {
         self.contract_map
             .validate_restored()
             .map_err(RunStateError::ContractMap)?;
         self.validate_restored_map_layout()?;
+        self.validate_restored_seen_events()?;
         if self.shop_visit.is_some() && !self.is_in_shop() {
             return Err(RunStateError::InconsistentRun(
                 "a shop's stock is kept for a run not in a shop",
@@ -630,6 +636,19 @@ impl RunState {
     /// Until an encounter is entered the player may still change contract,
     /// which replaces the map, so a run claiming not to have started must
     /// have nothing on its map to lose.
+    /// Every event the run has seen must be one this build has. Repeats are
+    /// allowed (see `seen_events`).
+    fn validate_restored_seen_events(&self) -> Result<(), RunStateError> {
+        let catalogue = event_catalogue();
+        let is_known = |id: &String| catalogue.iter().any(|event| event.id == *id);
+        if !self.seen_events.iter().all(is_known) {
+            return Err(RunStateError::InconsistentRun(
+                "a seen event is not one this build has",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_restored_contract_start(&self) -> Result<(), RunStateError> {
         if self.contract_started {
             return Ok(());
@@ -1432,6 +1451,29 @@ mod tests {
             .expect("a new run can start from the hub");
 
         assert_eq!(state.seen_events, Vec::<String>::new());
+    }
+
+    /// A run read back from a save may only have seen events this build has.
+    /// Repeats are fine: once every event has been seen, the whole catalogue
+    /// is drawn from again.
+    #[test]
+    fn a_restored_run_must_only_have_seen_real_events() {
+        let mut state = RunState::new();
+        let mut rng = StdRng::seed_from_u64(17);
+        for _ in 0..event_catalogue().len() + 2 {
+            state.roll_event(&mut rng);
+        }
+        assert!(state.seen_events.len() > event_catalogue().len());
+        assert_eq!(state.validate_restored(), Ok(()));
+
+        state.seen_events.push("not_a_real_event".to_string());
+
+        assert_eq!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(
+                "a seen event is not one this build has"
+            ))
+        );
     }
 
     /// Abandoning a run part-way through a fight would leave its screen
