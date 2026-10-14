@@ -313,7 +313,7 @@ func _defeat_boss_in_combat(combat: Node) -> bool:
 	if index < 0:
 		return false
 	combat.card_buttons[index].pressed.emit()
-	combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	combat.get_node("%PlayButton").pressed.emit()
 	return true
 
 

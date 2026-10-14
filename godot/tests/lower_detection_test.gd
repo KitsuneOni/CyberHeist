@@ -57,7 +57,7 @@ func _select(name: String) -> bool:
 
 
 func _press_play() -> void:
-	_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	_combat.get_node("%PlayButton").pressed.emit()
 
 
 func _state() -> Dictionary:
@@ -94,7 +94,7 @@ func _run() -> void:
 	await process_frame
 
 	_check(
-		not _combat.has_node("VBoxContainer/Buttons/DrawButton"),
+		not _combat.has_node("%DrawButton"),
 		"combat offers no free redraw/energy refresh button"
 	)
 	_arrange_hand(99)
@@ -108,7 +108,7 @@ func _run() -> void:
 		return
 	_check(
 		not _combat.card_buttons[_combat.selected_index].disabled
-		and not _combat.get_node("VBoxContainer/Buttons/PlayButton").disabled,
+		and not _combat.get_node("%PlayButton").disabled,
 		"the player can select and play VPN after reading intent"
 	)
 	_check(_combat.noise_label.text == "Noise: 99 / 100", "near-cap noise is displayed")
@@ -147,7 +147,7 @@ func _run() -> void:
 
 	# Normal turn ordering still applies after recovery. Use the normal hand size.
 	_combat.draw_phase.hand_size = 3
-	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	_combat.get_node("%EndTurnButton").pressed.emit()
 	_check(
 		_combat.noise_label.text == "Noise: 91 / 100",
 		"the next sentry turn acts on the recovered meter"
@@ -276,10 +276,10 @@ func _run() -> void:
 	)
 	_combat.selected_index = vpn_index
 	_press_play()
-	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	_combat.get_node("%EndTurnButton").pressed.emit()
 	_combat.draw_phase.end_turn()
 	_combat.sentry.perform_queued_action()
-	_combat.get_node("VBoxContainer/Buttons/CompleteEncounterButton").pressed.emit()
+	_combat.get_node("%CompleteEncounterButton").pressed.emit()
 	_check(_state() == before, "queued old-screen input cannot change gameplay after caught")
 	_check(_flow.run_snapshot().phase == "caught", "recovery cannot revive a failed encounter")
 	_check(

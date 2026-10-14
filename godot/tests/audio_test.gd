@@ -311,7 +311,7 @@ func _check_card_sounds() -> void:
 
 		_audio.last_sound_cue = ""
 		combat.card_buttons[index].pressed.emit()
-		combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+		combat.get_node("%PlayButton").pressed.emit()
 
 		_check(
 			_audio.last_sound_cue == expected_cue,

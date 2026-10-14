@@ -1,28 +1,34 @@
 extends Control
 
 @onready var draw_phase: Node = $DrawPhase
-@onready var credits_label: Label = $VBoxContainer/CreditsLabel
+@onready var credits_label: Label = %CreditsLabel
 @onready var sentry: Node = $Sentry
-@onready var turn_label: Label = $VBoxContainer/TurnLabel
-@onready var intent_label: Label = $VBoxContainer/IntentLabel
-@onready var energy_label: Label = $VBoxContainer/EnergyLabel
-@onready var pile_label: Label = $VBoxContainer/PileLabel
-@onready var play_count_label: Label = $VBoxContainer/PlayCountLabel
-@onready var status_label: Label = $VBoxContainer/StatusLabel
-@onready var card_container: HBoxContainer = $VBoxContainer/CardContainer
-@onready var detail_title: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailTitle
-@onready var detail_stats: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailStats
-@onready
-var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
-@onready
-var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
-@onready var noise_bar: ProgressBar = $NoiseBarContainer/NoiseBar
-@onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
-@onready var health_label: Label = $VBoxContainer/HealthLabel
-@onready var shield_label: Label = $VBoxContainer/ShieldLabel
-@onready var knowledge_label: Label = $VBoxContainer/KnowledgeLabel
-@onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
-@onready var complete_encounter_button: Button = $VBoxContainer/Buttons/CompleteEncounterButton
+@onready var turn_label: Label = %TurnLabel
+@onready var intent_label: Label = %IntentLabel
+@onready var energy_label: Label = %EnergyLabel
+@onready var energy_max_label: Label = %EnergyMaxLabel
+@onready var pile_label: Label = %PileLabel
+@onready var play_count_label: Label = %PlayCountLabel
+@onready var status_label: Label = %StatusLabel
+@onready var card_container: HBoxContainer = %CardContainer
+@onready var detail_title: Label = %DetailTitle
+@onready var detail_stats: Label = %DetailStats
+@onready var detail_description: Label = %DetailDescription
+@onready var detail_keywords: Label = %DetailKeywords
+@onready var noise_bar: ProgressBar = %NoiseBar
+@onready var noise_label: Label = %NoiseLabel
+@onready var detection_percent: Label = %DetectionPercent
+@onready var alert_tick: ColorRect = %AlertTick
+@onready var alert_tick_label: Label = %AlertTickLabel
+@onready var enemy_name: Label = %EnemyName
+@onready var enemy_icon: TextureRect = %EnemyIcon
+@onready var integrity_bar: ProgressBar = %IntegrityBar
+@onready var health_label: Label = %HealthLabel
+@onready var shield_label: Label = %ShieldLabel
+@onready var knowledge_label: Label = %KnowledgeLabel
+@onready var corruption_chip: Control = %CorruptionChip
+@onready var corruption_label: Label = %CorruptionLabel
+@onready var complete_encounter_button: Button = %CompleteEncounterButton
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
@@ -30,8 +36,48 @@ const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the co
 # turn report, so the player can tell loud play is what changed it.
 const ESCALATED_MARK := " [ESCALATED]"
 
+# Noise at which standard and elite security switch to their alert set. Mirrors
+# ALERT_NOISE in sentry.rs; it is marked on the detection bar so a loud turn can
+# be taken on purpose.
+const ALERT_NOISE := 60
+
+# The terminal palette shared with the main menu and the shop.
+const GREEN := Color(0.2, 1, 0.4, 1)
+const RED := Color(1, 0.2, 0.333333, 1)
+const CYAN := Color(0, 0.898, 1, 1)
+const CARD_BG := Color(0.0509804, 0.0862745, 0.0705882, 1)
+
+const CARD_SIZE := Vector2(124, 172)
+# How far a card rises out of the hand when hovered or selected.
+const CARD_LIFT := 14.0
+
+# Art for each card type until real card art exists, tinted green like every
+# other icon on the terminal screens.
+const TYPE_ICONS := {
+	"Attack": "res://assets/ui/icons/game-icons/virus.svg",
+	"Defence": "res://assets/ui/icons/tabler/shield.svg",
+	"Skill": "res://assets/ui/icons/game-icons/cpu.svg",
+	"Recon": "res://assets/ui/icons/game-icons/radar-sweep.svg",
+	"Social Engineering": "res://assets/ui/icons/game-icons/domino-mask.svg",
+}
+const FALLBACK_CARD_ICON := "res://assets/ui/icons/game-icons/circuitry.svg"
+
+# Plate art by construct. Anything not listed is standard security.
+const ENEMY_ICONS := {
+	"BASTION": "res://assets/ui/icons/game-icons/robot-golem.svg",
+	"HYDRA": "res://assets/ui/icons/game-icons/mesh-network.svg",
+	"CERBERUS": "res://assets/ui/icons/game-icons/sentry-gun.svg",
+	"ICEBREAKER": "res://assets/ui/icons/game-icons/security-gate.svg",
+	"BLACK MONOLITH": "res://assets/ui/icons/game-icons/server-rack.svg",
+	"THE ARCHITECT": "res://assets/ui/icons/game-icons/cyber-eye.svg",
+}
+const STANDARD_ENEMY_ICON := "res://assets/ui/icons/game-icons/cctv-camera.svg"
+
 var selected_index := -1
 var card_buttons: Array[Button] = []
+# The name and cost shown on each card face, in hand order.
+var card_name_labels: Array[Label] = []
+var card_cost_labels: Array[Label] = []
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
@@ -42,6 +88,9 @@ var shown_phase := 1
 
 func _ready() -> void:
 	shown_phase = sentry.phase()
+	# The alert tick is placed from the bar's width, which is only known once
+	# the layout has run.
+	noise_bar.resized.connect(_update_noise_label)
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
 
@@ -190,26 +239,180 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 	for child in card_container.get_children():
 		child.queue_free()
 	card_buttons.clear()
+	card_name_labels.clear()
+	card_cost_labels.clear()
 
 	var costs: PackedInt32Array = draw_phase.hand_costs()
 
 	for i in names.size():
-		var button := Button.new()
-		button.text = "%s [%d]" % [names[i], costs[i]]
-		button.toggle_mode = true
+		var detail: Dictionary = draw_phase.card_detail(i)
+		var button := _build_card(names[i], costs[i], detail)
 		button.disabled = costs[i] > draw_phase.energy
 		button.pressed.connect(_on_card_clicked.bind(i))
-		card_container.add_child(button)
+		button.mouse_entered.connect(_on_card_hovered.bind(i, true))
+		button.mouse_exited.connect(_on_card_hovered.bind(i, false))
 		card_buttons.append(button)
 
 	_update_selection_visuals()
 	_update_card_detail()
 
 
+# What the face of the card at `index` reads: its name and its cost.
+func card_face_text(index: int) -> String:
+	return "%s [%s]" % [card_name_labels[index].text, card_cost_labels[index].text]
+
+
+# One card in the hand, laid out like the card anatomy sheet: cost pip and
+# name on top, an art window, the type banner, and the noise it makes along the
+# bottom in red. The button sits in a slot taller than itself so hovering or
+# selecting can lift it out of the hand without shifting its neighbours.
+func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
+	var slot := Control.new()
+	slot.custom_minimum_size = Vector2(CARD_SIZE.x, CARD_SIZE.y + CARD_LIFT)
+	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_container.add_child(slot)
+
+	var button := Button.new()
+	button.toggle_mode = true
+	button.focus_mode = Control.FOCUS_NONE
+	button.size = CARD_SIZE
+	button.position = Vector2(0, CARD_LIFT)
+	button.add_theme_stylebox_override("normal", _card_style(GREEN, 0.45, 1, 0.0))
+	button.add_theme_stylebox_override("hover", _card_style(GREEN, 0.9, 2, 0.06))
+	button.add_theme_stylebox_override("pressed", _card_style(GREEN, 1.0, 3, 0.14))
+	button.add_theme_stylebox_override("hover_pressed", _card_style(GREEN, 1.0, 3, 0.14))
+	button.add_theme_stylebox_override("disabled", _card_style(GREEN, 0.18, 1, 0.0))
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	slot.add_child(button)
+
+	var face := VBoxContainer.new()
+	face.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	face.offset_left = 8
+	face.offset_top = 6
+	face.offset_right = -8
+	face.offset_bottom = -6
+	face.add_theme_constant_override("separation", 4)
+	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(face)
+
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 6)
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(top)
+
+	var pip := PanelContainer.new()
+	pip.custom_minimum_size = Vector2(26, 26)
+	pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ring := StyleBoxFlat.new()
+	ring.bg_color = CARD_BG
+	ring.set_border_width_all(2)
+	ring.border_color = GREEN
+	ring.set_corner_radius_all(13)
+	pip.add_theme_stylebox_override("panel", ring)
+	top.add_child(pip)
+
+	var cost_label := _card_label(str(cost), 16)
+	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cost_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	pip.add_child(cost_label)
+	card_cost_labels.append(cost_label)
+
+	var name_label := _card_label(card_name, 12)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_label.uppercase = true
+	top.add_child(name_label)
+	card_name_labels.append(name_label)
+
+	var art := PanelContainer.new()
+	art.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var art_style := StyleBoxFlat.new()
+	art_style.bg_color = Color(GREEN, 0.05)
+	art_style.set_border_width_all(1)
+	art_style.border_color = Color(GREEN, 0.3)
+	art.add_theme_stylebox_override("panel", art_style)
+	face.add_child(art)
+
+	var card_type: String = str(detail.get("type", ""))
+	var icon := TextureRect.new()
+	icon.texture = load(TYPE_ICONS.get(card_type, FALLBACK_CARD_ICON))
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.custom_minimum_size = Vector2(0, 48)
+	icon.modulate = Color(GREEN, 0.8)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art.add_child(icon)
+
+	var banner := _card_label(card_type, 11)
+	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner.uppercase = true
+	banner.clip_text = true
+	var banner_style := StyleBoxFlat.new()
+	banner_style.bg_color = Color(GREEN, 0.14)
+	banner.add_theme_stylebox_override("normal", banner_style)
+	face.add_child(banner)
+
+	var noise := _card_label(_noise_tag(str(detail.get("noise_text", ""))), 12)
+	noise.add_theme_color_override("font_color", _noise_tag_colour(str(detail.get("noise_text", ""))))
+	face.add_child(noise)
+
+	return button
+
+
+func _card_label(text: String, font_size: int) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+
+func _card_style(colour: Color, alpha: float, border: int, fill: float) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = CARD_BG.lerp(colour, fill)
+	style.set_border_width_all(border)
+	style.border_color = Color(colour, alpha)
+	return style
+
+
+# The short noise line along the bottom of a card, from the readout's wording:
+# "Generates 5 noise" reads "noise +5", "Reduces noise by 10" reads "noise -10".
+func _noise_tag(noise_text: String) -> String:
+	var amount := noise_text.to_int()
+	if noise_text.begins_with("Generates"):
+		return "noise +%d" % amount
+	if noise_text.begins_with("Reduces"):
+		return "noise -%d" % amount
+	return "silent"
+
+
+func _noise_tag_colour(noise_text: String) -> Color:
+	if noise_text.begins_with("Generates"):
+		return RED
+	if noise_text.begins_with("Reduces"):
+		return CYAN
+	return Color(GREEN, 0.55)
+
+
 func _on_card_clicked(index: int) -> void:
 	selected_index = index
 	_update_selection_visuals()
 	_update_card_detail()
+
+
+func _on_card_hovered(index: int, hovered: bool) -> void:
+	if index >= card_buttons.size() or card_buttons[index].disabled:
+		return
+	_lift_card(index, hovered or index == selected_index)
+
+
+func _lift_card(index: int, lifted: bool) -> void:
+	var button := card_buttons[index]
+	if not is_instance_valid(button):
+		return
+	button.position.y = 0.0 if lifted else CARD_LIFT
 
 
 # Fills the detail panel from the selected card, including an explanation of
@@ -252,6 +455,7 @@ func _update_card_detail() -> void:
 func _update_selection_visuals() -> void:
 	for i in card_buttons.size():
 		card_buttons[i].button_pressed = (i == selected_index)
+		_lift_card(i, i == selected_index)
 
 
 # Screen destruction is deferred. Ignore queued input on a combat screen whose
@@ -272,7 +476,7 @@ func _on_play_button_pressed() -> void:
 		# Every card type has its own sound, so the play is heard as well as
 		# read. DrawPhase reports which one this card makes.
 		AudioDirector.play_card_sound(str(result.get("sound_cue", "")))
-		play_count_label.text = "Cards played: %d" % draw_phase.play_count
+		play_count_label.text = "cards played: %d" % draw_phase.play_count
 		selected_index = -1
 		var noise_change: int = result.get("noise_change", 0)
 		var damage_dealt: int = result.get("damage_dealt", 0)
@@ -351,10 +555,19 @@ func _update_health_label() -> void:
 	if firewall > 0:
 		health_label.text += "  [Firewall %d]" % firewall
 
+	integrity_bar.max_value = maxi(sentry.max_health(), 1)
+	integrity_bar.value = sentry.health()
+
+	var who: String = sentry.construct_name()
+	if sentry.phase() > 1:
+		who += " // PHASE %d" % sentry.phase()
+	enemy_name.text = who
+	enemy_icon.texture = load(ENEMY_ICONS.get(sentry.construct_name(), STANDARD_ENEMY_ICON))
+
 
 func _update_knowledge_label() -> void:
 	knowledge_label.text = (
-		"Knowledge: %d / %d"
+		"knowledge %d / %d"
 		% [
 			KnowledgeMeterGlobal.knowledge,
 			KnowledgeMeterGlobal.max_knowledge,
@@ -378,16 +591,16 @@ func _refresh_status_labels() -> void:
 # Refreshed alongside everything else, so spending or earning shows up the
 # moment it happens rather than only back on the map.
 func _update_credits_label() -> void:
-	credits_label.text = "Credits: %d" % PlayerStateGlobal.money()
+	credits_label.text = "$ %d  credits on hand" % PlayerStateGlobal.money()
 
 
 func _update_turn_label() -> void:
-	turn_label.text = "Turn %d" % draw_phase.turn_number
+	turn_label.text = "TURN %d" % draw_phase.turn_number
 
 
 func _update_pile_label() -> void:
 	pile_label.text = (
-		"Draw pile: %d | Discard pile: %d"
+		"draw %d · discard %d"
 		% [
 			draw_phase.draw_pile_count(),
 			draw_phase.discard_pile_count(),
@@ -396,11 +609,13 @@ func _update_pile_label() -> void:
 
 
 func _update_corruption_label() -> void:
-	corruption_label.text = "Corruption: %d" % sentry.corruption()
+	var corruption: int = sentry.corruption()
+	corruption_label.text = "corruption %d" % corruption
+	corruption_chip.visible = corruption > 0
 
 
 func _update_shield_label() -> void:
-	shield_label.text = "Shield: %d" % NoiseMeterGlobal.shield
+	shield_label.text = "shield %d" % NoiseMeterGlobal.shield
 
 
 func _update_noise_label() -> void:
@@ -416,9 +631,26 @@ func _update_noise_label() -> void:
 	if resistance > 0:
 		noise_label.text += "  (recovery -%d%%)" % resistance
 
+	# The bar turns red once security is on alert, the same red the cards use
+	# for noise, and the percentage above it follows.
+	var alarmed := current >= ALERT_NOISE
+	var fill := noise_bar.get_theme_stylebox("fill") as StyleBoxFlat
+	if fill != null:
+		fill = fill.duplicate()
+		fill.bg_color = Color(RED if alarmed else GREEN, 0.85)
+		noise_bar.add_theme_stylebox_override("fill", fill)
+	detection_percent.text = "%d%%" % roundi(100.0 * current / maxi(max_val, 1))
+	detection_percent.add_theme_color_override("font_color", RED if alarmed else GREEN)
+
+	var tick_x: float = noise_bar.size.x * ALERT_NOISE / maxi(max_val, 1)
+	alert_tick.position.x = tick_x - alert_tick.size.x / 2.0
+	alert_tick_label.position.x = tick_x - 2.0
+	alert_tick_label.text = "alert %d" % ALERT_NOISE
+
 
 func _update_energy_label() -> void:
-	energy_label.text = "Energy: %d / %d" % [draw_phase.energy, draw_phase.max_energy]
+	energy_label.text = str(draw_phase.energy)
+	energy_max_label.text = "energy %d / %d" % [draw_phase.energy, draw_phase.max_energy]
 
 
 # Shows what the sentry will do next, so ending the turn is a choice made with
@@ -437,8 +669,10 @@ func _update_intent_label() -> void:
 
 	# Loud play puts security on alert. The intent is read again after every
 	# card, so it flips the moment noise crosses the line, either way.
-	if sentry.queued_action_escalated():
+	var escalated: bool = sentry.queued_action_escalated()
+	if escalated:
 		action += ESCALATED_MARK
+	intent_label.add_theme_color_override("font_color", RED if escalated else CYAN)
 
 	# An ability is announced with the intent rather than sprung afterwards, so
 	# ending the turn into a lockdown is a decision and not a surprise.

@@ -194,7 +194,7 @@ func _run() -> void:
 		_check_intent(combat, action_index, true)
 		var noise_before: int = combat.sentry.noise()
 		var previous_turn: int = combat.draw_phase.turn_number
-		combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+		combat.get_node("%EndTurnButton").pressed.emit()
 
 		# Check before yielding: one button press must resolve one announced
 		# action synchronously, including on the fatal, clamped final turn.
@@ -234,7 +234,7 @@ func _run() -> void:
 			detected_on_turn = turn_number
 			# The old screen remains alive until the deferred free, but queued
 			# input must not execute the new intent after detection.
-			combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+			combat.get_node("%EndTurnButton").pressed.emit()
 			_check(
 				_resolved_turns.size() == turn_number and combat.sentry.noise() == 100,
 				"caught combat cannot execute another queued action"
