@@ -398,7 +398,6 @@ impl ShopNode {
             Err(error) => failure(error.code()),
         }
     }
-
 }
 
 impl ShopNode {
