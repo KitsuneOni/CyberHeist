@@ -26,6 +26,9 @@ var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailConte
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
+# Marks an action security takes from its alert set, on the intent and in the
+# turn report, so the player can tell loud play is what changed it.
+const ESCALATED_MARK := " [ESCALATED]"
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
@@ -88,11 +91,14 @@ func _on_end_turn_button_pressed() -> void:
 		return
 
 	if turn.get("ok", false):
+		var action: String = turn.get("action", "")
+		if turn.get("alert", false):
+			action += ESCALATED_MARK
 		var message: String = (
 			"%s ran %s and added %d noise."
 			% [
 				turn.get("sentry", "?"),
-				turn.get("action", ""),
+				action,
 				turn.get("noise_added", 0),
 			]
 		)
@@ -428,6 +434,11 @@ func _update_intent_label() -> void:
 	var who: String = sentry.construct_name()
 	if sentry.phase() > 1:
 		who += " [PHASE %d]" % sentry.phase()
+
+	# Loud play puts security on alert. The intent is read again after every
+	# card, so it flips the moment noise crosses the line, either way.
+	if sentry.queued_action_escalated():
+		action += ESCALATED_MARK
 
 	# An ability is announced with the intent rather than sprung afterwards, so
 	# ending the turn into a lockdown is a decision and not a surprise.

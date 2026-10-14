@@ -796,8 +796,9 @@ of actions the sentry cycles through. It owns no noise value. The autoload
 `/root/NoiseMeterGlobal` owns the single `NoiseLevel`, with the incoming
 100-point cap. The action at the front of the queue is shown to the player during their own turn, which
 is what makes ending a turn a decision rather than a formality. Even standard
-security does more than make noise (see "Standard security's actions" below);
-picking actions in reaction to the player is a later story (#101).
+security does more than make noise (see "Standard security's actions" below),
+and standard and elite security turn louder once noise reaches 60 (see
+"Security on alert" below).
 `sentry_node.rs` exposes it to the combat scene:
 
 ```gdscript
@@ -807,6 +808,7 @@ $Sentry.max_noise()
 $Sentry.queued_action_name()      # "" when nothing is queued
 $Sentry.queued_action_noise()
 $Sentry.queued_action_ability()   # "-1 energy", or "" when it only makes noise
+$Sentry.queued_action_escalated() # true when it comes from the alert set
 $Sentry.has_ability()
 $Sentry.detection_resistance()
 $Sentry.add_noise(amount)         # noise from anywhere else, clamped
@@ -968,6 +970,44 @@ pay nothing here.
 card of the guaranteed rarity or better first, fills the rest from everything
 else so the offer stays distinct, and shuffles where the guaranteed card lands.
 A pool with no such card falls back to an ordinary offer.
+
+### Security on alert (story #101)
+
+Standard and elite security react to how loud the player is being. Each has an
+alert set alongside its script, one action for each slot. While noise is at or
+above `ALERT_NOISE` (60 of 100) the construct takes the alert action for the
+queued slot instead of the standard one. Zone 1 values:
+
+| Slot | Standard | Alert | Alert noise | Alert ability |
+| --- | --- | --- | --- | --- |
+| 1 | Packet Sniff | Deep Packet Inspection | 2 | |
+| 2 | Firewall Up | Firewall Surge | 2 | blocks the next 10 plain damage |
+| 3 | Trace Sweep | Active Trace | 3 | |
+| 4 | Inject Malware | Malware Flood | 2 | adds 2 Injected Malware |
+| 5 | Lockdown Probe | Lockdown Sweep | 4 | |
+
+Each alert action is the standard one's noise (scaled by zone as usual) plus
+one, so an alert turn is louder than a calm one but still quieter than the
+zone's boss. Firewall Surge stays under BLACK MONOLITH's 12. An elite's alert
+set uses the same actions one point louder again, under its own names (Total
+Scan, Fortified Firewall, Relentless Trace, Payload Barrage, Counter Lockdown),
+then **Emergency Reinforce**, which restores what Reinforce does. Bosses do not
+go on alert: they are already louder than everything around them, and THE
+ARCHITECT's second phase is its own change of action set.
+
+Noise only chooses which of the two actions fills the slot. It never moves the
+queue, so the next slot comes next whichever set the last action came from.
+The choice is live: `Sentry::queued_action(noise)` is read at the current
+noise, and the combat screen reads the intent again after every card. A loud
+card that takes the meter to 60 flips the intent to the alert action straight
+away, and recovery that takes it back under 60 flips it back, before the turn
+ends. When the turn begins, `SentryNode` performs the action for the noise at
+that moment, which is the one the intent showed last.
+
+The intent marks an alert action as `[ESCALATED]`, as does the turn report
+(`WARDEN-7 ran Active Trace [ESCALATED] and added 3 noise.`). The turn outcome
+carries `alert`. In code this is called the alert set so it does not clash
+with THE ARCHITECT's `escalated`, which means its change of phase.
 
 ### Detection resistance
 
