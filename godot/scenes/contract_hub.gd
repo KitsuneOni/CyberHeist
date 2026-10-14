@@ -11,6 +11,8 @@
 # back so they can swap to another offer.
 extends Control
 
+const DeckViewer := preload("res://scenes/deck_viewer.gd")
+
 const CHOOSING_TITLE := "Choose your contract"
 const CHOOSING_SUBTITLE := "Longer contracts take more zones and pay more when you win."
 const MAP_TITLE := "Choose your next breach"
@@ -34,6 +36,10 @@ const MAX_LAYOUT_FRAMES := 8
 var change_contract_button: Button = $Page/VBox/MapPanel/MapMargin/MapContent/ChangeContractButton
 @onready var key_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/KeyLabel
 @onready var status_label: Label = $Page/VBox/MapPanel/MapMargin/MapContent/StatusLabel
+# Made in _ready rather than here, so a screen freed before it is ever shown
+# leaves nothing orphaned behind.
+var view_deck_button: Button
+var deck_viewer: Control
 
 
 func _ready() -> void:
@@ -42,6 +48,7 @@ func _ready() -> void:
 	map_graph.node_selected.connect(_on_encounter_selected)
 	offer_picker.offer_chosen.connect(_on_offer_chosen)
 	change_contract_button.pressed.connect(_on_change_contract_pressed)
+	_add_deck_viewer()
 	_build_key()
 
 	if FlowCoordinator.needs_contract_choice():
@@ -182,6 +189,32 @@ func _on_offer_chosen(index: int) -> void:
 		)
 		return
 	_show_map()
+
+
+# A View deck button under Change contract, and the viewer it opens. Added in
+# code so the hub scene file doesn't change (story #55).
+func _add_deck_viewer() -> void:
+	view_deck_button = Button.new()
+	view_deck_button.name = "ViewDeckButton"
+	view_deck_button.pressed.connect(_open_deck_viewer)
+	var content := change_contract_button.get_parent()
+	content.add_child(view_deck_button)
+	content.move_child(view_deck_button, change_contract_button.get_index() + 1)
+
+	deck_viewer = DeckViewer.new()
+	deck_viewer.name = "DeckViewer"
+	deck_viewer.closed.connect(view_deck_button.grab_focus)
+	add_child(deck_viewer)
+	_update_view_deck_button()
+
+
+func _update_view_deck_button() -> void:
+	view_deck_button.text = "View deck (%d)" % FlowCoordinator.run_deck_size()
+
+
+func _open_deck_viewer() -> void:
+	_update_view_deck_button()
+	deck_viewer.open()
 
 
 func _on_change_contract_pressed() -> void:

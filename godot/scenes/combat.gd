@@ -24,11 +24,17 @@ var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailConte
 @onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
 @onready var complete_encounter_button: Button = $VBoxContainer/Buttons/CompleteEncounterButton
 
+const DeckViewer := preload("res://scenes/deck_viewer.gd")
+
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
+# Made in _ready rather than here, so a screen freed before it is ever shown
+# leaves nothing orphaned behind.
+var view_deck_button: Button
+var deck_viewer: Control
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
@@ -41,6 +47,23 @@ func _ready() -> void:
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
+	_add_deck_viewer()
+
+
+# A Deck button beside End Turn, and the viewer it opens, for checking the
+# whole run deck mid-fight (story #55). Added in code so the combat scene file
+# doesn't change.
+func _add_deck_viewer() -> void:
+	deck_viewer = DeckViewer.new()
+	deck_viewer.name = "DeckViewer"
+	add_child(deck_viewer)
+
+	view_deck_button = Button.new()
+	view_deck_button.name = "ViewDeckButton"
+	view_deck_button.text = "Deck (%d)" % FlowCoordinator.run_deck_size()
+	view_deck_button.pressed.connect(deck_viewer.open)
+	$VBoxContainer/Buttons.add_child(view_deck_button)
+	deck_viewer.closed.connect(view_deck_button.grab_focus)
 
 
 # Skipping the final boss would win the whole contract reward without a fight,

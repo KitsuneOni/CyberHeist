@@ -485,6 +485,13 @@ func run_deck_size() -> int:
 	return _run_deck.size()
 
 
+# Every distinct card the run owns, for the deck viewer. Each is a dictionary
+# of {id, count, name, type, rarity, cost_text, noise_text, description,
+# keywords}, in the order the run first owned each card.
+func run_deck_listing() -> Array:
+	return _run_deck.deck_listing()
+
+
 # Leaves the reward screen for the hub. The encounter was already completed by
 # complete_active_encounter, so there is no run state transition left to make.
 func finish_reward() -> Dictionary:
