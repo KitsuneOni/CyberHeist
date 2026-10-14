@@ -76,6 +76,15 @@ pub fn price_for(rarity: Rarity) -> i64 {
     }
 }
 
+pub fn upgrade_price_for(rarity: Rarity) -> i64 {
+    match rarity {
+        Rarity::Common => 40,
+        Rarity::Uncommon => 60,
+        Rarity::Rare => 80,
+        Rarity::Legendary => 120,
+    }
+}
+
 /// One place in the shop's stock: a card, its rarity and price, and whether
 /// it has gone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +122,15 @@ impl ShopSlot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Purchase {
     pub card_id: String,
+    pub price: i64,
+    /// The player's credits after paying.
+    pub credits_left: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upgrade {
+    pub from_id: String,
+    pub to_id: String,
     pub price: i64,
     /// The player's credits after paying.
     pub credits_left: i64,
@@ -158,6 +176,8 @@ pub enum ShopError {
     NothingToReroll,
     /// The run is not in a shop encounter, so there is no visit to buy from.
     NotInShop,
+
+    NotInDeck,
 }
 
 impl ShopError {
@@ -170,6 +190,7 @@ impl ShopError {
             ShopError::NothingToScrub => "nothing_to_scrub",
             ShopError::NothingToReroll => "nothing_to_reroll",
             ShopError::NotInShop => "not_in_shop",
+            ShopError::NotInDeck => "not_in_deck",
         }
     }
 }
@@ -472,6 +493,29 @@ fn charge(credits: &mut i64, price: i64) -> Result<(), ShopError> {
     }
     *credits -= price;
     Ok(())
+}
+
+pub fn upgrade_card(
+    credits: &mut i64,
+    deck: &mut RunDeck,
+    card_id: &str,
+    upgraded_id: &str,
+    rarity: Rarity,
+) -> Result<Upgrade, ShopError> {
+    if deck.count_of(card_id) == 0 {
+        return Err(ShopError::NotInDeck);
+    }
+
+    let price = upgrade_price_for(rarity);
+    charge(credits, price)?;
+    deck.replace_one(card_id, upgraded_id);
+
+    Ok(Upgrade {
+        from_id: card_id.to_string(),
+        to_id: upgraded_id.to_string(),
+        price,
+        credits_left: *credits,
+    })
 }
 
 /// The pool with each card once, sorted by id. Sorted before any shuffling so

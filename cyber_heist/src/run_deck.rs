@@ -63,6 +63,16 @@ impl RunDeck {
     pub fn count_of(&self, card_id: &str) -> usize {
         self.card_ids.iter().filter(|id| *id == card_id).count()
     }
+
+    pub fn replace_one(&mut self, from_id: &str, to_id: &str) -> bool {
+        match self.card_ids.iter().position(|id| id == from_id) {
+            Some(index) => {
+                self.card_ids[index] = to_id.to_string();
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 #[cfg(test)]

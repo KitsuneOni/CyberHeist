@@ -18,6 +18,7 @@
 
 use godot::builtin::VarDictionary;
 use godot::prelude::*;
+use std::collections::HashMap;
 
 use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
@@ -25,7 +26,7 @@ use crate::card_text;
 use crate::noise_meter::NoiseMeter;
 use crate::run_deck_node::RunDeckNode;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
-use crate::shop::{SCRUB_LOGS_NOISE_REDUCTION, SCRUB_LOGS_PRICE};
+use crate::shop::{self, SCRUB_LOGS_NOISE_REDUCTION, SCRUB_LOGS_PRICE};
 use crate::{
     CARD_DATABASE_PATH, NOISE_METER_PATH, PLAYER_STATE_PATH, PlayerState, RUN_DECK_PATH,
     card_detail_dictionary, failure,
@@ -293,6 +294,111 @@ impl ShopNode {
             Err(error) => failure(error.code()),
         }
     }
+    #[func]
+    fn upgradable_cards(&self) -> Array<VarDictionary> {
+        let mut cards: Array<VarDictionary> = Array::new();
+        let (Some(run_deck), Some(db)) = (
+            self.base().try_get_node_as::<RunDeckNode>(RUN_DECK_PATH),
+            self.card_database(),
+        ) else {
+            return cards;
+        };
+        let db = db.bind();
+        let credits = self.credits();
+
+        // One entry per distinct card, in the order each first appears.
+        let owned = run_deck.bind().owned_card_ids();
+        let mut order: Vec<String> = Vec::new();
+        let mut counts: HashMap<String, i64> = HashMap::new();
+        for id in owned {
+            let count = counts.entry(id.clone()).or_insert(0);
+            if *count == 0 {
+                order.push(id);
+            }
+            *count += 1;
+        }
+
+        for id in order {
+            let Some(upgraded_id) = db.upgraded_id_of(&id) else {
+                continue;
+            };
+            let (Some(card), Some(upgraded)) = (db.get(&id), db.get(&upgraded_id)) else {
+                continue;
+            };
+            let price = shop::upgrade_price_for(card.rarity);
+            // Shown on their strong sides, the same as stock and rewards.
+            let before = card_detail_dictionary(&card_text::describe(card, 0));
+            let after = card_detail_dictionary(&card_text::describe(upgraded, 0));
+            cards.push(&vdict! {
+                "id" => id.as_str(),
+                "count" => counts[&id],
+                "price" => price,
+                "affordable" => credits >= price,
+                "card" => &before,
+                "upgraded" => &after,
+            });
+        }
+
+        cards
+    }
+    #[func]
+    fn upgrade_card(&mut self, card_id: GString) -> VarDictionary {
+        let card_id = card_id.to_string();
+        let Some(mut player_state) = self
+            .base()
+            .try_get_node_as::<PlayerState>(PLAYER_STATE_PATH)
+        else {
+            return failure("no_player_state");
+        };
+        let Some(mut run_deck) = self.base().try_get_node_as::<RunDeckNode>(RUN_DECK_PATH) else {
+            return failure("no_run_deck");
+        };
+        let Some(run_state) = self.run_state() else {
+            return failure("no_run_state");
+        };
+        let Some(db) = self.card_database() else {
+            return failure("no_card_database");
+        };
+
+        if run_state.bind().shop_visit().is_none() {
+            return failure("not_in_shop");
+        }
+
+        let (upgraded_id, rarity) = {
+            let db = db.bind();
+            let Some(upgraded_id) = db.upgraded_id_of(&card_id) else {
+                return failure("not_upgradable");
+            };
+            let Some(card) = db.get(&card_id) else {
+                return failure("not_upgradable");
+            };
+            (upgraded_id, card.rarity)
+        };
+
+        let result = {
+            let mut player_state = player_state.bind_mut();
+            let mut run_deck = run_deck.bind_mut();
+            shop::upgrade_card(
+                player_state.credits_mut(),
+                run_deck.deck_mut(),
+                &card_id,
+                &upgraded_id,
+                rarity,
+            )
+        };
+
+        match result {
+            Ok(upgrade) => vdict! {
+                "ok" => true,
+                "from_id" => upgrade.from_id.as_str(),
+                "to_id" => upgrade.to_id.as_str(),
+                "price" => upgrade.price,
+                "credits" => upgrade.credits_left,
+            },
+            Err(error) => failure(error.code()),
+        }
+    }
+
 }
 
 impl ShopNode {
