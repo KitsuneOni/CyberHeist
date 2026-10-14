@@ -22,6 +22,10 @@ pub(crate) struct SentryNode {
 
     sentry: Sentry,
     noise_meter: Option<Gd<NoiseMeter>>,
+    /// Injected Malware the last turn planted that `DrawPhase` has not yet put
+    /// in the discard pile. The deck belongs to `DrawPhase`, so the sentry
+    /// only says how many.
+    malware_to_plant: i32,
     base: Base<Node>,
 }
 
@@ -32,6 +36,7 @@ impl INode for SentryNode {
             sentry_name: GString::new(),
             sentry: Sentry::warden_7(),
             noise_meter: None,
+            malware_to_plant: 0,
             base,
         }
     }
@@ -98,6 +103,12 @@ impl SentryNode {
 
     pub(crate) fn sentry_mut(&mut self) -> &mut Sentry {
         &mut self.sentry
+    }
+
+    /// Hands over the Injected Malware waiting to be planted and clears it,
+    /// so `DrawPhase` plants each card exactly once.
+    pub(crate) fn take_malware_to_plant(&mut self) -> i32 {
+        std::mem::take(&mut self.malware_to_plant)
     }
 }
 
@@ -229,7 +240,7 @@ impl SentryNode {
         self.sentry.phase()
     }
 
-    /// Plain damage BLACK MONOLITH's firewall will still absorb this turn, or
+    /// Plain damage the construct's firewall will still absorb this turn, or
     /// zero when none is up.
     #[func]
     fn firewall(&self) -> i32 {
@@ -239,7 +250,8 @@ impl SentryNode {
     /// Takes the sentry's turn and reports what it did:
     /// `{ok, sentry, action, noise_added, noise, max_noise, run_failed,
     /// energy_drain, ability, integrity_restored, corruption_purged, firewall,
-    /// corruption_damage, corruption, phase, escalated, defeated}`.
+    /// malware_planted, corruption_damage, corruption, phase, escalated,
+    /// defeated}`.
     ///
     /// `escalated` is true when the corruption tick took the construct into
     /// its second phase. It spends that turn escalating, so `ok` is false and
@@ -283,15 +295,20 @@ impl SentryNode {
                 let integrity_restored = self
                     .sentry
                     .restore_integrity(action.ability.integrity_restored());
-                // A boss's Purge and Firewall land on the construct too. Purge
-                // runs after the corruption tick, so it clears what would
-                // have ticked next turn.
+                // Purge and a firewall land on the construct too. Purge runs
+                // after the corruption tick, so it clears what would have
+                // ticked next turn.
                 let corruption_purged = if action.ability.purges_corruption() {
                     self.sentry.purge_corruption()
                 } else {
                     0
                 };
                 let firewall = self.sentry.raise_firewall(action.ability.firewall_raised());
+                // Inject Malware lands in the player's deck, which DrawPhase
+                // owns, so it is only recorded here for DrawPhase to plant
+                // once this turn has been announced.
+                let malware_planted = action.ability.malware_planted();
+                self.malware_to_plant += malware_planted;
 
                 vdict! {
                     "ok" => true,
@@ -310,6 +327,8 @@ impl SentryNode {
                     "corruption_purged" => corruption_purged,
                     // The firewall now standing for the player's next turn.
                     "firewall" => firewall,
+                    // Injected Malware headed for the player's discard pile.
+                    "malware_planted" => malware_planted,
                     "corruption_damage" => corruption_damage,
                     "corruption" => self.sentry.corruption(),
                     "phase" => self.sentry.phase(),
@@ -335,6 +354,7 @@ impl SentryNode {
                     "integrity_restored" => 0,
                     "corruption_purged" => 0,
                     "firewall" => 0,
+                    "malware_planted" => 0,
                     "corruption_damage" => corruption_damage,
                     "corruption" => corruption,
                     "phase" => self.sentry.phase(),

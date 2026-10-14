@@ -38,6 +38,19 @@ impl Deck {
         self.discard_pile.len()
     }
 
+    /// Card ids in the draw pile, top of the pile last.
+    pub fn draw_pile_ids(&self) -> Vec<String> {
+        self.draw_pile.iter().map(|card| card.id.clone()).collect()
+    }
+
+    /// Card ids in the discard pile, oldest first.
+    pub fn discard_pile_ids(&self) -> Vec<String> {
+        self.discard_pile
+            .iter()
+            .map(|card| card.id.clone())
+            .collect()
+    }
+
     /// Moves `cards` into the discard pile, e.g. at end of turn.
     pub fn discard(&mut self, cards: Vec<CardData>) {
         self.discard_pile.extend(cards);

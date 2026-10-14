@@ -126,7 +126,7 @@ func _run() -> void:
 	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
 	_check_shared_noise(50)
 	_check_social("Nigerian Prince", 8)
-	_check(_combat.sentry.queued_action_name() == "Trace Sweep", "only the announced action advances")
+	_check(_combat.sentry.queued_action_name() == "Firewall Up", "only the announced action advances")
 
 	# A social card itself pays once, reports its pre-play side, and changes
 	# the same meter. No damage/keyword execution is claimed by this slice.

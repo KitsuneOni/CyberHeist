@@ -365,6 +365,7 @@ impl DrawPhase {
                     "corruption_added" => played.corruption_added,
                     "corruption_boost_added" => played.corruption_boost_added,
                     "energy_tax_paid" => played.energy_tax_paid,
+                    "exhausted" => played.exhausted,
                 }
             }
             Err(error) => {
@@ -466,6 +467,9 @@ impl DrawPhase {
         self.deck.discard(remaining_hand);
 
         self.signals().security_phase().emit(finished_turn);
+        // Planted before the next hand is drawn, so a reshuffle on this draw
+        // can already bring the junk back round.
+        self.plant_injected_malware();
         self.noise_meter().clone().bind_mut().clear_shield();
         self.sentry_node()
             .clone()
@@ -509,6 +513,27 @@ impl DrawPhase {
     fn discard_pile_count(&self) -> i32 {
         self.deck.discard_pile_len() as i32
     }
+
+    /// Card ids in the draw pile, so a screen or test can see what is in it
+    /// without drawing.
+    #[func]
+    fn draw_pile_ids(&self) -> PackedStringArray {
+        self.deck
+            .draw_pile_ids()
+            .iter()
+            .map(|id| GString::from(id.as_str()))
+            .collect()
+    }
+
+    /// Card ids in the discard pile, oldest first.
+    #[func]
+    fn discard_pile_ids(&self) -> PackedStringArray {
+        self.deck
+            .discard_pile_ids()
+            .iter()
+            .map(|id| GString::from(id.as_str()))
+            .collect()
+    }
 }
 
 impl DrawPhase {
@@ -528,5 +553,31 @@ impl DrawPhase {
 
     fn current_noise(&self) -> i32 {
         self.noise_meter().bind().get_noise()
+    }
+
+    /// Puts whatever Inject Malware the sentry just ran into this
+    /// encounter's discard pile. Only this deck, never `RunDeckNode`, so the
+    /// junk is gone once the encounter ends.
+    fn plant_injected_malware(&mut self) {
+        let count = self
+            .sentry_node()
+            .clone()
+            .bind_mut()
+            .take_malware_to_plant();
+        if count <= 0 {
+            return;
+        }
+
+        let card_db = self
+            .base()
+            .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
+        let Some(malware) = card_db.bind().get(sentry::MALWARE_CARD_ID).cloned() else {
+            godot_error!(
+                "Inject Malware has no card to plant: '{}' is missing from cursed_cards.ron",
+                sentry::MALWARE_CARD_ID
+            );
+            return;
+        };
+        card_play::plant_junk(&mut self.deck, &malware, count);
     }
 }

@@ -153,7 +153,7 @@ func _run() -> void:
 		"the next sentry turn acts on the recovered meter"
 	)
 	_check(
-		_combat.intent_label.text == "WARDEN-7 will: Trace Sweep (+2 noise)",
+		_combat.intent_label.text == "WARDEN-7 will: Firewall Up (+1 noise, blocks 8 damage)",
 		"the next intent displays its new action and value after recovery and the sentry turn"
 	)
 	_check(

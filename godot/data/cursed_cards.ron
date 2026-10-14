@@ -49,4 +49,14 @@
     rarity: Common,
     keywords: [EnergyTax(1)],
     ),
+    (
+        id: "injected_malware",
+        name: "Injected Malware",
+        description: "Junk code security planted in your deck. Does nothing. Leaves the encounter once played.",
+        cost: 1,
+        noise_generated: 0,
+        card_type: Skill,
+        rarity: Common,
+        keywords: [Exhaust],
+    ),
 ]
