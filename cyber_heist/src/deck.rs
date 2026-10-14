@@ -98,6 +98,7 @@ mod tests {
             rarity: Rarity::Common,
             keywords: Vec::new(),
             weak_side: None,
+            upgrade: None,
         }
     }
 

@@ -33,6 +33,7 @@ pub struct CardDatabase {
     base: Base<Node>,
     cards: HashMap<String, CardData>,
     cursed_cards: HashMap<String, CardData>,
+    upgraded_cards: HashMap<String, CardData>,
 }
 
 #[godot_api]
@@ -42,6 +43,7 @@ impl INode for CardDatabase {
             base,
             cards: HashMap::new(),
             cursed_cards: HashMap::new(),
+            upgraded_cards: HashMap::new(),
         }
     }
 
@@ -50,18 +52,32 @@ impl INode for CardDatabase {
         godot_print!("Loaded {} cards", self.cards.len());
         self.cursed_cards = load_cursed_card_database();
         godot_print!("Loaded {} cursed cards", self.cursed_cards.len());
+        self.upgraded_cards = self
+            .cards
+            .values()
+            .filter_map(|card| card.upgraded())
+            .map(|card| (card.id.clone(), card))
+            .collect();
+        godot_print!("Loaded {} upgraded cards", self.upgraded_cards.len());
     }
 }
 
 impl CardDatabase {
     pub fn get(&self, id: &str) -> Option<&CardData> {
-        self.cards.get(id).or_else(|| self.cursed_cards.get(id))
+        self.cards
+            .get(id)
+            .or_else(|| self.cursed_cards.get(id))
+            .or_else(|| self.upgraded_cards.get(id))
     }
 
     // Kept for callers that want the whole pool, e.g. card rewards.
     #[allow(dead_code)]
     pub fn all(&self) -> impl Iterator<Item = &CardData> {
         self.cards.values()
+    }
+
+    pub fn upgraded_id_of(&self, id: &str) -> Option<String> {
+        self.cards.get(id)?.upgraded().map(|card| card.id)
     }
 }
 

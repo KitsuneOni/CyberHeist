@@ -37,6 +37,7 @@ const SOLD_ROW_ALPHA := 0.45
 @onready var reroll_details: Label = %RerollDetails
 @onready var reroll_price_label: Label = %RerollPriceLabel
 @onready var reroll_button: Button = %RerollButton
+@onready var upgrade_button: Button = %UpgradeButton
 
 # Each stock slot's controls and current card name, keyed by the slot number
 # ShopNode reports (and buy() takes), never by position in the stock list, so a
@@ -54,6 +55,8 @@ func _ready() -> void:
 	leave_button.pressed.connect(_on_leave_pressed)
 	scrub_logs_button.pressed.connect(_on_scrub_logs_pressed)
 	reroll_button.pressed.connect(_on_reroll_pressed)
+	upgrade_button.tooltip_text = "Pay credits to improve a card in your deck. The price depends on its rarity."
+	upgrade_button.pressed.connect(_on_upgrade_pressed)
 	_build_stock_rows()
 	_refresh()
 	_focus_first_control()
@@ -70,6 +73,16 @@ func _build_stock_rows() -> void:
 
 	for card: Dictionary in stock:
 		_add_stock_row(card)
+
+func _on_upgrade_pressed() -> void:
+	if _leaving:
+		return
+	_leaving = true
+
+	var result: Dictionary = FlowCoordinator.open_shop_upgrade()
+	if not result.get("ok", false):
+		_leaving = false
+		status_label.text = "Could not open the upgrade screen: %s" % result.get("error", "unknown error")
 
 
 func _add_stock_row(card: Dictionary) -> void:
