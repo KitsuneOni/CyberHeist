@@ -32,7 +32,9 @@ const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the co
 var selected_index := -1
 var card_buttons: Array[Button] = []
 # Shows a card's full description while the mouse is over it (story #14).
-var card_tooltip: PanelContainer = CardTooltip.new()
+# Made in _ready rather than here, so a screen freed before it is ever shown
+# leaves nothing orphaned behind.
+var card_tooltip: PanelContainer
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
@@ -42,6 +44,7 @@ var shown_phase := 1
 
 
 func _ready() -> void:
+	card_tooltip = CardTooltip.new()
 	add_child(card_tooltip)
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
