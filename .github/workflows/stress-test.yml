@@ -100,9 +100,6 @@ jobs:
       - name: Run headless detection recovery test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/lower_detection_test.gd
 
-      - name: Run headless detected end screen test
-        run: ~/godot-bin/godot --headless --path godot -s res://tests/end_screen_test.gd
-
       - name: Run headless card reward and run deck test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/card_reward_test.gd
 
@@ -152,6 +149,9 @@ jobs:
       # being caught pays nothing.
       - name: Run headless contract victory and reward test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/contract_victory_test.gd
+
+      - name: Run headless detected end screen test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/end_screen_test.gd
 
       # Plays partway, saves at safe points, then starts a second engine on
       # the same save file and presses Continue: the map, contract, credits,
