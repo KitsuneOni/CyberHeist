@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
@@ -18,7 +18,7 @@ pub struct CardData {
     pub upgrade: Option<CardUpgrade>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum CardType {
     Attack,
     Defence,
@@ -54,7 +54,7 @@ pub struct CardUpgrade {
 
 /// Ordered from most to least common, so a reward can ask for a rarity "or
 /// better" with a plain comparison.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rarity {
     Common,
     Uncommon,

@@ -5,9 +5,11 @@
 //! starts them again from zero.
 //!
 //! Wins are counted by `RunState` itself as encounters complete. Credits and
-//! cards are gained elsewhere (an event, a card reward, later a combat payout
-//! or the contract payout), so whatever applies one also records it through
+//! cards are gained elsewhere (an event, a card reward, a combat payout or
+//! the contract payout), so whatever applies one also records it through
 //! `RunState::record_credit_change` or `RunState::record_card_added`.
+
+use serde::{Deserialize, Serialize};
 
 use crate::contract_map::EncounterType;
 
@@ -15,7 +17,7 @@ use crate::contract_map::EncounterType;
 ///
 /// The fields only change through the `record_*` methods, which hold the
 /// counting rules, so nothing can push a total backwards.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunStats {
     combats_won: usize,
     credits_earned: i64,

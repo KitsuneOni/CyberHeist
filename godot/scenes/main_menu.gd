@@ -22,6 +22,7 @@ const FEED_SCROLL_SPEED := 22.0
 
 @onready var new_contract_button: Button = %NewContractButton
 @onready var continue_button: Button = %ContinueButton
+@onready var settings_button: Button = %SettingsButton
 @onready var quit_button: Button = %QuitButton
 @onready var status_label: Label = %StatusLabel
 @onready var build_label: Label = %BuildLabel
@@ -37,6 +38,7 @@ func _ready() -> void:
 	_labels = {
 		new_contract_button: "New contract",
 		continue_button: "Continue run",
+		settings_button: "Settings",
 		quit_button: "Quit",
 	}
 
@@ -47,6 +49,10 @@ func _ready() -> void:
 	continue_button.focus_mode = Control.FOCUS_ALL if can_continue else Control.FOCUS_NONE
 	if not can_continue:
 		_labels[continue_button] = "Continue run   [no save]"
+	# An unreadable save is set aside rather than crashing the game. Say so,
+	# since the player may have expected to carry on.
+	if not FlowCoordinator.save_load_error().is_empty():
+		status_label.text = "Your saved run could not be loaded, so New contract starts fresh."
 
 	for button: Button in _labels:
 		button.focus_entered.connect(_on_selection_changed.bind(button))
@@ -58,6 +64,7 @@ func _ready() -> void:
 
 	new_contract_button.pressed.connect(_on_new_contract_pressed)
 	continue_button.pressed.connect(_on_continue_pressed)
+	settings_button.pressed.connect(_on_settings_pressed)
 	quit_button.pressed.connect(_on_quit_pressed)
 
 	var version := str(ProjectSettings.get_setting("application/config/version", ""))
@@ -120,6 +127,12 @@ func _on_continue_pressed() -> void:
 	var result: Dictionary = FlowCoordinator.continue_run()
 	if not result.get("ok", false):
 		status_label.text = "Could not continue: %s" % result.get("error", "unknown error")
+
+
+func _on_settings_pressed() -> void:
+	var result: Dictionary = FlowCoordinator.open_settings()
+	if not result.get("ok", false):
+		status_label.text = "Could not open settings: %s" % result.get("error", "unknown error")
 
 
 func _on_quit_pressed() -> void:

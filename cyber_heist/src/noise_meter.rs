@@ -1,5 +1,9 @@
 use godot::prelude::*;
 
+/// The shared meter's cap: detection is total at this much noise.
+/// `NoiseMeterGlobal` is built with it, and a save holding more is refused.
+pub const MAX_NOISE: i32 = 100;
+
 /// Noise plus the shield currently protecting it. Shield absorbs positive
 /// noise before any of it reaches the meter — 1 shield blocks 1 noise,
 /// regardless of whether that noise came from the player's own card or from
@@ -128,7 +132,7 @@ pub struct NoiseMeter {
 #[godot_api]
 impl INode for NoiseMeter {
     fn init(base: Base<Node>) -> Self {
-        let level = NoiseLevel::new(100);
+        let level = NoiseLevel::new(MAX_NOISE);
         Self {
             noise: PhantomVar::default(),
             max_noise: PhantomVar::default(),
@@ -192,9 +196,23 @@ impl NoiseMeter {
 }
 
 impl NoiseMeter {
+    /// The authoritative value, for a Rust rule that has to look at it, such
+    /// as whether the shop's Scrub Logs would lower it.
+    pub(crate) fn level(&self) -> &NoiseLevel {
+        &self.level
+    }
+
     /// The transaction borrows the authoritative value, never a copied mirror.
     pub(crate) fn level_mut(&mut self) -> &mut NoiseLevel {
         &mut self.level
+    }
+
+    /// Puts the meter back where a saved run left it. A run is only saved
+    /// between fights, where no construct is resisting and no shield is up,
+    /// so only the noise itself is restored and the rest starts clear.
+    pub(crate) fn restore_noise(&mut self, noise: i32) {
+        self.level = NoiseLevel::new(self.level.max_noise());
+        self.level.add(noise);
     }
 }
 
