@@ -24,23 +24,22 @@ var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailConte
 @onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
 @onready var complete_encounter_button: Button = $VBoxContainer/Buttons/CompleteEncounterButton
 
-const DeckViewer := preload("res://scenes/deck_viewer.gd")
-
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
-# Made in _ready rather than here, so a screen freed before it is ever shown
-# leaves nothing orphaned behind.
-var view_deck_button: Button
-var deck_viewer: Control
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
 # The phase the player has been told about, so an escalation is announced once
 # whichever way it happens: a card on their turn, or corruption on the boss's.
 var shown_phase := 1
+# The deck viewer and the button that opens it (story #55). Made in _ready
+# rather than here, so a screen freed before it is ever shown leaves nothing
+# orphaned behind.
+var view_deck_button: Button
+var deck_viewer: Control
 
 
 func _ready() -> void:
@@ -54,7 +53,7 @@ func _ready() -> void:
 # whole run deck mid-fight (story #55). Added in code so the combat scene file
 # doesn't change.
 func _add_deck_viewer() -> void:
-	deck_viewer = DeckViewer.new()
+	deck_viewer = preload("res://scenes/deck_viewer.gd").new()
 	deck_viewer.name = "DeckViewer"
 	add_child(deck_viewer)
 
