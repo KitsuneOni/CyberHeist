@@ -10,6 +10,7 @@ const SHOP_UPGRADE_SCENE_PATH := "res://scenes/shop_upgrade.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
 const VICTORY_SCENE_PATH := "res://scenes/victory_screen.tscn"
+const SHOP_REMOVE_SCENE_PATH := "res://scenes/shop_remove.tscn"
 const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
@@ -510,6 +511,10 @@ func finish_reward() -> Dictionary:
 func open_shop_upgrade() -> Dictionary:
 	return _show_shop_screen(SHOP_UPGRADE_SCENE_PATH)
 
+# Opens the remove card screen from the shop. As with upgrades, the run stays
+# in the shop encounter, so the visit is untouched.
+func open_shop_remove() -> Dictionary:
+	return _show_shop_screen(SHOP_REMOVE_SCENE_PATH)
 
 # Goes back from the upgrade screen to the same shop visit.
 func return_to_shop() -> Dictionary:

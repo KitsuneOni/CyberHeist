@@ -18,7 +18,9 @@ use crate::events::{EventDefinition, event_catalogue, random_event};
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_stats::RunStats;
-use crate::shop::{Purchase, Reroll, ScrubbedLogs, ShopError, ShopVisit};
+use crate::shop::{
+    self, Purchase, RemovedCard, Reroll, ScrubbedLogs, ShopError, ShopVisit, Upgrade,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -521,6 +523,31 @@ impl RunState {
         let reroll = self.open_visit_mut()?.reroll(credits, rng)?;
         self.stats.record_credit_change(-reroll.price);
         Ok(reroll)
+    }
+
+    pub fn remove_card_in_shop(
+        &mut self,
+        card_id: &str,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+    ) -> Result<RemovedCard, ShopError> {
+        let removed = self.open_visit_mut()?.remove_card(card_id, credits, deck)?;
+        self.stats.record_credit_change(-removed.price);
+        Ok(removed)
+    }
+
+    pub fn upgrade_card_in_shop(
+        &mut self,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+        card_id: &str,
+        upgraded_id: &str,
+        rarity: Rarity,
+    ) -> Result<Upgrade, ShopError> {
+        self.open_visit_mut()?;
+        let upgrade = shop::upgrade_card(credits, deck, card_id, upgraded_id, rarity)?;
+        self.stats.record_credit_change(-upgrade.price);
+        Ok(upgrade)
     }
 
     /// The shop visit to act on, or [`ShopError::NotInShop`] unless the run

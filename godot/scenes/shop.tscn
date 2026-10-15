@@ -87,6 +87,26 @@ custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 theme_type_variation = &"DimLabel"
 
+[node name="ActionsRow" type="HBoxContainer" parent="Content/Column"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="UpgradeButton" type="Button" parent="Content/Column/ActionsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+theme_type_variation = &"TerminalMenuButton"
+text = "> Upgrade"
+alignment = 0
+
+[node name="RemoveButton" type="Button" parent="Content/Column/ActionsRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+theme_type_variation = &"TerminalMenuButton"
+text = "> Remove card"
+alignment = 0
+
 [node name="Footer" type="HBoxContainer" parent="Content/Column" unique_id=828466298]
 layout_mode = 2
 theme_override_constants/separation = 24
@@ -97,14 +117,6 @@ layout_mode = 2
 size_flags_horizontal = 0
 theme_type_variation = &"TerminalMenuButton"
 text = "> Leave"
-alignment = 0
-
-[node name="UpgradeButton" type="Button" parent="Content/Column/Footer" unique_id=1873946205]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 0
-theme_type_variation = &"TerminalMenuButton"
-text = "> Upgrade"
 alignment = 0
 
 [node name="Services" type="HBoxContainer" parent="Content/Column/Footer" unique_id=351172267]
