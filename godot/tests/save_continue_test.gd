@@ -205,8 +205,8 @@ func _capture_state() -> Dictionary:
 	elif state.screen == "ShopScreen":
 		state["shop_stock"] = screen.shop_node.stock()
 	elif state.screen == "CaughtScreen":
-		state["caught_fine"] = screen.get_node("VBoxContainer/FineLabel").text
-		state["caught_upgrades"] = screen.get_node("VBoxContainer/UpgradesLabel").text
+		state["caught_fine"] = screen.get_node("%FineLabel").text
+		state["caught_upgrades"] = screen.get_node("%UpgradesLabel").text
 	elif state.screen == "CardReward":
 		var offered_ids := []
 		for card: Dictionary in screen.offered:

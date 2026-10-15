@@ -8,6 +8,10 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Damage(6)],
+        upgrade: Some((
+            description: Some("Deal 9 damage."),
+            keywords: Some([Damage(9)]),
+        )),
     ),
     (
         id: "shield",
@@ -18,6 +22,10 @@
         card_type: Defence,
         rarity: Common,
         keywords: [Block(6)],
+        upgrade: Some((
+            description: Some("Gain 9 shield"),
+            keywords: Some([Block(9)]),
+        )),
     ),
     (
         id: "trojan",
@@ -28,6 +36,10 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Penetrating(6)],
+        upgrade: Some((
+            description: Some("Deal 9 penetrating damage"),
+            keywords: Some([Penetrating(9)]),
+        )),
     ),
     (
         id: "malware",
@@ -38,6 +50,10 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Damage(8), Corrupting(4)],
+        upgrade: Some((
+            description: Some("Deal 8 damage and corrupt the enemy for 8 points"),
+            keywords: Some([Damage(8), Corrupting(8)]),
+        )),
     ),
     (
         id: "vpn",
@@ -48,6 +64,10 @@
         card_type: Skill,
         rarity: Common,
         keywords: [],
+        upgrade: Some((
+            description: Some("Lower noise by 20."),
+            noise_generated: Some(-20),
+        )),
     ),
     (
         id:"ransomware",
@@ -58,6 +78,10 @@
         card_type: Skill,
         rarity: Common,
         keywords: [Damage(10)],
+        upgrade: Some((
+            description: Some("Deal 15 damage"),
+            keywords: Some([Damage(15)]),
+        )),
     ),
     (
         id:"worm",
@@ -68,6 +92,10 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Corrupting(8)],
+        upgrade: Some((
+            description: Some("Corrupt the enemy for 8 points"),
+            cost: Some(0),
+        )),
     ),
     (
         id:"triple_worm",
@@ -78,6 +106,11 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Corrupting(5)],
+        upgrade: Some((
+            description: Some("Corrupt all enemies for 6 points"),
+            keywords: Some([Corrupting(6)]),
+            cost: Some(2),
+        )),
     ),
     (
         id:"phishing_attack",
@@ -88,6 +121,9 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Penetrating(12)],
+        upgrade: Some((
+            cost: Some(1),
+        )),
     ),
     (
         id:"social_engineering",
@@ -98,6 +134,10 @@
         card_type: Skill,
         rarity: Common,
         keywords: [Corrupting(3)],
+        upgrade: Some((
+            description: Some("Corrupt enemys for 6 damage"),
+            keywords: Some([Corrupting(6)]),
+        )),
     ),
     (
         id:"background_check",
@@ -108,6 +148,9 @@
         card_type: Recon,
         rarity: Common,
         keywords: [Knowledge(1)],
+        upgrade: Some((
+            cost: Some(0),
+        )),
     ),
     (
         id:"notifications_off",
@@ -118,6 +161,9 @@
         card_type: Skill,
         rarity: Common,
         keywords: [],
+        upgrade: Some((
+            noise_generated: Some(-30),
+        )),
     ),
     (
         id:"burn_the_server",
@@ -128,6 +174,9 @@
         card_type: Skill,
         rarity: Rare,
         keywords: [Knowledge(-3)],
+        upgrade: Some((
+            cost: Some(2),
+        )),
     ),
     (
         id:"tor_browsing",
@@ -138,6 +187,10 @@
         card_type: Skill,
         rarity: Rare,
         keywords: [Draw(2)],
+        upgrade: Some((
+            description: Some("Draw 3 cards"),
+            keywords: Some([Draw(3)]),
+        )),
     ),
     (
         id:"caffeine_addicted",
@@ -148,6 +201,10 @@
         card_type: Skill,
         rarity: Common,
         keywords: [MaxEnergyBoost(1)],
+        upgrade: Some((
+            description: Some("Increase max energy by 2 this combat"),
+            keywords: Some([MaxEnergyBoost(2)]),
+        )),
     ),
     (
         id:"mosnter_energy",
@@ -158,6 +215,11 @@
         card_type: Skill,
         rarity: Rare,
         keywords: [Draw(1), MaxEnergyBoost(1)],
+        upgrade: Some((
+            description: Some("Draw 2 cards - Gain 1 max energy this combat"),
+            keywords: Some([Draw(2), MaxEnergyBoost(1)]),
+            cost: Some(2),
+        )),
     ),
     (
         id:"key_logging",
@@ -168,6 +230,10 @@
         card_type: Recon,
         rarity: Common,
         keywords: [Knowledge(1), CorruptingBoost(2)],
+        upgrade: Some((
+            description: Some("Gain knowledge, Gain 4 Corrupting boost"),
+            keywords: Some([Knowledge(1), CorruptingBoost(4)]),
+        )),
     ),
     (
         id:"nigerian_king",
@@ -178,6 +244,16 @@
         card_type: SocialEngineering,
         rarity: Common,
         keywords: [Damage(18)],
+        upgrade: Some((
+            description: Some("Deal 25 damage"),
+            keywords: Some([Damage(25)]),
+            weak_side: Some((
+                noise_threshold: 50,
+                name: Some("Nigerian Prince+"),
+                description: "Deal 16 damage",
+                keywords: [Damage(16)],
+            )),
+        )),
         weak_side: Some((
             noise_threshold: 50,
             name: Some("Nigerian Prince"),
@@ -194,6 +270,15 @@
         card_type: SocialEngineering,
         rarity: Rare,
         keywords: [Corrupting(5), CorruptingBoost(5)],
+        upgrade: Some((
+            noise_generated: Some(0),
+            weak_side: Some((
+                noise_threshold: 50,
+                name: Some("Wooden horse+"),
+                description: "Apply 10 corruption",
+                keywords: [Corrupting(10)],
+            )),
+        )),
         weak_side: Some((
             noise_threshold: 50,
             name: Some("Wooden horse"),
@@ -210,6 +295,9 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Penetrating(14)],
+        upgrade: Some((
+            cost: Some(1),
+        )),
     ),
     (
         id:"burner_phone",
@@ -220,6 +308,11 @@
         card_type: Defence,
         rarity: Common,
         keywords: [Block(8)],
+        upgrade: Some((
+            description: Some("Gain 12 shield - Reduce noise"),
+            keywords: Some([Block(12)]),
+            noise_generated: Some(-20),
+        )),
     ),
     (
         id:"social_surfing",
@@ -230,6 +323,9 @@
         card_type: Skill,
         rarity: Rare,
         keywords: [Draw(5), Knowledge(1)],
+        upgrade: Some((
+            cost: Some(2),
+        )),
     ),
     (
         id:"backdoor",
@@ -240,6 +336,9 @@
         card_type: SocialEngineering,
         rarity: Rare,
         keywords: [],
+        upgrade: Some((
+            cost: Some(1),
+        )),
         weak_side: Some((
             noise_threshold: 50,
             name: Some("Frontdoor"),
@@ -266,6 +365,10 @@
         card_type: Attack,
         rarity: Common,
         keywords: [Damage(4)],
+        upgrade: Some((
+            description: Some("Deal 8 Damage to all enemies"),
+            keywords: Some([Damage(8)]),
+        )),
     ),
     (
         id:"spyware",
@@ -276,6 +379,11 @@
         card_type: Recon,
         rarity: Rare,
         keywords: [Knowledge(1)],
+        upgrade: Some((
+            description: Some("Increase knowledge stage by 2"),
+            keywords: Some([Knowledge(2)]),
+            cost: Some(1),
+        )),
     ),
     (
         id:"wannacry",
@@ -286,6 +394,15 @@
         card_type: SocialEngineering,
         rarity: Rare,
         keywords: [Penetrating(30)],
+        upgrade: Some((
+            cost: Some(2),
+            weak_side: Some((
+                noise_threshold: 50,
+                name: Some("want to cry+"),
+                description: "Deal 15 damage",
+                keywords: [Damage(15)],
+            )),
+        )),
         weak_side: Some((
             noise_threshold: 50,
             name: Some("want to cry"),
@@ -302,6 +419,9 @@
         card_type: Skill,
         rarity: Rare,
         keywords: [CorruptingBoost(5)],
+        upgrade: Some((
+            cost: Some(1),
+        )),
     ),
     (
         id:"false_reporting",
@@ -312,6 +432,10 @@
         card_type: Skill,
         rarity: Common,
         keywords: [],
+        upgrade: Some((
+            description: Some("Reduce noise"),
+            noise_generated: Some(-20),
+        )),
     ),
     (
         id:"whale_hunting",
@@ -322,16 +446,21 @@
         card_type: SocialEngineering,
         rarity: Rare,
         keywords: [Corrupting(15)],
+        upgrade: Some((
+            description: Some("Gain 10 noise - Apply 15 Corrupt"),
+            noise_generated: Some(10),
+            weak_side: Some((
+                noise_threshold: 50,
+                name: Some("dolphin saving+"),
+                description: "Remove 30 noise",
+                keywords: [],
+            )),
+        )),
         weak_side: Some((
             noise_threshold: 50,
             name: Some("dolphin saving"),
             description:"Remove 30 noise – remove 10 Corrupt ",
-            keywords: [Corrupting(-15)],
+            keywords: [Corrupting(-10)],
         )),
-
     ),
-    
-
-
-
 ]

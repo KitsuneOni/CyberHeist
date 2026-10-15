@@ -1,25 +1,29 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene format=3 uid="uid://bdimvc86xehn7"]
 
-[ext_resource type="Script" path="res://scenes/shop.gd" id="1_shop"]
-[ext_resource type="Theme" path="res://themes/terminal_theme.tres" id="2_theme"]
-[ext_resource type="Shader" path="res://shaders/crt_overlay.gdshader" id="3_crt"]
+[ext_resource type="Theme" uid="uid://cb4ookhwqlq0y" path="res://themes/terminal_theme.tres" id="1_yckl3"]
+[ext_resource type="Script" path="res://scenes/shop.gd" id="2_hjhby"]
+[ext_resource type="Shader" uid="uid://dcdkawqy6o0jt" path="res://shaders/crt_overlay.gdshader" id="3_4rn8i"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
-shader = ExtResource("3_crt")
+shader = ExtResource("3_4rn8i")
+shader_parameter/scanline_strength = 0.18
+shader_parameter/scanline_spacing = 3.0
+shader_parameter/vignette_strength = 0.35
+shader_parameter/flicker_strength = 0.015
 
-[node name="ShopScreen" type="Control"]
+[node name="ShopScreen" type="Control" unique_id=1249881337]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme = ExtResource("2_theme")
-script = ExtResource("1_shop")
+theme = ExtResource("1_yckl3")
+script = ExtResource("2_hjhby")
 
-[node name="ShopNode" type="ShopNode" parent="."]
+[node name="ShopNode" type="ShopNode" parent="." unique_id=920530215]
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="ColorRect" parent="." unique_id=75177193]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -29,7 +33,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.0392157, 0.0588235, 0.0509804, 1)
 
-[node name="Content" type="MarginContainer" parent="."]
+[node name="Content" type="MarginContainer" parent="." unique_id=1014092000]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -41,53 +45,53 @@ theme_override_constants/margin_top = 40
 theme_override_constants/margin_right = 64
 theme_override_constants/margin_bottom = 32
 
-[node name="Column" type="VBoxContainer" parent="Content"]
+[node name="Column" type="VBoxContainer" parent="Content" unique_id=760644777]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="Header" type="HBoxContainer" parent="Content/Column"]
+[node name="Header" type="HBoxContainer" parent="Content/Column" unique_id=913632639]
 layout_mode = 2
 
-[node name="CreditsLabel" type="Label" parent="Content/Column/Header"]
+[node name="CreditsLabel" type="Label" parent="Content/Column/Header" unique_id=624336123]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 28
 text = "$ 0  credits on hand"
 
-[node name="TitleLabel" type="Label" parent="Content/Column/Header"]
+[node name="TitleLabel" type="Label" parent="Content/Column/Header" unique_id=1623301146]
 layout_mode = 2
 theme_override_font_sizes/font_size = 28
 text = "DARK WEB // SHOP"
 horizontal_alignment = 2
 
-[node name="Tagline" type="Label" parent="Content/Column"]
+[node name="Tagline" type="Label" parent="Content/Column" unique_id=950845082]
 layout_mode = 2
 theme_type_variation = &"DimLabel"
 text = "stock is rolled for this visit; pay to reroll what is still for sale_"
 
-[node name="StockScroll" type="ScrollContainer" parent="Content/Column"]
+[node name="StockScroll" type="ScrollContainer" parent="Content/Column" unique_id=393451652]
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="StockList" type="VBoxContainer" parent="Content/Column/StockScroll"]
+[node name="StockList" type="VBoxContainer" parent="Content/Column/StockScroll" unique_id=705784993]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 12
 
-[node name="StatusLabel" type="Label" parent="Content/Column"]
+[node name="StatusLabel" type="Label" parent="Content/Column" unique_id=1391043579]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 theme_type_variation = &"DimLabel"
 
-[node name="Footer" type="HBoxContainer" parent="Content/Column"]
+[node name="Footer" type="HBoxContainer" parent="Content/Column" unique_id=828466298]
 layout_mode = 2
 theme_override_constants/separation = 24
 
-[node name="LeaveButton" type="Button" parent="Content/Column/Footer"]
+[node name="LeaveButton" type="Button" parent="Content/Column/Footer" unique_id=1673223133]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 0
@@ -95,17 +99,25 @@ theme_type_variation = &"TerminalMenuButton"
 text = "> Leave"
 alignment = 0
 
-[node name="Services" type="HBoxContainer" parent="Content/Column/Footer"]
+[node name="UpgradeButton" type="Button" parent="Content/Column/Footer" unique_id=1873946205]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+theme_type_variation = &"TerminalMenuButton"
+text = "> Upgrade"
+alignment = 0
+
+[node name="Services" type="HBoxContainer" parent="Content/Column/Footer" unique_id=351172267]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 40
 alignment = 2
 
-[node name="ScrubLogsService" type="HBoxContainer" parent="Content/Column/Footer/Services"]
+[node name="ScrubLogsService" type="HBoxContainer" parent="Content/Column/Footer/Services" unique_id=526492724]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="ScrubLogsDetails" type="Label" parent="Content/Column/Footer/Services/ScrubLogsService"]
+[node name="ScrubLogsDetails" type="Label" parent="Content/Column/Footer/Services/ScrubLogsService" unique_id=710204073]
 unique_name_in_owner = true
 layout_mode = 2
 mouse_filter = 1
@@ -113,24 +125,24 @@ theme_override_font_sizes/font_size = 16
 text = "SCRUB LOGS"
 vertical_alignment = 1
 
-[node name="ScrubLogsPriceLabel" type="Label" parent="Content/Column/Footer/Services/ScrubLogsService"]
+[node name="ScrubLogsPriceLabel" type="Label" parent="Content/Column/Footer/Services/ScrubLogsService" unique_id=749317655]
 unique_name_in_owner = true
 layout_mode = 2
 horizontal_alignment = 2
 vertical_alignment = 1
 
-[node name="ScrubLogsButton" type="Button" parent="Content/Column/Footer/Services/ScrubLogsService"]
+[node name="ScrubLogsButton" type="Button" parent="Content/Column/Footer/Services/ScrubLogsService" unique_id=1025453504]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"TerminalMenuButton"
 theme_override_font_sizes/font_size = 22
 text = "[ scrub ]"
 
-[node name="RerollService" type="HBoxContainer" parent="Content/Column/Footer/Services"]
+[node name="RerollService" type="HBoxContainer" parent="Content/Column/Footer/Services" unique_id=814167882]
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="RerollDetails" type="Label" parent="Content/Column/Footer/Services/RerollService"]
+[node name="RerollDetails" type="Label" parent="Content/Column/Footer/Services/RerollService" unique_id=95217951]
 unique_name_in_owner = true
 layout_mode = 2
 mouse_filter = 1
@@ -138,20 +150,20 @@ theme_override_font_sizes/font_size = 16
 text = "REROLL STOCK"
 vertical_alignment = 1
 
-[node name="RerollPriceLabel" type="Label" parent="Content/Column/Footer/Services/RerollService"]
+[node name="RerollPriceLabel" type="Label" parent="Content/Column/Footer/Services/RerollService" unique_id=1815984728]
 unique_name_in_owner = true
 layout_mode = 2
 horizontal_alignment = 2
 vertical_alignment = 1
 
-[node name="RerollButton" type="Button" parent="Content/Column/Footer/Services/RerollService"]
+[node name="RerollButton" type="Button" parent="Content/Column/Footer/Services/RerollService" unique_id=284564582]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"TerminalMenuButton"
 theme_override_font_sizes/font_size = 22
 text = "[ reroll ]"
 
-[node name="CrtOverlay" type="ColorRect" parent="."]
+[node name="CrtOverlay" type="ColorRect" parent="." unique_id=646843957]
 material = SubResource("ShaderMaterial_crt")
 layout_mode = 1
 anchors_preset = 15

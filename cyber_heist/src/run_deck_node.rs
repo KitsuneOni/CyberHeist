@@ -185,4 +185,32 @@ impl RunDeckNode {
         let ids: Vec<String> = card_ids.as_slice().iter().map(GString::to_string).collect();
         self.describe_reward_cards(ids.iter().map(String::as_str))
     }
+
+    /// Every distinct card the run owns, for the deck viewer: the card's
+    /// details (see `card_detail_dictionary`) plus its `id` and `count`, the
+    /// number of copies owned. In the order the run first owned each card. An
+    /// id the card database does not know is left out, as in `describe_cards`.
+    #[func]
+    fn deck_listing(&self) -> Array<VarDictionary> {
+        let tally = self.deck.tally();
+        let described = self.describe_reward_cards(tally.iter().map(|(id, _)| id.as_str()));
+
+        // describe_reward_cards skips unknown ids, so match counts up by id
+        // rather than by position.
+        described
+            .iter_shared()
+            .map(|mut detail| {
+                let id = detail
+                    .get("id")
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                let count = tally
+                    .iter()
+                    .find(|(owned, _)| *owned == id)
+                    .map_or(0, |(_, count)| *count);
+                detail.set("count", count as i64);
+                detail
+            })
+            .collect()
+    }
 }

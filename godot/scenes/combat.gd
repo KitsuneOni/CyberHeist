@@ -15,11 +15,9 @@ extends Control
 @onready var detail_stats: Label = %DetailStats
 @onready var detail_description: Label = %DetailDescription
 @onready var detail_keywords: Label = %DetailKeywords
+@onready var detection_meter: Control = %NoiseBarContainer
 @onready var noise_bar: ProgressBar = %NoiseBar
 @onready var noise_label: Label = %NoiseLabel
-@onready var detection_percent: Label = %DetectionPercent
-@onready var alert_tick: ColorRect = %AlertTick
-@onready var alert_tick_label: Label = %AlertTickLabel
 @onready var enemy_name: Label = %EnemyName
 @onready var enemy_icon: TextureRect = %EnemyIcon
 @onready var integrity_bar: ProgressBar = %IntegrityBar
@@ -30,16 +28,13 @@ extends Control
 @onready var corruption_label: Label = %CorruptionLabel
 @onready var complete_encounter_button: Button = %CompleteEncounterButton
 
+const CardTooltip := preload("res://scenes/card_tooltip.gd")
+
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
 # Marks an action security takes from its alert set, on the intent and in the
 # turn report, so the player can tell loud play is what changed it.
 const ESCALATED_MARK := " [ESCALATED]"
-
-# Noise at which standard and elite security switch to their alert set. Mirrors
-# ALERT_NOISE in sentry.rs; it is marked on the detection bar so a loud turn can
-# be taken on purpose.
-const ALERT_NOISE := 60
 
 # The terminal palette shared with the main menu and the shop.
 const GREEN := Color(0.2, 1, 0.4, 1)
@@ -78,21 +73,52 @@ var card_buttons: Array[Button] = []
 # The name and cost shown on each card face, in hand order.
 var card_name_labels: Array[Label] = []
 var card_cost_labels: Array[Label] = []
+# Shows a card's full description while the mouse is over it (story #14).
+# Made in _ready rather than here, so a screen freed before it is ever shown
+# leaves nothing orphaned behind.
+var card_tooltip: PanelContainer
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
 # The phase the player has been told about, so an escalation is announced once
 # whichever way it happens: a card on their turn, or corruption on the boss's.
 var shown_phase := 1
+# The deck viewer and the button that opens it (story #55). Made in _ready
+# rather than here, so a screen freed before it is ever shown leaves nothing
+# orphaned behind.
+var view_deck_button: Button
+var deck_viewer: Control
 
 
 func _ready() -> void:
+	card_tooltip = CardTooltip.new()
+	add_child(card_tooltip)
 	shown_phase = sentry.phase()
-	# The alert tick is placed from the bar's width, which is only known once
-	# the layout has run.
-	noise_bar.resized.connect(_update_noise_label)
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
+	_add_deck_viewer()
+
+
+# A Deck button above Play Card, and the viewer it opens, for checking the
+# whole run deck mid-fight (story #55). Styled like the other turn buttons.
+func _add_deck_viewer() -> void:
+	deck_viewer = preload("res://scenes/deck_viewer.gd").new()
+	deck_viewer.name = "DeckViewer"
+	add_child(deck_viewer)
+
+	var end_turn: Button = %EndTurnButton
+	view_deck_button = Button.new()
+	view_deck_button.name = "ViewDeckButton"
+	view_deck_button.text = "DECK (%d)" % FlowCoordinator.run_deck_size()
+	view_deck_button.theme_type_variation = end_turn.theme_type_variation
+	view_deck_button.add_theme_font_size_override("font_size", 16)
+	for state in ["normal", "hover", "focus", "pressed", "hover_pressed", "disabled"]:
+		view_deck_button.add_theme_stylebox_override(state, end_turn.get_theme_stylebox(state))
+	view_deck_button.pressed.connect(deck_viewer.open)
+	var turn_block := end_turn.get_parent()
+	turn_block.add_child(view_deck_button)
+	turn_block.move_child(view_deck_button, 0)
+	deck_viewer.closed.connect(view_deck_button.grab_focus)
 
 
 # Skipping the final boss would win the whole contract reward without a fight,
@@ -236,6 +262,9 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 	if selected_index >= names.size():
 		selected_index = -1
 
+	# The card under the mouse may be about to go, and a freed button never
+	# sends its mouse_exited.
+	card_tooltip.hide_tooltip()
 	for child in card_container.get_children():
 		child.queue_free()
 	card_buttons.clear()
@@ -249,8 +278,10 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 		var button := _build_card(names[i], costs[i], detail)
 		button.disabled = costs[i] > draw_phase.energy
 		button.pressed.connect(_on_card_clicked.bind(i))
-		button.mouse_entered.connect(_on_card_hovered.bind(i, true))
-		button.mouse_exited.connect(_on_card_hovered.bind(i, false))
+		# Unaffordable cards are disabled but still report hover, so the player
+		# can read a card they can't play yet.
+		button.mouse_entered.connect(_on_card_hovered.bind(i))
+		button.mouse_exited.connect(_on_card_unhovered.bind(i))
 		card_buttons.append(button)
 
 	_update_selection_visuals()
@@ -402,10 +433,19 @@ func _on_card_clicked(index: int) -> void:
 	_update_card_detail()
 
 
-func _on_card_hovered(index: int, hovered: bool) -> void:
-	if index >= card_buttons.size() or card_buttons[index].disabled:
+func _on_card_hovered(index: int) -> void:
+	if index >= card_buttons.size():
 		return
-	_lift_card(index, hovered or index == selected_index)
+	card_tooltip.show_for(card_buttons[index], draw_phase.card_detail(index))
+	if not card_buttons[index].disabled:
+		_lift_card(index, true)
+
+
+func _on_card_unhovered(index: int) -> void:
+	if index >= card_buttons.size():
+		return
+	card_tooltip.hide_for(card_buttons[index])
+	_lift_card(index, index == selected_index)
 
 
 func _lift_card(index: int, lifted: bool) -> void:
@@ -433,23 +473,10 @@ func _update_card_detail() -> void:
 		detail_keywords.text = ""
 		return
 
-	detail_title.text = (
-		"%s — %s · %s"
-		% [
-			detail.get("name", "?"),
-			detail.get("type", "?"),
-			detail.get("rarity", "?"),
-		]
-	)
-	detail_stats.text = "%s · %s" % [detail.get("cost_text", ""), detail.get("noise_text", "")]
+	detail_title.text = CardTooltip.title_for(detail)
+	detail_stats.text = CardTooltip.stats_for(detail)
 	detail_description.text = str(detail.get("description", ""))
-
-	var keyword_lines: Array[String] = []
-	for keyword: Dictionary in detail.get("keywords", []):
-		keyword_lines.append(
-			"%s — %s" % [keyword.get("label", "?"), keyword.get("explanation", "")]
-		)
-	detail_keywords.text = "\n".join(keyword_lines)
+	detail_keywords.text = CardTooltip.keywords_for(detail)
 
 
 func _update_selection_visuals() -> void:
@@ -624,28 +651,13 @@ func _update_noise_label() -> void:
 	noise_bar.max_value = max_val
 	noise_bar.value = current
 	noise_label.text = "Noise: %d / %d" % [current, max_val]
+	detection_meter.show_level(current, max_val)
 
 	# Only worth saying when there is some: an unhardened construct reads as
 	# the plain meter it has always been.
 	var resistance: int = NoiseMeterGlobal.get_resistance_percent()
 	if resistance > 0:
 		noise_label.text += "  (recovery -%d%%)" % resistance
-
-	# The bar turns red once security is on alert, the same red the cards use
-	# for noise, and the percentage above it follows.
-	var alarmed := current >= ALERT_NOISE
-	var fill := noise_bar.get_theme_stylebox("fill") as StyleBoxFlat
-	if fill != null:
-		fill = fill.duplicate()
-		fill.bg_color = Color(RED if alarmed else GREEN, 0.85)
-		noise_bar.add_theme_stylebox_override("fill", fill)
-	detection_percent.text = "%d%%" % roundi(100.0 * current / maxi(max_val, 1))
-	detection_percent.add_theme_color_override("font_color", RED if alarmed else GREEN)
-
-	var tick_x: float = noise_bar.size.x * ALERT_NOISE / maxi(max_val, 1)
-	alert_tick.position.x = tick_x - alert_tick.size.x / 2.0
-	alert_tick_label.position.x = tick_x - 2.0
-	alert_tick_label.text = "alert %d" % ALERT_NOISE
 
 
 func _update_energy_label() -> void:

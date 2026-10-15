@@ -198,7 +198,7 @@ func _run() -> void:
 	_check(_credits_earned() == earned_before, "being caught adds nothing to credits earned")
 	_check(_combats_won() == wins_before, "being caught is not counted as a win")
 
-	caught.get_node("VBoxContainer/ContinueButton").pressed.emit()
+	caught.get_node("%ContinueButton").pressed.emit()
 	await process_frame
 	await process_frame
 

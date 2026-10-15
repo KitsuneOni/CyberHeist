@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3 uid="uid://byjfp3s20ltpr"]
+[gd_scene load_steps=20 format=3 uid="uid://byjfp3s20ltpr"]
 
 [ext_resource type="Script" uid="uid://bpw8e5yf0ehlc" path="res://scenes/combat.gd" id="1_combat"]
 [ext_resource type="Theme" path="res://themes/terminal_theme.tres" id="2_theme"]
@@ -7,6 +7,7 @@
 [ext_resource type="FontFile" path="res://assets/fonts/share-tech-mono/ShareTechMono-Regular.ttf" id="5_menu"]
 [ext_resource type="Texture2D" path="res://assets/ui/icons/game-icons/hooded-figure.svg" id="6_player"]
 [ext_resource type="Texture2D" path="res://assets/ui/icons/game-icons/cctv-camera.svg" id="7_enemy"]
+[ext_resource type="Script" path="res://scenes/detection_meter.gd" id="8_detection"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
 shader = ExtResource("3_crt")
@@ -201,29 +202,14 @@ theme_override_constants/separation = 24
 [node name="DetectionBlock" type="VBoxContainer" parent="Content/Column/Header"]
 custom_minimum_size = Vector2(460, 0)
 layout_mode = 2
+size_flags_vertical = 4
 theme_override_constants/separation = 2
-
-[node name="DetectionHeader" type="HBoxContainer" parent="Content/Column/Header/DetectionBlock"]
-layout_mode = 2
-theme_override_constants/separation = 16
-
-[node name="DetectionTitle" type="Label" parent="Content/Column/Header/DetectionBlock/DetectionHeader"]
-layout_mode = 2
-theme_override_fonts/font = ExtResource("5_menu")
-theme_override_font_sizes/font_size = 20
-text = "DETECTION"
-
-[node name="DetectionPercent" type="Label" parent="Content/Column/Header/DetectionBlock/DetectionHeader"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_fonts/font = ExtResource("5_menu")
-theme_override_font_sizes/font_size = 20
-text = "0%"
 
 [node name="NoiseBarContainer" type="Control" parent="Content/Column/Header/DetectionBlock"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(460, 24)
+custom_minimum_size = Vector2(460, 42)
 layout_mode = 2
+script = ExtResource("8_detection")
 
 [node name="NoiseBar" type="ProgressBar" parent="Content/Column/Header/DetectionBlock/NoiseBarContainer"]
 unique_name_in_owner = true
@@ -237,15 +223,6 @@ mouse_filter = 2
 theme_override_styles/background = SubResource("StyleBoxFlat_bar_bg")
 theme_override_styles/fill = SubResource("StyleBoxFlat_bar_fill")
 show_percentage = false
-
-[node name="AlertTick" type="ColorRect" parent="Content/Column/Header/DetectionBlock/NoiseBarContainer"]
-unique_name_in_owner = true
-layout_mode = 0
-offset_top = -4.0
-offset_right = 2.0
-offset_bottom = 28.0
-mouse_filter = 2
-color = Color(1, 0.2, 0.333333, 0.9)
 
 [node name="NoiseLabel" type="Label" parent="Content/Column/Header/DetectionBlock/NoiseBarContainer"]
 unique_name_in_owner = true
@@ -261,33 +238,6 @@ theme_override_constants/outline_size = 6
 theme_override_font_sizes/font_size = 13
 horizontal_alignment = 1
 vertical_alignment = 1
-
-[node name="TickLabels" type="Control" parent="Content/Column/Header/DetectionBlock"]
-custom_minimum_size = Vector2(0, 16)
-layout_mode = 2
-mouse_filter = 2
-
-[node name="AlertTickLabel" type="Label" parent="Content/Column/Header/DetectionBlock/TickLabels"]
-unique_name_in_owner = true
-layout_mode = 0
-offset_right = 120.0
-offset_bottom = 16.0
-theme_override_colors/font_color = Color(1, 0.2, 0.333333, 0.85)
-theme_override_font_sizes/font_size = 12
-text = "alert"
-
-[node name="TraceTickLabel" type="Label" parent="Content/Column/Header/DetectionBlock/TickLabels"]
-layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -120.0
-offset_bottom = 16.0
-grow_horizontal = 0
-theme_override_colors/font_color = Color(1, 0.2, 0.333333, 0.85)
-theme_override_font_sizes/font_size = 12
-text = "traced"
-horizontal_alignment = 2
 
 [node name="HeaderSpacer" type="Control" parent="Content/Column/Header"]
 layout_mode = 2

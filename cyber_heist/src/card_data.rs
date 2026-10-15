@@ -14,6 +14,8 @@ pub struct CardData {
 
     #[serde(default)]
     pub weak_side: Option<WeakSide>,
+    #[serde(default)]
+    pub upgrade: Option<CardUpgrade>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +34,22 @@ pub struct WeakSide {
     pub name: Option<String>,
     pub description: String,
     pub keywords: Vec<Keyword>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CardUpgrade {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub cost: Option<u8>,
+    #[serde(default)]
+    pub noise_generated: Option<i8>,
+    #[serde(default)]
+    pub keywords: Option<Vec<Keyword>>,
+    #[serde(default)]
+    pub weak_side: Option<WeakSide>,
 }
 
 /// Ordered from most to least common, so a reward can ask for a rarity "or
@@ -92,6 +110,32 @@ impl CardData {
             _ => &self.description,
         }
     }
+    pub fn upgraded(&self) -> Option<CardData> {
+        let upgrade = self.upgrade.as_ref()?;
+        let mut card = self.clone();
+        card.id = format!("{}+", self.id);
+        card.name = upgrade
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("{}+", self.name));
+        if let Some(description) = &upgrade.description {
+            card.description = description.clone();
+        }
+        if let Some(cost) = upgrade.cost {
+            card.cost = cost;
+        }
+        if let Some(noise) = upgrade.noise_generated {
+            card.noise_generated = noise;
+        }
+        if let Some(keywords) = &upgrade.keywords {
+            card.keywords = keywords.clone();
+        }
+        if let Some(weak_side) = &upgrade.weak_side {
+            card.weak_side = Some(weak_side.clone());
+        }
+        card.upgrade = None;
+        Some(card)
+    }
 }
 
 #[cfg(test)]
@@ -108,6 +152,7 @@ mod tests {
             card_type: CardType::SocialEngineering,
             rarity: Rarity::Common,
             keywords: vec![Keyword::Knowledge(2)],
+            upgrade: None,
             weak_side: Some(WeakSide {
                 noise_threshold: threshold,
                 name: Some("Nervous Excuse".into()),

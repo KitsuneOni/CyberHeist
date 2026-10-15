@@ -1,45 +1,118 @@
-[gd_scene format=3 uid="uid://doit5j35wv7bq"]
+[gd_scene load_steps=4 format=3 uid="uid://doit5j35wv7bq"]
 
 [ext_resource type="Script" uid="uid://bw7tjwnocyybr" path="res://scenes/caught_screen.gd" id="1_2qsdt"]
+[ext_resource type="Theme" path="res://themes/terminal_theme.tres" id="2_theme"]
 
-[node name="CaughtScreen" type="Control" unique_id=1234577771]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_caught"]
+bg_color = Color(0.0392157, 0.0588235, 0.0509804, 0.96)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1, 0.2, 0.333333, 0.8)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
+[node name="CaughtScreen" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme = ExtResource("2_theme")
 script = ExtResource("1_2qsdt")
 
-[node name="ColorRect" type="ColorRect" parent="." unique_id=324718253]
+[node name="Background" type="ColorRect" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.14949815, 0.14949815, 0.14949815, 1)
+mouse_filter = 2
+color = Color(0.0196078, 0.0313725, 0.027451, 1)
 
-[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1805788569]
+[node name="Page" type="MarginContainer" parent="."]
 layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_constants/margin_left = 64
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 64
+theme_override_constants/margin_bottom = 48
 
-[node name="TitleLabel" type="Label" parent="VBoxContainer" unique_id=1976452646]
+[node name="CaughtPanel" type="PanelContainer" parent="Page"]
 layout_mode = 2
-text = "YOU'VE BEEN CAUGHT"
+theme_override_styles/panel = SubResource("StyleBoxFlat_caught")
 
-[node name="FineLabel" type="Label" parent="VBoxContainer" unique_id=171840090]
+[node name="Margin" type="MarginContainer" parent="Page/CaughtPanel"]
 layout_mode = 2
+theme_override_constants/margin_left = 32
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 32
+theme_override_constants/margin_bottom = 24
 
-[node name="UpgradesLabel" type="Label" parent="VBoxContainer" unique_id=5355823]
+[node name="Content" type="VBoxContainer" parent="Page/CaughtPanel/Margin"]
 layout_mode = 2
+theme_override_constants/separation = 14
+alignment = 1
 
-[node name="ContinueButton" type="Button" parent="VBoxContainer" unique_id=1450468295]
+[node name="TitleLabel" type="Label" parent="Page/CaughtPanel/Margin/Content"]
+unique_name_in_owner = true
 layout_mode = 2
-text = "Continue"
+theme_type_variation = &"DisplayLabel"
+theme_override_colors/font_color = Color(1, 0.2, 0.333333, 1)
+theme_override_colors/font_shadow_color = Color(1, 0.2, 0.333333, 0.2)
+text = "DETECTED"
+horizontal_alignment = 1
+
+[node name="ContractLabel" type="Label" parent="Page/CaughtPanel/Margin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="SummaryLabel" type="Label" parent="Page/CaughtPanel/Margin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="FineLabel" type="Label" parent="Page/CaughtPanel/Margin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.72, 0.36, 1)
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="UpgradesLabel" type="Label" parent="Page/CaughtPanel/Margin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.72, 0.36, 1)
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="RetryLabel" type="Label" parent="Page/CaughtPanel/Margin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+text = "The node you were caught on stays open, so you can try it again."
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="ContinueButton" type="Button" parent="Page/CaughtPanel/Margin/Content"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 44)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_type_variation = &"TerminalMenuButton"
+text = "Back to the map"
