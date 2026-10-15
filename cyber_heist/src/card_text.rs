@@ -197,6 +197,7 @@ mod tests {
             rarity: Rarity::Rare,
             keywords,
             weak_side: None,
+            upgrade: None,
         }
     }
 

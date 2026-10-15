@@ -624,6 +624,39 @@ mod tests {
         );
     }
 
+    /// Story #116: a continued run still knows which events it has shown, so
+    /// it keeps avoiding them.
+    #[test]
+    fn a_continued_run_keeps_the_events_it_has_seen() {
+        let mut run = run_played_partway();
+        let mut rng = StdRng::seed_from_u64(5);
+        let seen: Vec<String> = (0..3).map(|_| run.roll_event(&mut rng).id).collect();
+        let save = save_of(run);
+
+        let restored = SaveGame::from_json(&save.to_json().unwrap()).expect("it reads back");
+        assert_eq!(restored, save);
+
+        for _ in 0..20 {
+            let next = restored.run.run_state.clone().roll_event(&mut rng);
+            assert!(!seen.contains(&next.id), "'{}' was shown again", next.id);
+        }
+    }
+
+    /// A save made before events were tracked has no seen events, and still
+    /// loads as a run that has seen none.
+    #[test]
+    fn a_save_from_before_seen_events_still_loads() {
+        let save = save_of(run_played_partway());
+        let mut value: Value = serde_json::from_str(&save.to_json().unwrap()).unwrap();
+        value["run"]["run_state"]
+            .as_object_mut()
+            .unwrap()
+            .remove("seen_events")
+            .expect("the field is saved");
+
+        assert_eq!(SaveGame::from_json(&value.to_string()), Ok(save));
+    }
+
     #[test]
     fn a_save_records_its_version() {
         let value = save_json_value();

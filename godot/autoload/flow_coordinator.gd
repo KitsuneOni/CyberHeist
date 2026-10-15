@@ -6,6 +6,7 @@ const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
 const SHOP_SCENE_PATH := "res://scenes/shop.tscn"
+const SHOP_UPGRADE_SCENE_PATH := "res://scenes/shop_upgrade.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
 const VICTORY_SCENE_PATH := "res://scenes/victory_screen.tscn"
@@ -502,6 +503,29 @@ func finish_reward() -> Dictionary:
 	_pending_reward = {}
 	_replace_screen(prepared["screen"])
 	save_progress()
+	return {"ok": true}
+
+# Opens the card upgrade screen from the shop. The run stays in the shop
+# encounter, so the visit (stock, sold slots, reroll price) is untouched.
+func open_shop_upgrade() -> Dictionary:
+	return _show_shop_screen(SHOP_UPGRADE_SCENE_PATH)
+
+
+# Goes back from the upgrade screen to the same shop visit.
+func return_to_shop() -> Dictionary:
+	return _show_shop_screen(ENCOUNTER_SCENES.get("shop", ""))
+
+
+func _show_shop_screen(path: String) -> Dictionary:
+	var active = run_snapshot().get("active_encounter")
+	if typeof(active) != TYPE_DICTIONARY or active.get("type", "") != "shop":
+		return _failure("There is no shop visit to go back to.")
+
+	var prepared := _prepare_screen(path)
+	if not prepared.get("ok", false):
+		return prepared
+
+	_replace_screen(prepared["screen"])
 	return {"ok": true}
 
 

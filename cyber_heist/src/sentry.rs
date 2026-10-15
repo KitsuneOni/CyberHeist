@@ -21,12 +21,13 @@
 
 /// Something an action does to the player beyond adding noise.
 ///
-/// Ordinary security only ever makes noise. An ability is what marks an
-/// encounter out as more than a louder version of the last one, which is why
-/// only bosses carry them.
+/// An ability is what marks an encounter out as more than a louder version of
+/// the last one. Standard security has a couple, so no fight is noise alone;
+/// elites add their own on top, and each boss has a signature no one else
+/// uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SentryAbility {
-    /// Noise and nothing else. Every standard sentry action.
+    /// Noise and nothing else.
     None,
     /// Takes energy off the player's next turn. The turn they had planned is
     /// spent before they get to it, rather than merely being noisier.
@@ -38,17 +39,30 @@ pub enum SentryAbility {
     /// signature: a corruption deck has to cash its stacks in before it lands.
     Purge,
     /// Raises a firewall that absorbs this much plain damage during the
-    /// player's next turn. BLACK MONOLITH's signature: penetrating damage and
-    /// corruption go straight through it.
+    /// player's next turn. Standard security's Firewall Up, and a bigger one
+    /// for BLACK MONOLITH's signature: penetrating damage and corruption go
+    /// straight through it.
     Firewall(i32),
+    /// Plants this many Injected Malware junk cards in the player's discard pile.
+    /// They only last the encounter: the combat deck is rebuilt from the
+    /// run's deck each time, and Malware is never added to that.
+    InjectMalware(i32),
 }
+
+/// The card id Inject Malware plants, authored in cursed_cards.ron. Not
+/// "malware": that is the player's own attack card in cards.ron.
+pub const MALWARE_CARD_ID: &str = "injected_malware";
 
 impl SentryAbility {
     /// Energy this ability takes, or zero when it takes none.
     pub fn energy_drain(self) -> i32 {
         match self {
             Self::DrainEnergy(amount) => amount.max(0),
-            Self::None | Self::RestoreIntegrity(_) | Self::Purge | Self::Firewall(_) => 0,
+            Self::None
+            | Self::RestoreIntegrity(_)
+            | Self::Purge
+            | Self::Firewall(_)
+            | Self::InjectMalware(_) => 0,
         }
     }
 
@@ -58,7 +72,11 @@ impl SentryAbility {
     pub fn integrity_restored(self) -> i32 {
         match self {
             Self::RestoreIntegrity(amount) => amount.max(0),
-            Self::None | Self::DrainEnergy(_) | Self::Purge | Self::Firewall(_) => 0,
+            Self::None
+            | Self::DrainEnergy(_)
+            | Self::Purge
+            | Self::Firewall(_)
+            | Self::InjectMalware(_) => 0,
         }
     }
 
@@ -72,7 +90,24 @@ impl SentryAbility {
     pub fn firewall_raised(self) -> i32 {
         match self {
             Self::Firewall(amount) => amount.max(0),
-            Self::None | Self::DrainEnergy(_) | Self::RestoreIntegrity(_) | Self::Purge => 0,
+            Self::None
+            | Self::DrainEnergy(_)
+            | Self::RestoreIntegrity(_)
+            | Self::Purge
+            | Self::InjectMalware(_) => 0,
+        }
+    }
+
+    /// Malware cards this ability plants, or zero when it plants none. A
+    /// negative count plants nothing rather than taking cards away.
+    pub fn malware_planted(self) -> i32 {
+        match self {
+            Self::InjectMalware(count) => count.max(0),
+            Self::None
+            | Self::DrainEnergy(_)
+            | Self::RestoreIntegrity(_)
+            | Self::Purge
+            | Self::Firewall(_) => 0,
         }
     }
 
@@ -89,6 +124,9 @@ impl SentryAbility {
             Self::RestoreIntegrity(amount) => format!("+{} integrity", amount.max(0)),
             Self::Purge => "clears corruption".to_string(),
             Self::Firewall(amount) => format!("blocks {} damage", amount.max(0)),
+            Self::InjectMalware(count) => {
+                format!("adds {} Injected Malware to your discard", count.max(0))
+            }
         }
     }
 }
@@ -152,8 +190,10 @@ impl SentryAction {
 /// shared across the encounter the way noise is.
 ///
 /// Actions come from an authored list that the sentry cycles, so a turn plays
-/// out the same way every time and is easy to test. Picking actions in
-/// response to what the player is doing is a later card.
+/// out the same way every time and is easy to test. Standard and elite
+/// security also carry an alert set, one louder action for each slot, which
+/// they use instead while noise is at or above `ALERT_NOISE`. The player sees
+/// it as an escalated intent, so going loud has a cost beyond the meter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sentry {
     name: String,
@@ -174,16 +214,58 @@ pub struct Sentry {
     /// The action set it switches to below half integrity. Empty for every
     /// construct but THE ARCHITECT, which is what "has no second phase" means.
     second_phase: Vec<SentryAction>,
+    /// What it does instead of each action in `script` while noise is at or
+    /// above `ALERT_NOISE`, slot for slot. Empty for a construct that does
+    /// not react to noise, which is every boss.
+    alert_script: Vec<SentryAction>,
 }
 
+/// Noise at which standard and elite security switch to their alert set. The
+/// meter tops out at 100, so this is the last stretch before detection.
+pub const ALERT_NOISE: i32 = 60;
+
 /// The actions every standard construct works through, before the zone's
-/// difficulty is applied to them. Zone 1 fields these as authored, which is
-/// what WARDEN-7 has always done.
-const STANDARD_SCRIPT: [(&str, i32); 3] = [
-    ("Packet Sniff", 1),
-    ("Trace Sweep", 2),
-    ("Lockdown Probe", 3),
+/// difficulty is applied to their noise. Zone 1 fields these as authored, as
+/// WARDEN-7. Not every one is noise alone: Firewall Up shields the construct
+/// and Inject Malware clogs the player's deck, so even an ordinary node asks
+/// for more than outlasting the meter.
+const STANDARD_SCRIPT: [(&str, i32, SentryAbility); 5] = [
+    ("Packet Sniff", 1, SentryAbility::None),
+    (
+        "Firewall Up",
+        1,
+        SentryAbility::Firewall(STANDARD_FIREWALL_BLOCK),
+    ),
+    ("Trace Sweep", 2, SentryAbility::None),
+    ("Inject Malware", 1, SentryAbility::InjectMalware(1)),
+    ("Lockdown Probe", 3, SentryAbility::None),
 ];
+
+/// Plain damage standard security's Firewall Up absorbs: a Strike and a bit,
+/// short of the boss's.
+const STANDARD_FIREWALL_BLOCK: i32 = 8;
+
+/// What standard security does instead of each `STANDARD_SCRIPT` action once
+/// noise reaches `ALERT_NOISE`, in the same order. Every one is louder than
+/// the action it replaces, and the two with abilities hit harder.
+const ALERT_SCRIPT: [(&str, SentryAbility); STANDARD_SCRIPT.len()] = [
+    ("Deep Packet Inspection", SentryAbility::None),
+    (
+        "Firewall Surge",
+        SentryAbility::Firewall(ALERT_FIREWALL_BLOCK),
+    ),
+    ("Active Trace", SentryAbility::None),
+    ("Malware Flood", SentryAbility::InjectMalware(2)),
+    ("Lockdown Sweep", SentryAbility::None),
+];
+
+/// What an alert action adds to the noise of the action it replaces. Kept to
+/// one, so an alert turn in a zone stays quieter than its boss's turn.
+const ALERT_NOISE_BONUS: i32 = 1;
+
+/// Plain damage Firewall Surge absorbs: more than Firewall Up, still short of
+/// BLACK MONOLITH's.
+const ALERT_FIREWALL_BLOCK: i32 = 10;
 
 /// Bosses by zone. A contract longer than this list falls back to a numbered
 /// name, so adding zones cannot leave a boss nameless. Contract offers read its
@@ -211,7 +293,8 @@ const ELITE_HEALTH: i32 = 60;
 const BOSS_HEALTH_BASE: i32 = 80;
 const BOSS_HEALTH_PER_ZONE: i32 = 20;
 
-/// Plain damage BLACK MONOLITH's Firewall absorbs: two Strikes' worth.
+/// Plain damage BLACK MONOLITH's Firewall absorbs: two Strikes' worth, half
+/// again what standard security's Firewall Up stands up.
 const FIREWALL_BLOCK: i32 = 12;
 
 /// THE ARCHITECT's zone. It closes the longest contract on offer, so it is
@@ -228,9 +311,25 @@ const ELITE_RESISTANCE_BONUS: i32 = 15;
 /// What an elite adds to each standard action it runs.
 const ELITE_NOISE_BONUS: i32 = 1;
 
-/// The actions an elite runs on top of the standard ones, renamed so the
+/// What an elite calls each standard action, in the same order, so the
 /// player can tell at a glance they are not facing ordinary security.
-const ELITE_SCRIPT: [&str; 3] = ["Deep Scan", "Hardened Trace", "Counter Probe"];
+const ELITE_SCRIPT: [&str; STANDARD_SCRIPT.len()] = [
+    "Deep Scan",
+    "Hardened Firewall",
+    "Hardened Trace",
+    "Payload Drop",
+    "Counter Probe",
+];
+
+/// What an elite calls each alert action, in the same order as `ALERT_SCRIPT`,
+/// followed by its alert Reinforce.
+const ELITE_ALERT_SCRIPT: [&str; STANDARD_SCRIPT.len()] = [
+    "Total Scan",
+    "Fortified Firewall",
+    "Relentless Trace",
+    "Payload Barrage",
+    "Counter Lockdown",
+];
 
 /// Integrity an elite's Reinforce restores in the first zone, and how much
 /// more it restores for every zone deeper.
@@ -256,6 +355,7 @@ impl Sentry {
             firewall: 0,
             phase: 1,
             second_phase: Vec::new(),
+            alert_script: Vec::new(),
         }
     }
 
@@ -268,19 +368,27 @@ impl Sentry {
         let step = Self::zone_step(zone);
         let script = STANDARD_SCRIPT
             .iter()
-            .map(|(name, noise)| SentryAction::new(name, noise * step))
+            .map(|(name, noise, ability)| SentryAction::with_ability(name, noise * step, *ability))
             .collect();
 
         let mut sentry =
             Self::new(&format!("WARDEN-{}", 7 + 2 * zone), script).with_health(STANDARD_HEALTH);
         sentry.detection_resistance = Self::standard_resistance(zone);
+        sentry.alert_script = STANDARD_SCRIPT
+            .iter()
+            .zip(ALERT_SCRIPT)
+            .map(|((_, noise, _), (name, ability))| {
+                SentryAction::with_ability(name, noise * step + ALERT_NOISE_BONUS, ability)
+            })
+            .collect();
         sentry
     }
 
     /// The construct guarding an elite node in `zone`.
     ///
-    /// The zone's standard script run a little louder, then a Reinforce that
-    /// restores some of the integrity the player has knocked off it. More
+    /// The zone's standard script run a little louder, abilities and all,
+    /// then a Reinforce that restores some of the integrity the player has
+    /// knocked off it. More
     /// integrity than standard security to start with, and harder to recover
     /// against, but short of the boss on both counts.
     pub fn elite_for_zone(zone: usize) -> Self {
@@ -288,13 +396,35 @@ impl Sentry {
         let mut script: Vec<SentryAction> = STANDARD_SCRIPT
             .iter()
             .zip(ELITE_SCRIPT)
-            .map(|((_, noise), name)| SentryAction::new(name, noise * step + ELITE_NOISE_BONUS))
+            .map(|((_, noise, ability), name)| {
+                SentryAction::with_ability(name, noise * step + ELITE_NOISE_BONUS, *ability)
+            })
             .collect();
         let reinforce = ELITE_REINFORCE_BASE
             .saturating_add(ELITE_REINFORCE_PER_ZONE.saturating_mul(step.saturating_sub(1)));
         script.push(SentryAction::with_ability(
             "Reinforce",
             ELITE_NOISE_BONUS,
+            SentryAbility::RestoreIntegrity(reinforce),
+        ));
+
+        // The alert set runs the standard alert actions under the elite's
+        // names, then a louder Reinforce that restores the same amount.
+        let mut alert_script: Vec<SentryAction> = STANDARD_SCRIPT
+            .iter()
+            .zip(ALERT_SCRIPT)
+            .zip(ELITE_ALERT_SCRIPT)
+            .map(|(((_, noise, _), (_, ability)), name)| {
+                SentryAction::with_ability(
+                    name,
+                    noise * step + ELITE_NOISE_BONUS + ALERT_NOISE_BONUS,
+                    ability,
+                )
+            })
+            .collect();
+        alert_script.push(SentryAction::with_ability(
+            "Emergency Reinforce",
+            ELITE_NOISE_BONUS + ALERT_NOISE_BONUS,
             SentryAbility::RestoreIntegrity(reinforce),
         ));
 
@@ -305,6 +435,7 @@ impl Sentry {
 
         let mut sentry = Self::new(&name, script).with_health(ELITE_HEALTH);
         sentry.detection_resistance = Self::standard_resistance(zone) + ELITE_RESISTANCE_BONUS;
+        sentry.alert_script = alert_script;
         sentry
     }
 
@@ -401,7 +532,7 @@ impl Sentry {
         let step = Self::zone_step(zone);
         STANDARD_SCRIPT
             .iter()
-            .map(|(_, noise)| noise * step)
+            .map(|(_, noise, _)| noise * step)
             .max()
             .unwrap_or(0)
     }
@@ -592,17 +723,31 @@ impl Sentry {
         dealt
     }
 
-    /// The action the sentry will take when its turn begins, or `None` if
-    /// there is nothing queued.
-    pub fn queued_action(&self) -> Option<&SentryAction> {
-        self.script.get(self.next_index)
+    /// Whether, at `noise`, this construct acts from its alert set. Always
+    /// false for one with no alert set, such as a boss.
+    pub fn is_on_alert(&self, noise: i32) -> bool {
+        !self.alert_script.is_empty() && noise >= ALERT_NOISE
     }
 
-    /// Returns the announced action and queues the next one. The caller applies
-    /// its authored noise to the shared meter and reports the actual clamped
-    /// delta separately. Returns `None` when nothing was queued.
-    pub fn perform_queued_action(&mut self) -> Option<SentryAction> {
-        let action = self.script.get(self.next_index)?.clone();
+    /// The action the sentry will take when its turn begins if noise is still
+    /// `noise` then, or `None` if there is nothing queued. The slot is fixed;
+    /// noise only decides whether it is the standard or the alert action, so
+    /// the intent follows the meter while the player is still choosing cards.
+    pub fn queued_action(&self, noise: i32) -> Option<&SentryAction> {
+        let actions = if self.is_on_alert(noise) {
+            &self.alert_script
+        } else {
+            &self.script
+        };
+        actions.get(self.next_index)
+    }
+
+    /// Returns the action for the queued slot at `noise`, the noise as the
+    /// turn begins, and queues the next slot. The caller applies its authored
+    /// noise to the shared meter and reports the actual clamped delta
+    /// separately. Returns `None` when nothing was queued.
+    pub fn perform_queued_action(&mut self, noise: i32) -> Option<SentryAction> {
+        let action = self.queued_action(noise)?.clone();
         self.next_index = (self.next_index + 1) % self.script.len();
         Some(action)
     }
@@ -616,7 +761,7 @@ mod tests {
     fn a_new_sentry_has_its_first_action_queued() {
         let sentry = Sentry::warden_7();
         assert_eq!(sentry.name(), "WARDEN-7");
-        assert_eq!(sentry.queued_action().unwrap().name, "Packet Sniff");
+        assert_eq!(sentry.queued_action(0).unwrap().name, "Packet Sniff");
     }
 
     #[test]
@@ -629,14 +774,14 @@ mod tests {
             ],
         );
 
-        let action = sentry.perform_queued_action().unwrap();
+        let action = sentry.perform_queued_action(0).unwrap();
         assert_eq!(action.name, "Packet Sniff");
         assert_eq!(action.noise, 1);
-        assert_eq!(sentry.queued_action().unwrap().name, "Trace Sweep");
+        assert_eq!(sentry.queued_action(0).unwrap().name, "Trace Sweep");
 
-        sentry.perform_queued_action().unwrap();
+        sentry.perform_queued_action(0).unwrap();
         assert_eq!(
-            sentry.queued_action().unwrap().name,
+            sentry.queued_action(0).unwrap().name,
             "Packet Sniff",
             "queue wraps back to the start"
         );
@@ -657,18 +802,18 @@ mod tests {
         for index in 0..7 {
             let expected = &script[index % script.len()];
             let before = sentry.clone();
-            assert_eq!(sentry.queued_action(), Some(expected));
-            assert_eq!(sentry.queued_action(), Some(expected));
+            assert_eq!(sentry.queued_action(0), Some(expected));
+            assert_eq!(sentry.queued_action(0), Some(expected));
             assert_eq!(sentry, before, "reading intent cannot advance the queue");
 
-            let action = sentry.perform_queued_action().unwrap();
+            let action = sentry.perform_queued_action(0).unwrap();
             let noise_before = meter.noise();
             assert_eq!(&action, expected);
             assert_eq!(meter.add(action.noise), expected.noise);
             assert_eq!(meter.noise(), noise_before + expected.noise);
             assert!(!meter.is_at_cap());
             assert_eq!(
-                sentry.queued_action(),
+                sentry.queued_action(0),
                 Some(&script[(index + 1) % script.len()])
             );
         }
@@ -681,29 +826,29 @@ mod tests {
         let mut sentry = Sentry::new("WARDEN-7", vec![SentryAction::new("Lockdown Probe", 3)]);
         let mut meter = NoiseLevel::new(100);
         meter.add(99);
-        let announced = sentry.queued_action().unwrap().clone();
-        let action = sentry.perform_queued_action().unwrap();
+        let announced = sentry.queued_action(0).unwrap().clone();
+        let action = sentry.perform_queued_action(0).unwrap();
 
         assert_eq!(action, announced);
         assert_eq!(action.noise, 3);
         assert_eq!(meter.add(action.noise), 1);
         assert_eq!(meter.noise(), 100);
         assert!(meter.is_at_cap());
-        assert_eq!(sentry.queued_action(), Some(&announced));
+        assert_eq!(sentry.queued_action(0), Some(&announced));
     }
 
     #[test]
     fn a_sentry_with_nothing_queued_reports_no_action() {
         let mut sentry = Sentry::new("WARDEN-7", Vec::new());
-        assert_eq!(sentry.queued_action(), None);
-        assert_eq!(sentry.perform_queued_action(), None);
+        assert_eq!(sentry.queued_action(0), None);
+        assert_eq!(sentry.perform_queued_action(0), None);
     }
 
-    /// The zone-1 construct is WARDEN-7 exactly as it was authored. The
-    /// smoke test drives a real encounter against these numbers, so a change
-    /// here is a change to what CI is checking.
+    /// The zone-1 construct is WARDEN-7 as authored. The smoke test drives a
+    /// real encounter against these numbers, so a change here is a change to
+    /// what CI is checking.
     #[test]
-    fn the_first_zone_still_fields_warden_7_unchanged() {
+    fn the_first_zone_fields_warden_7_as_authored() {
         let standard = Sentry::standard_for_zone(0);
 
         assert_eq!(standard.name(), "WARDEN-7");
@@ -714,11 +859,121 @@ mod tests {
             standard.script,
             vec![
                 SentryAction::new("Packet Sniff", 1),
+                SentryAction::with_ability("Firewall Up", 1, SentryAbility::Firewall(8)),
                 SentryAction::new("Trace Sweep", 2),
+                SentryAction::with_ability("Inject Malware", 1, SentryAbility::InjectMalware(1)),
                 SentryAction::new("Lockdown Probe", 3),
             ]
         );
         assert_eq!(standard, Sentry::warden_7());
+    }
+
+    /// Runs `sentry`'s turns until `name` is the queued action, then performs
+    /// it and applies its firewall the way `SentryNode` does. Panics if the
+    /// script never reaches it.
+    fn perform_until(sentry: &mut Sentry, name: &str) -> SentryAction {
+        for _ in 0..sentry.script.len() {
+            if sentry.queued_action(0).map(|action| action.name.as_str()) == Some(name) {
+                let action = sentry.perform_queued_action(0).unwrap();
+                sentry.raise_firewall(action.ability.firewall_raised());
+                return action;
+            }
+            sentry.perform_queued_action(0);
+        }
+        panic!("{} never queues {name}", sentry.name());
+    }
+
+    /// Varied security card E4a: standard security shields itself, so even an
+    /// ordinary node asks the player for more than outlasting the meter. It
+    /// is the same firewall BLACK MONOLITH raises, smaller, in every zone.
+    #[test]
+    fn standard_security_raises_a_firewall_up_for_8() {
+        for zone in 0..4 {
+            let standard = Sentry::standard_for_zone(zone);
+            let firewall_up = standard
+                .script
+                .iter()
+                .find(|action| action.name == "Firewall Up")
+                .unwrap_or_else(|| panic!("zone {zone}: no Firewall Up"));
+
+            assert_eq!(
+                firewall_up.ability,
+                SentryAbility::Firewall(8),
+                "zone {zone}"
+            );
+            assert_eq!(firewall_up.ability.describe(), "blocks 8 damage");
+        }
+    }
+
+    /// Varied security card E4b: standard security plants a Malware junk card
+    /// in the player's discard pile, announced with the intent like any other
+    /// ability. `SentryNode` and `DrawPhase` do the planting; this is what
+    /// tells them how many.
+    #[test]
+    fn standard_security_injects_malware() {
+        for zone in 0..4 {
+            let standard = Sentry::standard_for_zone(zone);
+            let inject = standard
+                .script
+                .iter()
+                .find(|action| action.name == "Inject Malware")
+                .unwrap_or_else(|| panic!("zone {zone}: no Inject Malware"));
+
+            assert_eq!(
+                inject.ability,
+                SentryAbility::InjectMalware(1),
+                "zone {zone}"
+            );
+            assert_eq!(inject.ability.malware_planted(), 1);
+            assert_eq!(
+                inject.ability.describe(),
+                "adds 1 Injected Malware to your discard"
+            );
+        }
+    }
+
+    /// Only Inject Malware plants anything, and a nonsense count plants
+    /// nothing rather than taking cards away.
+    #[test]
+    fn only_inject_malware_plants_malware() {
+        assert_eq!(SentryAbility::InjectMalware(2).malware_planted(), 2);
+        assert_eq!(SentryAbility::InjectMalware(-1).malware_planted(), 0);
+        assert_eq!(SentryAbility::InjectMalware(2).firewall_raised(), 0);
+        assert_eq!(SentryAbility::InjectMalware(2).energy_drain(), 0);
+        assert_eq!(SentryAbility::InjectMalware(2).integrity_restored(), 0);
+        assert!(!SentryAbility::InjectMalware(2).purges_corruption());
+
+        for other in [
+            SentryAbility::None,
+            SentryAbility::DrainEnergy(2),
+            SentryAbility::RestoreIntegrity(8),
+            SentryAbility::Purge,
+            SentryAbility::Firewall(8),
+        ] {
+            assert_eq!(other.malware_planted(), 0, "{other:?}");
+        }
+    }
+
+    /// Varied security card E4a, scenarios 1 and 2 as the card words them:
+    /// Firewall Up leaves 8 standing, and a 10-damage hit spends all 8 before
+    /// taking 2 off 30 integrity.
+    #[test]
+    fn firewall_up_is_used_up_before_integrity() {
+        let mut warden = Sentry::warden_7();
+        warden.take_damage(warden.max_health() - 30);
+
+        perform_until(&mut warden, "Firewall Up");
+        assert_eq!(warden.firewall(), 8);
+
+        assert_eq!(
+            warden.take_blockable_damage(10),
+            BlockedDamage {
+                blocked: 8,
+                dealt: 2
+            }
+        );
+        assert_eq!(warden.firewall(), 0);
+        assert_eq!(warden.health(), 28);
     }
 
     /// Card scenario 1: the boss generates more noise than the standard
@@ -771,24 +1026,36 @@ mod tests {
     }
 
     /// Card scenario 1: at least one ability the player will not have met in
-    /// a regular encounter.
+    /// a regular encounter. Standard security has abilities of its own since
+    /// E4, so the boss's signature is checked against them rather than
+    /// against standard security doing nothing at all.
     #[test]
-    fn only_a_boss_carries_an_ability() {
+    fn a_boss_carries_one_signature_ability_standard_security_does_not() {
         for zone in 0..4 {
-            assert!(
-                !Sentry::standard_for_zone(zone).has_ability(),
-                "zone {zone}: standard security only makes noise"
-            );
-
             let boss = Sentry::boss_for_zone(zone);
             assert!(boss.has_ability(), "zone {zone}: the boss needs an ability");
 
-            let abilities = boss
+            let abilities: Vec<SentryAbility> = boss
                 .script
                 .iter()
-                .filter(|action| !action.ability.is_none())
-                .count();
-            assert_eq!(abilities, 1, "zone {zone}: one signature ability per boss");
+                .map(|action| action.ability)
+                .filter(|ability| !ability.is_none())
+                .collect();
+            assert_eq!(
+                abilities.len(),
+                1,
+                "zone {zone}: one signature ability per boss"
+            );
+
+            let standard = Sentry::standard_for_zone(zone);
+            assert!(
+                standard
+                    .script
+                    .iter()
+                    .all(|action| action.ability != abilities[0]),
+                "zone {zone}: {:?} is already met on an ordinary node",
+                abilities[0]
+            );
         }
     }
 
@@ -882,24 +1149,32 @@ mod tests {
         assert_eq!(elite.max_health(), 60);
         assert!(elite.max_health() > Sentry::warden_7().max_health());
         assert!(elite.has_ability());
-        assert!(!Sentry::warden_7().has_ability());
+    }
+
+    /// Every ability in `sentry`'s script, in order, leaving out plain noise.
+    fn abilities(sentry: &Sentry) -> Vec<SentryAbility> {
+        sentry
+            .script
+            .iter()
+            .map(|action| action.ability)
+            .filter(|ability| !ability.is_none())
+            .collect()
     }
 
     /// Elite card scenario 1: an ability standard constructs do not have.
-    /// Reinforce is the elite's alone; the boss has its lockdown instead.
+    /// Reinforce is the elite's alone; the boss has its lockdown instead. An
+    /// elite is built from the standard script, so it also runs everything
+    /// standard security does (E4).
     #[test]
     fn only_an_elite_reinforces() {
         for zone in 0..4 {
-            let abilities: Vec<SentryAbility> = Sentry::elite_for_zone(zone)
-                .script
-                .iter()
-                .map(|action| action.ability)
-                .filter(|ability| !ability.is_none())
-                .collect();
+            let mut expected = abilities(&Sentry::standard_for_zone(zone));
+            expected.push(SentryAbility::RestoreIntegrity(8 + 4 * zone as i32));
             assert_eq!(
-                abilities,
-                vec![SentryAbility::RestoreIntegrity(8 + 4 * zone as i32)],
-                "zone {zone}: one Reinforce, restoring more the deeper the zone"
+                abilities(&Sentry::elite_for_zone(zone)),
+                expected,
+                "zone {zone}: the standard abilities, then one Reinforce restoring \
+                 more the deeper the zone"
             );
 
             for other in [Sentry::standard_for_zone(zone), Sentry::boss_for_zone(zone)] {
@@ -1264,7 +1539,9 @@ mod tests {
         architect.take_damage(1);
         assert_eq!(architect.phase(), 2);
         assert_eq!(
-            architect.queued_action().map(|action| action.name.as_str()),
+            architect
+                .queued_action(0)
+                .map(|action| action.name.as_str()),
             Some("Rewrite Protocol"),
             "the new action set starts from its first action"
         );
@@ -1332,14 +1609,16 @@ mod tests {
     fn the_second_phase_holds_once_reached() {
         let mut architect = Sentry::boss_for_zone(2);
         architect.take_damage(61);
-        architect.perform_queued_action();
+        architect.perform_queued_action(0);
 
         architect.restore_integrity(50);
         assert_eq!(architect.phase(), 2);
 
         architect.take_damage(10);
         assert_eq!(
-            architect.queued_action().map(|action| action.name.as_str()),
+            architect
+                .queued_action(0)
+                .map(|action| action.name.as_str()),
             Some("Fortify Core"),
             "the cycle carries on where it was"
         );
@@ -1427,8 +1706,8 @@ mod stress {
             let mut sentry = Sentry::new("WARDEN-7", script);
             let mut meter = NoiseLevel::new(cap);
             for _ in 0..50_000 {
-                let announced = sentry.queued_action().cloned().unwrap();
-                let action = sentry.perform_queued_action().unwrap();
+                let announced = sentry.queued_action(meter.noise()).cloned().unwrap();
+                let action = sentry.perform_queued_action(meter.noise()).unwrap();
                 assert_eq!(action, announced);
                 let before = meter.noise();
                 let delta = meter.add(action.noise);
@@ -1454,6 +1733,153 @@ mod stress {
                 assert!((0..=max_health).contains(&sentry.health()));
                 assert_eq!(sentry.is_defeated(), sentry.health() == 0);
             }
+        }
+    }
+
+    /// Story #101, scenario 1: at or above `ALERT_NOISE`, standard security
+    /// picks from its alert set.
+    #[test]
+    fn standard_security_escalates_at_high_noise() {
+        let sentry = Sentry::warden_7();
+
+        assert!(sentry.is_on_alert(ALERT_NOISE));
+        let action = sentry.queued_action(ALERT_NOISE).unwrap();
+        assert_eq!(action.name, "Deep Packet Inspection");
+        assert_eq!(action.noise, 2);
+    }
+
+    /// Story #101, scenario 2: below `ALERT_NOISE` it keeps to its standard
+    /// script.
+    #[test]
+    fn standard_security_stays_calm_below_the_alert_noise() {
+        let sentry = Sentry::warden_7();
+
+        assert!(!sentry.is_on_alert(ALERT_NOISE - 1));
+        assert_eq!(
+            sentry.queued_action(ALERT_NOISE - 1).unwrap().name,
+            "Packet Sniff"
+        );
+    }
+
+    /// Noise picks between the standard and alert action for the slot that
+    /// is queued; it never moves the queue. So the intent can follow the
+    /// meter while the player plays cards, and the next slot still comes
+    /// next whichever set the last action came from.
+    #[test]
+    fn noise_changes_the_queued_action_but_not_the_slot() {
+        let mut sentry = Sentry::warden_7();
+
+        assert_eq!(sentry.queued_action(0).unwrap().name, "Packet Sniff");
+        assert_eq!(
+            sentry.queued_action(ALERT_NOISE).unwrap().name,
+            "Deep Packet Inspection"
+        );
+        assert_eq!(sentry.queued_action(0).unwrap().name, "Packet Sniff");
+
+        let performed = sentry.perform_queued_action(ALERT_NOISE).unwrap();
+        assert_eq!(performed.name, "Deep Packet Inspection");
+        assert_eq!(sentry.queued_action(0).unwrap().name, "Firewall Up");
+        assert_eq!(
+            sentry.queued_action(ALERT_NOISE).unwrap().name,
+            "Firewall Surge"
+        );
+    }
+
+    fn alert_pairs(sentry: &Sentry) -> Vec<(SentryAction, SentryAction)> {
+        let mut sentry = sentry.clone();
+        (0..sentry.script.len())
+            .map(|_| {
+                let calm = sentry.queued_action(0).unwrap().clone();
+                let alert = sentry.perform_queued_action(ALERT_NOISE).unwrap();
+                (calm, alert)
+            })
+            .collect()
+    }
+
+    /// Every alert action, standard and elite, is louder than the one it
+    /// replaces and has a name of its own, so being on alert is a real cost
+    /// the player can see coming.
+    #[test]
+    fn every_alert_action_is_louder_than_the_one_it_replaces() {
+        for zone in 0..4 {
+            for sentry in [
+                Sentry::standard_for_zone(zone),
+                Sentry::elite_for_zone(zone),
+            ] {
+                for (calm, alert) in alert_pairs(&sentry) {
+                    assert!(
+                        alert.noise > calm.noise,
+                        "{} in zone {zone}: {} ({}) is not louder than {} ({})",
+                        sentry.name(),
+                        alert.name,
+                        alert.noise,
+                        calm.name,
+                        calm.noise
+                    );
+                    assert_ne!(alert.name, calm.name);
+                }
+            }
+        }
+    }
+
+    /// Being on alert stops short of a boss turn: every standard alert action
+    /// is still quieter than every action the zone's boss takes.
+    #[test]
+    fn a_standard_alert_turn_stays_quieter_than_the_zone_boss() {
+        for zone in 0..4 {
+            let boss = Sentry::boss_for_zone(zone);
+            let quietest_boss = boss.script.iter().map(|action| action.noise).min().unwrap();
+            for (_, alert) in alert_pairs(&Sentry::standard_for_zone(zone)) {
+                assert!(
+                    alert.noise < quietest_boss,
+                    "zone {zone}: {} ({}) is as loud as {}'s quietest action ({})",
+                    alert.name,
+                    alert.noise,
+                    boss.name(),
+                    quietest_boss
+                );
+            }
+        }
+    }
+
+    /// The two alert actions with abilities hit harder than their standard
+    /// ones, and Firewall Surge stays short of BLACK MONOLITH's firewall.
+    #[test]
+    fn alert_abilities_hit_harder_than_standard_ones() {
+        let pairs = alert_pairs(&Sentry::warden_7());
+        let (firewall_up, surge) = &pairs[1];
+        let (inject, flood) = &pairs[3];
+
+        assert_eq!(surge.name, "Firewall Surge");
+        assert!(surge.ability.firewall_raised() > firewall_up.ability.firewall_raised());
+        assert!(surge.ability.firewall_raised() < FIREWALL_BLOCK);
+        assert_eq!(flood.name, "Malware Flood");
+        assert_eq!(flood.ability.malware_planted(), 2);
+        assert_eq!(inject.ability.malware_planted(), 1);
+    }
+
+    /// An elite on alert still Reinforces, louder, for the same integrity.
+    #[test]
+    fn an_elite_on_alert_still_reinforces() {
+        let elite = Sentry::elite_for_zone(0);
+        let (reinforce, emergency) = alert_pairs(&elite).pop().unwrap();
+
+        assert_eq!(reinforce.name, "Reinforce");
+        assert_eq!(emergency.name, "Emergency Reinforce");
+        assert_eq!(
+            emergency.ability.integrity_restored(),
+            reinforce.ability.integrity_restored()
+        );
+    }
+
+    /// Bosses do not react to noise: their script is the same at any level,
+    /// and THE ARCHITECT's second phase is its only change of action set.
+    #[test]
+    fn a_boss_does_not_react_to_noise() {
+        for zone in 0..4 {
+            let boss = Sentry::boss_for_zone(zone);
+            assert!(!boss.is_on_alert(100), "{} goes on alert", boss.name());
+            assert_eq!(boss.queued_action(100), boss.queued_action(0));
         }
     }
 }

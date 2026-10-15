@@ -16,6 +16,7 @@ extends Control
 var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
 @onready
 var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
+@onready var detection_meter: Control = $NoiseBarContainer
 @onready var noise_bar: ProgressBar = $NoiseBarContainer/NoiseBar
 @onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
 @onready var health_label: Label = $VBoxContainer/HealthLabel
@@ -24,11 +25,20 @@ var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailConte
 @onready var corruption_label: Label = $VBoxContainer/CorruptionLabel
 @onready var complete_encounter_button: Button = $VBoxContainer/Buttons/CompleteEncounterButton
 
+const CardTooltip := preload("res://scenes/card_tooltip.gd")
+
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
+# Marks an action security takes from its alert set, on the intent and in the
+# turn report, so the player can tell loud play is what changed it.
+const ESCALATED_MARK := " [ESCALATED]"
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
+# Shows a card's full description while the mouse is over it (story #14).
+# Made in _ready rather than here, so a screen freed before it is ever shown
+# leaves nothing orphaned behind.
+var card_tooltip: PanelContainer
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
@@ -43,6 +53,8 @@ var deck_viewer: Control
 
 
 func _ready() -> void:
+	card_tooltip = CardTooltip.new()
+	add_child(card_tooltip)
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
@@ -110,11 +122,14 @@ func _on_end_turn_button_pressed() -> void:
 		return
 
 	if turn.get("ok", false):
+		var action: String = turn.get("action", "")
+		if turn.get("alert", false):
+			action += ESCALATED_MARK
 		var message: String = (
 			"%s ran %s and added %d noise."
 			% [
 				turn.get("sentry", "?"),
-				turn.get("action", ""),
+				action,
 				turn.get("noise_added", 0),
 			]
 		)
@@ -129,6 +144,9 @@ func _on_end_turn_button_pressed() -> void:
 		var firewall: int = turn.get("firewall", 0)
 		if firewall > 0:
 			message += " Firewall will block the next %d damage." % firewall
+		var malware: int = turn.get("malware_planted", 0)
+		if malware > 0:
+			message += " %d Injected Malware added to your discard pile." % malware
 		var corruption_damage: int = turn.get("corruption_damage", 0)
 		if corruption_damage > 0:
 			message += " Corruption dealt %d damage." % corruption_damage
@@ -200,6 +218,9 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 	if selected_index >= names.size():
 		selected_index = -1
 
+	# The card under the mouse may be about to go, and a freed button never
+	# sends its mouse_exited.
+	card_tooltip.hide_tooltip()
 	for child in card_container.get_children():
 		child.queue_free()
 	card_buttons.clear()
@@ -212,6 +233,10 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 		button.toggle_mode = true
 		button.disabled = costs[i] > draw_phase.energy
 		button.pressed.connect(_on_card_clicked.bind(i))
+		# Unaffordable cards are disabled but still report hover, so the player
+		# can read a card they can't play yet.
+		button.mouse_entered.connect(_on_card_hovered.bind(i))
+		button.mouse_exited.connect(card_tooltip.hide_for.bind(button))
 		card_container.add_child(button)
 		card_buttons.append(button)
 
@@ -223,6 +248,12 @@ func _on_card_clicked(index: int) -> void:
 	selected_index = index
 	_update_selection_visuals()
 	_update_card_detail()
+
+
+func _on_card_hovered(index: int) -> void:
+	if index >= card_buttons.size():
+		return
+	card_tooltip.show_for(card_buttons[index], draw_phase.card_detail(index))
 
 
 # Fills the detail panel from the selected card, including an explanation of
@@ -243,23 +274,10 @@ func _update_card_detail() -> void:
 		detail_keywords.text = ""
 		return
 
-	detail_title.text = (
-		"%s — %s · %s"
-		% [
-			detail.get("name", "?"),
-			detail.get("type", "?"),
-			detail.get("rarity", "?"),
-		]
-	)
-	detail_stats.text = "%s · %s" % [detail.get("cost_text", ""), detail.get("noise_text", "")]
+	detail_title.text = CardTooltip.title_for(detail)
+	detail_stats.text = CardTooltip.stats_for(detail)
 	detail_description.text = str(detail.get("description", ""))
-
-	var keyword_lines: Array[String] = []
-	for keyword: Dictionary in detail.get("keywords", []):
-		keyword_lines.append(
-			"%s — %s" % [keyword.get("label", "?"), keyword.get("explanation", "")]
-		)
-	detail_keywords.text = "\n".join(keyword_lines)
+	detail_keywords.text = CardTooltip.keywords_for(detail)
 
 
 func _update_selection_visuals() -> void:
@@ -323,6 +341,10 @@ func _on_play_button_pressed() -> void:
 			message += " (+%d energy tax)" % energy_tax_paid
 		if corruption_boost_added > 0:
 			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
+		# Exhausted cards, such as security's Injected Malware, are gone for
+		# the rest of the fight rather than waiting in the discard pile.
+		if result.get("exhausted", false):
+			message += " %s leaves the encounter." % result.get("name", "Card")
 		status_label.text = message + _escalation_message()
 
 		_rebuild_card_buttons(draw_phase.hand_names())
@@ -418,6 +440,7 @@ func _update_noise_label() -> void:
 	noise_bar.max_value = max_val
 	noise_bar.value = current
 	noise_label.text = "Noise: %d / %d" % [current, max_val]
+	detection_meter.show_level(current, max_val)
 
 	# Only worth saying when there is some: an unhardened construct reads as
 	# the plain meter it has always been.
@@ -443,6 +466,11 @@ func _update_intent_label() -> void:
 	var who: String = sentry.construct_name()
 	if sentry.phase() > 1:
 		who += " [PHASE %d]" % sentry.phase()
+
+	# Loud play puts security on alert. The intent is read again after every
+	# card, so it flips the moment noise crosses the line, either way.
+	if sentry.queued_action_escalated():
+		action += ESCALATED_MARK
 
 	# An ability is announced with the intent rather than sprung afterwards, so
 	# ending the turn into a lockdown is a decision and not a surprise.

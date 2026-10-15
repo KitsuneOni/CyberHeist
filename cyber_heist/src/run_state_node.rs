@@ -10,6 +10,7 @@ use crate::encounter_reward;
 use crate::encounter_text::{
     all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
 };
+use crate::events::EventDefinition;
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_state::{RunState, RunStateError};
@@ -336,6 +337,12 @@ impl RunStateNode {
     #[func]
     pub(crate) fn record_card_added(&mut self) {
         self.state.record_card_added();
+    }
+
+    /// Rolls the event for an event node, skipping any this run has already
+    /// shown. Called by `EventNode`.
+    pub(crate) fn roll_event(&mut self) -> EventDefinition {
+        self.state.roll_event(&mut rand::rng())
     }
 
     /// Replaces this run with a fresh one: new contract, new offers, no zone

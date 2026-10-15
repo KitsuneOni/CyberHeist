@@ -265,6 +265,24 @@ Run the headless check with a built extension:
 godot --headless --path godot -s res://tests/run_stats_test.gd
 ```
 
+## Random events (story #116)
+
+`event_catalogue()` in `events.rs` holds every event an event node can show,
+eight at the moment. Each one has at least two choices, and each choice's
+preview quotes the credits and chances it resolves to, which a unit test
+checks.
+
+The run remembers which events it has shown, so one run does not repeat an
+event. `EventNode.roll_event()` asks `RunStateNode`, which rolls from the
+events the run has not seen yet and records the one it picked. When a run has
+seen every event, the roll picks from the whole catalogue again, so an event
+node always has something to show. The seen list lives on `RunState`, so a new
+run starts with the full pool, and it is saved with the run, so a continued run
+keeps avoiding the events it has shown. A save from before the list existed
+loads as a run that has seen none, and one naming an event this build does not
+have is refused. With no run behind it, as when the event scene is opened on
+its own, `EventNode` picks any event.
+
 ## Winning a contract (stories #89 and #23)
 
 A contract is won by beating the boss of its **final** zone. Every earlier
@@ -777,9 +795,11 @@ happened by the time the new hand exists.
 of actions the sentry cycles through. It owns no noise value. The autoload
 `/root/NoiseMeterGlobal` owns the single `NoiseLevel`, with the incoming
 100-point cap. The action at the front of the queue is shown to the player during their own turn, which
-is what makes ending a turn a decision rather than a formality. Reactive or
-varied actions are a later story. `sentry_node.rs` exposes it to the combat
-scene:
+is what makes ending a turn a decision rather than a formality. Even standard
+security does more than make noise (see "Standard security's actions" below),
+and standard and elite security turn louder once noise reaches 60 (see
+"Security on alert" below).
+`sentry_node.rs` exposes it to the combat scene:
 
 ```gdscript
 $Sentry.construct_name()          # "WARDEN-7"
@@ -788,6 +808,7 @@ $Sentry.max_noise()
 $Sentry.queued_action_name()      # "" when nothing is queued
 $Sentry.queued_action_noise()
 $Sentry.queued_action_ability()   # "-1 energy", or "" when it only makes noise
+$Sentry.queued_action_escalated() # true when it comes from the alert set
 $Sentry.has_ability()
 $Sentry.detection_resistance()
 $Sentry.add_noise(amount)         # noise from anywhere else, clamped
@@ -807,9 +828,9 @@ calls `Sentry::for_encounter` with the matching `SecurityTier`. With no
 run behind the screen — a combat scene opened on its own — it falls back to
 first-zone security, the same way `DrawPhase` falls back to the starter deck.
 
-Standard security is the authored WARDEN script scaled by zone, so zone 1 is
-WARDEN-7 exactly as before. A zone's boss is then defined against the security
-around it rather than against a fixed bar:
+Standard security is the authored WARDEN script with its noise scaled by zone,
+so zone 1 is WARDEN-7 as authored. A zone's boss is then defined against the
+security around it rather than against a fixed bar:
 
 - every one of its actions is louder than the loudest standard action in that
   zone,
@@ -817,7 +838,9 @@ around it rather than against a fixed bar:
 - it has more integrity than standard security's 40, starting at 80 for
   ICEBREAKER and rising 20 per zone (BLACK MONOLITH 100, THE ARCHITECT 120),
   so every boss is a longer fight than the one before it, and
-- it carries a signature ability no standard construct has.
+- it carries a signature ability no standard construct has. BLACK MONOLITH's
+  Firewall is the closest: a heavier version of standard security's Firewall
+  Up (12 against 8).
 
 Each boss's signature is its second action, announced with the intent before
 it lands, so ending the turn into it is a decision rather than a surprise.
@@ -877,6 +900,40 @@ half, it spends that turn escalating: no action runs, `ok` is false and
 the new set's first action has not been shown yet, so running either would
 spring something on the player they never saw coming.
 
+### Standard security's actions
+
+Ordinary nodes are not noise alone (Trello #102, E4). Every standard construct
+cycles the same five actions, with the noise multiplied by the zone (zone 1 is
+WARDEN-7 as listed):
+
+| Action | Noise | Ability |
+| --- | --- | --- |
+| Packet Sniff | 1 | |
+| Firewall Up | 1 | blocks the next 8 plain damage |
+| Trace Sweep | 2 | |
+| Inject Malware | 1 | adds 1 Injected Malware to your discard |
+| Lockdown Probe | 3 | |
+
+**Firewall Up** (E4a) is the same firewall as BLACK MONOLITH's, smaller: it
+goes up on the construct's turn, absorbs plain damage before integrity, and
+comes down when its next turn starts. Its 8 do not scale by zone.
+
+**Inject Malware** (E4b) plants an **Injected Malware** card in the player's
+discard pile. The card lives in `cursed_cards.ron` as `injected_malware`; it is
+not called Malware because `cards.ron` already has a player attack with that
+id and name. It costs 1 energy, makes no noise, does nothing, and has
+**Exhaust**, so playing it removes it from the encounter instead of
+discarding it. `play_card` reports that as `exhausted`.
+
+The planting is split because the deck belongs to `DrawPhase`. `SentryNode`
+records the count, reports it as `malware_planted` in the turn outcome, and
+`DrawPhase.end_turn()` takes it straight after the `security_phase` signal,
+before the next hand is drawn, and puts the cards in its own discard pile
+(`card_play::plant_junk`). It never touches `RunDeckNode`, and each encounter
+builds its deck fresh from the run's deck, so Injected Malware never outlives
+the encounter it was planted in. `DrawPhase.draw_pile_ids()` and
+`discard_pile_ids()` let a screen or test see what is in each pile.
+
 ### Elite encounters
 
 An elite node is a fight the player chooses to take on for a better payout
@@ -887,12 +944,13 @@ against the same zone's standard security:
 | --- | --- | --- | --- |
 | Integrity | 40 | 60 | 80 (+20 per zone) |
 | Resistance | +10 per zone | standard + 15 | standard + 30 |
-| Ability | none | Reinforce | its own signature (see above) |
+| Ability | Firewall Up, Inject Malware | standard's, plus Reinforce | its own signature (see above) |
 | Credits (zone 1, +per zone) | 25 (+15) | 2x combat | 3x combat |
 | Card reward | any 3 | at least one Rare | at least one Rare |
 
 The elites are BASTION, HYDRA and CERBERUS, in zone order. Their script is the
-zone's standard one, renamed and one point louder per action, followed by
+zone's standard one, renamed and one point louder per action (Deep Scan,
+Hardened Firewall, Hardened Trace, Payload Drop, Counter Probe), followed by
 **Reinforce**: one point of noise, plus 8 integrity restored to the construct
 (4 more per zone deeper). It is announced with the intent as `+8 integrity`, so
 a player can try to finish the elite before it lands. Because it acts on the
@@ -912,6 +970,44 @@ pay nothing here.
 card of the guaranteed rarity or better first, fills the rest from everything
 else so the offer stays distinct, and shuffles where the guaranteed card lands.
 A pool with no such card falls back to an ordinary offer.
+
+### Security on alert (story #101)
+
+Standard and elite security react to how loud the player is being. Each has an
+alert set alongside its script, one action for each slot. While noise is at or
+above `ALERT_NOISE` (60 of 100) the construct takes the alert action for the
+queued slot instead of the standard one. Zone 1 values:
+
+| Slot | Standard | Alert | Alert noise | Alert ability |
+| --- | --- | --- | --- | --- |
+| 1 | Packet Sniff | Deep Packet Inspection | 2 | |
+| 2 | Firewall Up | Firewall Surge | 2 | blocks the next 10 plain damage |
+| 3 | Trace Sweep | Active Trace | 3 | |
+| 4 | Inject Malware | Malware Flood | 2 | adds 2 Injected Malware |
+| 5 | Lockdown Probe | Lockdown Sweep | 4 | |
+
+Each alert action is the standard one's noise (scaled by zone as usual) plus
+one, so an alert turn is louder than a calm one but still quieter than the
+zone's boss. Firewall Surge stays under BLACK MONOLITH's 12. An elite's alert
+set uses the same actions one point louder again, under its own names (Total
+Scan, Fortified Firewall, Relentless Trace, Payload Barrage, Counter Lockdown),
+then **Emergency Reinforce**, which restores what Reinforce does. Bosses do not
+go on alert: they are already louder than everything around them, and THE
+ARCHITECT's second phase is its own change of action set.
+
+Noise only chooses which of the two actions fills the slot. It never moves the
+queue, so the next slot comes next whichever set the last action came from.
+The choice is live: `Sentry::queued_action(noise)` is read at the current
+noise, and the combat screen reads the intent again after every card. A loud
+card that takes the meter to 60 flips the intent to the alert action straight
+away, and recovery that takes it back under 60 flips it back, before the turn
+ends. When the turn begins, `SentryNode` performs the action for the noise at
+that moment, which is the one the intent showed last.
+
+The intent marks an alert action as `[ESCALATED]`, as does the turn report
+(`WARDEN-7 ran Active Trace [ESCALATED] and added 3 noise.`). The turn outcome
+carries `alert`. In code this is called the alert set so it does not clash
+with THE ARCHITECT's `escalated`, which means its change of phase.
 
 ### Detection resistance
 
@@ -941,6 +1037,8 @@ own `turn_resolved` signal hands the result to the combat screen as:
     "run_failed": false,
     "energy_drain": 0,  # >0 only for a boss lockdown
     "ability": "",      # "-1 energy" when the action carries one
+    "firewall": 0,      # the firewall now standing, from Firewall Up or a boss
+    "malware_planted": 0, # Injected Malware headed for the discard pile
 }
 ```
 

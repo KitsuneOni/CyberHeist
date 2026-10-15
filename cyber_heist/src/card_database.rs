@@ -33,6 +33,7 @@ pub struct CardDatabase {
     base: Base<Node>,
     cards: HashMap<String, CardData>,
     cursed_cards: HashMap<String, CardData>,
+    upgraded_cards: HashMap<String, CardData>,
 }
 
 #[godot_api]
@@ -42,6 +43,7 @@ impl INode for CardDatabase {
             base,
             cards: HashMap::new(),
             cursed_cards: HashMap::new(),
+            upgraded_cards: HashMap::new(),
         }
     }
 
@@ -50,18 +52,32 @@ impl INode for CardDatabase {
         godot_print!("Loaded {} cards", self.cards.len());
         self.cursed_cards = load_cursed_card_database();
         godot_print!("Loaded {} cursed cards", self.cursed_cards.len());
+        self.upgraded_cards = self
+            .cards
+            .values()
+            .filter_map(|card| card.upgraded())
+            .map(|card| (card.id.clone(), card))
+            .collect();
+        godot_print!("Loaded {} upgraded cards", self.upgraded_cards.len());
     }
 }
 
 impl CardDatabase {
     pub fn get(&self, id: &str) -> Option<&CardData> {
-        self.cards.get(id).or_else(|| self.cursed_cards.get(id))
+        self.cards
+            .get(id)
+            .or_else(|| self.cursed_cards.get(id))
+            .or_else(|| self.upgraded_cards.get(id))
     }
 
     // Kept for callers that want the whole pool, e.g. card rewards.
     #[allow(dead_code)]
     pub fn all(&self) -> impl Iterator<Item = &CardData> {
         self.cards.values()
+    }
+
+    pub fn upgraded_id_of(&self, id: &str) -> Option<String> {
+        self.cards.get(id)?.upgraded().map(|card| card.id)
     }
 }
 
@@ -92,6 +108,34 @@ mod tests {
         let vpn = cards.get("vpn").expect("strike should exist");
         assert_eq!(vpn.cost, 2);
         assert_eq!(vpn.keywords, vec![crate::card_data::Keyword::Intangible(1)]);
+    }
+
+    /// Varied security card E4b: the junk card security plants is a dead
+    /// card. It costs 1, makes no noise, does nothing and exhausts.
+    #[test]
+    fn malware_is_a_dead_card_that_exhausts() {
+        let text = std::fs::read_to_string("../godot/data/cursed_cards.ron")
+            .expect("could not find cursed_cards.ron");
+        let cursed = parse_cards(&text);
+        let malware = cursed
+            .get("injected_malware")
+            .expect("injected malware is authored");
+
+        assert_eq!(malware.name, "Injected Malware");
+        assert_eq!(malware.cost, 1);
+        assert_eq!(malware.noise_generated, 0);
+        assert_eq!(malware.keywords, vec![crate::card_data::Keyword::Exhaust]);
+        assert!(malware.weak_side.is_none());
+    }
+
+    /// Rewards are offered from cards.ron alone, so keeping the junk card out
+    /// of it means a card reward can never hand it to the player. The
+    /// player's own Malware attack is a different card with its own id.
+    #[test]
+    fn malware_is_never_a_reward_card() {
+        let text =
+            std::fs::read_to_string("../godot/data/cards.ron").expect("could not find cards.ron");
+        assert!(!parse_cards(&text).contains_key("injected_malware"));
     }
 
     #[test]

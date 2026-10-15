@@ -64,6 +64,16 @@ impl RunDeck {
         self.card_ids.iter().filter(|id| *id == card_id).count()
     }
 
+    pub fn replace_one(&mut self, from_id: &str, to_id: &str) -> bool {
+        match self.card_ids.iter().position(|id| id == from_id) {
+            Some(index) => {
+                self.card_ids[index] = to_id.to_string();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Each distinct card the run owns with how many copies of it there are,
     /// for the deck viewer. Ordered by when the run first owned each card, so
     /// the starter cards come first and rewards follow in the order they were

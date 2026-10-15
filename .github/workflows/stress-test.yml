@@ -100,8 +100,14 @@ jobs:
       - name: Run headless detection recovery test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/lower_detection_test.gd
 
+      - name: Run headless detection meter colour test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/detection_meter_test.gd
+
       - name: Run headless card reward and run deck test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/card_reward_test.gd
+
+      - name: Run headless card hover tooltip test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/card_hover_test.gd
 
       # Walks a generated contract to its first boss, fights it, and follows
       # the zone unlock back onto the map. Covers what the Rust tests cannot
@@ -150,6 +156,9 @@ jobs:
       - name: Run headless contract victory and reward test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/contract_victory_test.gd
 
+      - name: Run headless detected end screen test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/end_screen_test.gd
+
       # Plays partway, saves at safe points, then starts a second engine on
       # the same save file and presses Continue: the map, contract, credits,
       # deck, noise and stats come back exactly, on the hub (with Change
@@ -176,6 +185,12 @@ jobs:
       # of 0 set from the settings screen mutes its bus and is saved.
       - name: Run headless sound and music test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/audio_test.gd
+
+      # Fights WARDEN-7 through its non-noise actions: Firewall Up announced
+      # and then used up by plain damage before integrity, and Inject Malware
+      # planting a dead card that never leaves the encounter.
+      - name: Run headless security actions test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/security_actions_test.gd
 
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh

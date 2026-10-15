@@ -20,7 +20,8 @@ pub struct PlayedCard {
     pub card_type: CardType,
     pub noise_change: i32,
     pub damage_dealt: i32,
-    /// Plain damage a boss's firewall absorbed before it reached integrity.
+    /// Plain damage the construct's firewall absorbed before it reached
+    /// integrity.
     pub damage_blocked: i32,
     pub shield_added: i32,
     pub cards_drawn: i32,
@@ -29,6 +30,9 @@ pub struct PlayedCard {
     pub corruption_added: i32,
     pub corruption_boost_added: i32,
     pub energy_tax_paid: i32,
+    /// True when the card exhausted: it left the encounter instead of going
+    /// to the discard pile, so it will not come round again this fight.
+    pub exhausted: bool,
 }
 
 #[derive(Default)]
@@ -245,9 +249,21 @@ pub fn play_card(
         corruption_added: effects.corruption_added,
         corruption_boost_added: effects.corruption_boost_added,
         energy_tax_paid: tax,
+        exhausted: active_keywords.contains(&Keyword::Exhaust),
     };
-    deck.discard(vec![card]);
+    if !played.exhausted {
+        deck.discard(vec![card]);
+    }
     Ok(played)
+}
+
+/// Puts `count` copies of `card` into the discard pile, for junk the
+/// construct plants mid-fight such as Inject Malware's Malware. The discard
+/// pile, not the hand or draw pile, so the player meets it after their next
+/// reshuffle. A count of zero or less plants nothing.
+pub fn plant_junk(deck: &mut Deck, card: &CardData, count: i32) {
+    let count = usize::try_from(count).unwrap_or(0);
+    deck.discard(vec![card.clone(); count]);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -305,6 +321,7 @@ pub fn resolve_end_of_turn_effects(
             corruption_added: effects.corruption_added,
             corruption_boost_added: effects.corruption_boost_added,
             energy_tax_paid: 0,
+            exhausted: false,
         });
         deck.discard(vec![card]);
     }
@@ -345,6 +362,15 @@ mod tests {
             }
         }
 
+        /// The same, with one of security's junk cards from
+        /// cursed_cards.ron in hand instead.
+        fn with_cursed_card(id: &str, noise: i32) -> Self {
+            let mut cursed = parse_cards(include_str!("../../godot/data/cursed_cards.ron"));
+            let mut combat = Self::with_card("strike", noise);
+            combat.hand = vec![cursed.remove(id).expect("authored cursed card exists")];
+            combat
+        }
+
         fn play(&mut self, index: i32) -> Result<PlayedCard, PlayError> {
             play_card(
                 &mut self.hand,
@@ -363,7 +389,7 @@ mod tests {
     #[test]
     fn vpn_recovers_before_detection_without_advancing_the_intent() {
         let mut combat = Combat::with_card("vpn", 99);
-        let intent = combat.sentry.queued_action().cloned();
+        let intent = combat.sentry.queued_action(0).cloned();
         let played = combat.play(0).unwrap();
 
         assert_eq!(played.name, "VPN");
@@ -374,17 +400,85 @@ mod tests {
         assert_eq!(played.knowledge_change, 0);
         assert_eq!(played.max_energy_gained, 0);
         assert_eq!(combat.noise.noise(), 89);
-        assert_eq!(combat.sentry.queued_action(), intent.as_ref());
+        assert_eq!(combat.sentry.queued_action(0), intent.as_ref());
         assert_eq!(combat.energy, 1);
         assert!(combat.hand.is_empty());
         assert_eq!(combat.deck.discard_pile_len(), 1);
         assert!(!combat.noise.is_at_cap());
 
-        let action = combat.sentry.perform_queued_action().unwrap();
+        let action = combat.sentry.perform_queued_action(0).unwrap();
         assert_eq!(action.name, "Packet Sniff");
         assert_eq!(combat.noise.add(action.noise), 1);
         assert_eq!(combat.noise.noise(), 90);
         assert!(!combat.noise.is_at_cap());
+    }
+
+    /// Varied security card E4b scenario 4: Malware costs 1 energy, does
+    /// nothing when played, and is removed from the encounter rather than
+    /// discarded, so it never comes round again.
+    #[test]
+    fn malware_costs_one_does_nothing_and_leaves_the_encounter() {
+        let mut combat = Combat::with_cursed_card("injected_malware", 20);
+        let health = combat.sentry.health();
+        let intent = combat.sentry.queued_action(0).cloned();
+
+        let played = combat.play(0).unwrap();
+
+        assert_eq!(played.name, "Injected Malware");
+        assert!(played.exhausted, "Malware leaves the encounter");
+        assert_eq!(combat.energy, 2, "it costs 1 energy");
+        assert_eq!(played.noise_change, 0);
+        assert_eq!(combat.noise.noise(), 20);
+        assert_eq!(played.damage_dealt, 0);
+        assert_eq!(combat.sentry.health(), health);
+        assert_eq!(played.shield_added, 0);
+        assert_eq!(played.cards_drawn, 0);
+        assert_eq!(played.knowledge_change, 0);
+        assert_eq!(combat.sentry.queued_action(0), intent.as_ref());
+        assert!(combat.hand.is_empty());
+        assert_eq!(combat.deck.discard_pile_len(), 0, "not discarded");
+        assert_eq!(combat.deck.draw_pile_len(), 0);
+    }
+
+    /// A card without Exhaust still goes to the discard pile as before.
+    #[test]
+    fn only_an_exhausting_card_skips_the_discard_pile() {
+        let mut combat = Combat::with_card("strike", 0);
+        let played = combat.play(0).unwrap();
+
+        assert!(!played.exhausted);
+        assert_eq!(combat.deck.discard_pile_len(), 1);
+    }
+
+    /// Varied security card E4b scenario 3: what Inject Malware plants lands
+    /// in the discard pile, not the hand or the draw pile, so the player
+    /// meets it after their next reshuffle.
+    #[test]
+    fn planted_junk_goes_to_the_discard_pile() {
+        let mut combat = Combat::with_card("strike", 0);
+        let malware = parse_cards(include_str!("../../godot/data/cursed_cards.ron"))
+            .remove("injected_malware")
+            .expect("authored cursed card exists");
+
+        plant_junk(&mut combat.deck, &malware, 2);
+
+        assert_eq!(combat.deck.discard_pile_len(), 2);
+        assert_eq!(combat.deck.draw_pile_len(), 0);
+        assert_eq!(combat.hand.len(), 1, "the hand is untouched");
+        assert_eq!(
+            combat.deck.discard_pile_ids(),
+            vec![
+                "injected_malware".to_string(),
+                "injected_malware".to_string()
+            ]
+        );
+
+        plant_junk(&mut combat.deck, &malware, -3);
+        assert_eq!(
+            combat.deck.discard_pile_len(),
+            2,
+            "a negative count plants nothing"
+        );
     }
 
     /// The combat screen picks the card's sound from this, so every type has
