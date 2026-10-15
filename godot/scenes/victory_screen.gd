@@ -16,6 +16,8 @@
 # Navigation goes through FlowCoordinator like every other screen.
 extends Control
 
+const RunSummaryText := preload("res://scenes/run_summary_text.gd")
+
 # Emitted each time the counting balance shows a new whole number of credits.
 signal displayed_balance_changed(balance: int)
 # Emitted once the balance has finished counting up to its new total.
@@ -57,23 +59,11 @@ func is_counting() -> bool:
 
 
 func _show_contract(offer: Dictionary) -> void:
-	if offer.get("ok", false):
-		contract_label.text = "%s  ·  target: %s" % [offer.get("name", "?"), offer.get("target", "?")]
-	else:
-		contract_label.text = "Default contract"
+	contract_label.text = RunSummaryText.contract_text(offer)
 
 
 func _show_summary(summary: Dictionary) -> void:
-	summary_label.text = (
-		"Zones cleared: %d of %d  ·  Fights won: %d  ·  Cards added: %d\nCredits earned this run: %d"
-		% [
-			int(summary.get("zones_cleared", 0)),
-			int(summary.get("total_zones", 0)),
-			int(summary.get("combats_won", 0)),
-			int(summary.get("cards_added", 0)),
-			int(summary.get("credits_earned", 0)),
-		]
-	)
+	summary_label.text = RunSummaryText.summary_text(summary)
 
 
 func _show_reward(reward: Dictionary) -> void:

@@ -156,6 +156,9 @@ jobs:
       - name: Run headless contract victory and reward test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/contract_victory_test.gd
 
+      - name: Run headless detected end screen test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/end_screen_test.gd
+
       # Plays partway, saves at safe points, then starts a second engine on
       # the same save file and presses Continue: the map, contract, credits,
       # deck, noise and stats come back exactly, on the hub (with Change
