@@ -45,6 +45,11 @@ var sentry_turn: Dictionary = {}
 # The phase the player has been told about, so an escalation is announced once
 # whichever way it happens: a card on their turn, or corruption on the boss's.
 var shown_phase := 1
+# The deck viewer and the button that opens it (story #55). Made in _ready
+# rather than here, so a screen freed before it is ever shown leaves nothing
+# orphaned behind.
+var view_deck_button: Button
+var deck_viewer: Control
 
 
 func _ready() -> void:
@@ -53,6 +58,23 @@ func _ready() -> void:
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
+	_add_deck_viewer()
+
+
+# A Deck button beside End Turn, and the viewer it opens, for checking the
+# whole run deck mid-fight (story #55). Added in code so the combat scene file
+# doesn't change.
+func _add_deck_viewer() -> void:
+	deck_viewer = preload("res://scenes/deck_viewer.gd").new()
+	deck_viewer.name = "DeckViewer"
+	add_child(deck_viewer)
+
+	view_deck_button = Button.new()
+	view_deck_button.name = "ViewDeckButton"
+	view_deck_button.text = "Deck (%d)" % FlowCoordinator.run_deck_size()
+	view_deck_button.pressed.connect(deck_viewer.open)
+	$VBoxContainer/Buttons.add_child(view_deck_button)
+	deck_viewer.closed.connect(view_deck_button.grab_focus)
 
 
 # Skipping the final boss would win the whole contract reward without a fight,

@@ -73,6 +73,21 @@ impl RunDeck {
             None => false,
         }
     }
+
+    /// Each distinct card the run owns with how many copies of it there are,
+    /// for the deck viewer. Ordered by when the run first owned each card, so
+    /// the starter cards come first and rewards follow in the order they were
+    /// picked.
+    pub fn tally(&self) -> Vec<(String, usize)> {
+        let mut tally: Vec<(String, usize)> = Vec::new();
+        for id in &self.card_ids {
+            match tally.iter_mut().find(|(seen, _)| seen == id) {
+                Some((_, count)) => *count += 1,
+                None => tally.push((id.clone(), 1)),
+            }
+        }
+        tally
+    }
 }
 
 #[cfg(test)]
@@ -129,5 +144,37 @@ mod tests {
         let deck = RunDeck::default();
         assert!(deck.is_empty());
         assert_eq!(deck.len(), 0);
+    }
+
+    #[test]
+    fn the_tally_lists_each_card_once_with_its_copies() {
+        let mut deck = RunDeck::from_starter_entries(&[entry("strike", 3), entry("vpn", 1)]);
+        deck.add("wannacry");
+        deck.add("strike");
+
+        assert_eq!(
+            deck.tally(),
+            vec![
+                ("strike".to_string(), 4),
+                ("vpn".to_string(), 1),
+                ("wannacry".to_string(), 1),
+            ],
+            "first-owned order, with a later copy counted against the first"
+        );
+    }
+
+    #[test]
+    fn the_tally_accounts_for_every_physical_card() {
+        let mut deck = RunDeck::from_starter_entries(&[entry("strike", 5), entry("shield", 4)]);
+        deck.add("shield");
+        deck.add("wannacry");
+
+        let total: usize = deck.tally().iter().map(|(_, count)| count).sum();
+        assert_eq!(total, deck.len());
+    }
+
+    #[test]
+    fn an_empty_deck_has_an_empty_tally() {
+        assert!(RunDeck::default().tally().is_empty());
     }
 }

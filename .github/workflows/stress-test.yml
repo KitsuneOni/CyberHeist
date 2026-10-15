@@ -177,6 +177,9 @@ jobs:
       - name: Run headless dark web shop test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/shop_test.gd
 
+      - name: Run headless deck viewer test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/deck_viewer_test.gd
+
       # Plays one card of every type and checks each puts its own sound on
       # the SFX bus, that the music loops on the Music bus, and that a volume
       # of 0 set from the settings screen mutes its bus and is saved.
