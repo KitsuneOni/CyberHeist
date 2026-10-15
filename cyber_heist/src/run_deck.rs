@@ -74,6 +74,17 @@ impl RunDeck {
         }
     }
 
+    /// Removes one copy of `card_id` for good. False if the run owns none.
+    pub fn remove_one(&mut self, card_id: &str) -> bool {
+        match self.card_ids.iter().position(|id| id == card_id) {
+            Some(index) => {
+                self.card_ids.remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Each distinct card the run owns with how many copies of it there are,
     /// for the deck viewer. Ordered by when the run first owned each card, so
     /// the starter cards come first and rewards follow in the order they were

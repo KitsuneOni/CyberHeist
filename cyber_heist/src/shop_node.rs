@@ -353,7 +353,7 @@ impl ShopNode {
         let Some(mut run_deck) = self.base().try_get_node_as::<RunDeckNode>(RUN_DECK_PATH) else {
             return failure("no_run_deck");
         };
-        let Some(run_state) = self.run_state() else {
+        let Some(mut run_state) = self.run_state() else {
             return failure("no_run_state");
         };
         let Some(db) = self.card_database() else {
@@ -378,7 +378,7 @@ impl ShopNode {
         let result = {
             let mut player_state = player_state.bind_mut();
             let mut run_deck = run_deck.bind_mut();
-            shop::upgrade_card(
+            run_state.bind_mut().upgrade_card_in_shop(
                 player_state.credits_mut(),
                 run_deck.deck_mut(),
                 &card_id,
@@ -394,6 +394,115 @@ impl ShopNode {
                 "to_id" => upgrade.to_id.as_str(),
                 "price" => upgrade.price,
                 "credits" => upgrade.credits_left,
+            },
+            Err(error) => failure(error.code()),
+        }
+    }
+
+    /// The card removal as the screen shows it: `{price, sold, affordable}`.
+    /// `affordable` is whether it can be used right now (not already used this
+    /// visit, credits cover it, and the deck would not be left empty).
+    #[func]
+    fn removal_offer(&self) -> VarDictionary {
+        let deck_len = self
+            .base()
+            .try_get_node_as::<RunDeckNode>(RUN_DECK_PATH)
+            .map_or(0, |run_deck| run_deck.bind().owned_card_ids().len());
+        let (sold, affordable) = match self.run_state() {
+            Some(run_state) => match run_state.bind().shop_visit() {
+                Some(visit) => (
+                    visit.removal_used(),
+                    visit.can_remove_card(self.credits(), deck_len),
+                ),
+                None => (false, false),
+            },
+            None => (false, false),
+        };
+
+        vdict! {
+            "price" => shop::REMOVE_CARD_PRICE,
+            "sold" => sold,
+            "affordable" => affordable,
+        }
+    }
+
+    /// Every card in the run's deck, one entry per distinct card, in the order
+    /// each first appears: `{id, count, card}`, where `card` is a card detail
+    /// dictionary. Curses and upgraded cards are included.
+    #[func]
+    fn removable_cards(&self) -> Array<VarDictionary> {
+        let mut cards: Array<VarDictionary> = Array::new();
+        let (Some(run_deck), Some(db)) = (
+            self.base().try_get_node_as::<RunDeckNode>(RUN_DECK_PATH),
+            self.card_database(),
+        ) else {
+            return cards;
+        };
+        let db = db.bind();
+
+        let mut order: Vec<String> = Vec::new();
+        let mut counts: HashMap<String, i64> = HashMap::new();
+        for id in run_deck.bind().owned_card_ids() {
+            let count = counts.entry(id.clone()).or_insert(0);
+            if *count == 0 {
+                order.push(id);
+            }
+            *count += 1;
+        }
+
+        for id in order {
+            let Some(card) = db.get(&id) else {
+                continue;
+            };
+            let detail = card_detail_dictionary(&card_text::describe(card, 0));
+            cards.push(&vdict! {
+                "id" => id.as_str(),
+                "count" => counts[&id],
+                "card" => &detail,
+            });
+        }
+
+        cards
+    }
+
+    /// Removes one copy of `card_id`. Returns `{ok: true, id, price, credits}`,
+    /// or `{ok: false, error}` with nothing changed.
+    ///
+    /// `error` is `already_sold`, `deck_too_small`, `not_enough_credits`,
+    /// `not_in_deck` or `not_in_shop` from the shop's rules, or
+    /// `no_player_state` / `no_run_deck` / `no_run_state` when there is no run.
+    #[func]
+    fn remove_card(&mut self, card_id: GString) -> VarDictionary {
+        let card_id = card_id.to_string();
+        let Some(mut player_state) = self
+            .base()
+            .try_get_node_as::<PlayerState>(PLAYER_STATE_PATH)
+        else {
+            return failure("no_player_state");
+        };
+        let Some(mut run_deck) = self.base().try_get_node_as::<RunDeckNode>(RUN_DECK_PATH) else {
+            return failure("no_run_deck");
+        };
+        let Some(mut run_state) = self.run_state() else {
+            return failure("no_run_state");
+        };
+
+        let result = {
+            let mut player_state = player_state.bind_mut();
+            let mut run_deck = run_deck.bind_mut();
+            run_state.bind_mut().remove_card_in_shop(
+                &card_id,
+                player_state.credits_mut(),
+                run_deck.deck_mut(),
+            )
+        };
+
+        match result {
+            Ok(removed) => vdict! {
+                "ok" => true,
+                "id" => removed.card_id.as_str(),
+                "price" => removed.price,
+                "credits" => removed.credits_left,
             },
             Err(error) => failure(error.code()),
         }
