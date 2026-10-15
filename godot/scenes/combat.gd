@@ -16,6 +16,7 @@ extends Control
 var detail_description: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailDescription
 @onready
 var detail_keywords: Label = $VBoxContainer/DetailPanel/DetailMargin/DetailContent/DetailKeywords
+@onready var detection_meter: Control = $NoiseBarContainer
 @onready var noise_bar: ProgressBar = $NoiseBarContainer/NoiseBar
 @onready var noise_label: Label = $NoiseBarContainer/NoiseLabel
 @onready var health_label: Label = $VBoxContainer/HealthLabel
@@ -409,6 +410,7 @@ func _update_noise_label() -> void:
 	noise_bar.max_value = max_val
 	noise_bar.value = current
 	noise_label.text = "Noise: %d / %d" % [current, max_val]
+	detection_meter.show_level(current, max_val)
 
 	# Only worth saying when there is some: an unhardened construct reads as
 	# the plain meter it has always been.

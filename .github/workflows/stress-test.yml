@@ -100,6 +100,9 @@ jobs:
       - name: Run headless detection recovery test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/lower_detection_test.gd
 
+      - name: Run headless detection meter colour test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/detection_meter_test.gd
+
       - name: Run headless card reward and run deck test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/card_reward_test.gd
 
