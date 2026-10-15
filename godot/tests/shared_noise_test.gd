@@ -38,7 +38,7 @@ func _select(name: String) -> bool:
 func _play(name: String) -> bool:
 	if not _select(name):
 		return false
-	_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	_combat.get_node("%PlayButton").pressed.emit()
 	return true
 
 
@@ -71,7 +71,7 @@ func _check_social(name: String, damage: int) -> void:
 		"card detail uses the active social side: %s / damage %d" % [name, damage]
 	)
 	_check(
-		_combat.card_buttons[index].text == "%s [1]" % name
+		_combat.card_face_text(index) == "%s [1]" % name
 		and _combat.detail_title.text.begins_with(name)
 		and _combat.detail_description.text == detail.description
 		and _combat.detail_keywords.text.begins_with("Damage %d" % damage),
@@ -123,7 +123,7 @@ func _run() -> void:
 		return
 	_check_shared_noise(49)
 	_check_social("Nigerian King", 18)
-	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	_combat.get_node("%EndTurnButton").pressed.emit()
 	_check_shared_noise(50)
 	_check_social("Nigerian Prince", 8)
 	_check(_combat.sentry.queued_action_name() == "Firewall Up", "only the announced action advances")
@@ -157,7 +157,7 @@ func _run() -> void:
 	var old_turn: int = old_combat.draw_phase.turn_number
 	var old_hand: PackedStringArray = old_combat.draw_phase.hand_names()
 	var old_intent: String = old_combat.sentry.queued_action_name()
-	old_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	old_combat.get_node("%EndTurnButton").pressed.emit()
 	old_combat.draw_phase.end_turn()
 	var rejected: Dictionary = old_combat.draw_phase.play_card(0)
 	var skipped: Dictionary = old_combat.sentry.perform_queued_action()
@@ -221,7 +221,7 @@ func _run() -> void:
 			return
 		_check_shared_noise(0)
 		_check(_combat.draw_phase.energy == 1, "retry permits paid recovery again")
-		_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+		_combat.get_node("%EndTurnButton").pressed.emit()
 		_check_shared_noise(1)
 		_check(_flow.run_snapshot().phase == "encounter_active", "retry remains playable after the sentry turn")
 	_finish()

@@ -78,7 +78,7 @@ func _finish() -> void:
 
 
 func _press_end_turn() -> void:
-	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	_combat.get_node("%EndTurnButton").pressed.emit()
 
 
 # Fixture only: reuse the real draw API rather than add a debug gameplay API.
@@ -95,7 +95,7 @@ func _play(card_name: String) -> bool:
 		_check(false, "%s is in hand to play" % card_name)
 		return false
 	_combat.card_buttons[index].pressed.emit()
-	_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	_combat.get_node("%PlayButton").pressed.emit()
 	return true
 
 

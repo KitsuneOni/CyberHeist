@@ -114,7 +114,7 @@ func _walk_to_first_zone_elite() -> int:
 
 
 func _press_end_turn() -> void:
-	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	_combat.get_node("%EndTurnButton").pressed.emit()
 
 
 func _run() -> void:

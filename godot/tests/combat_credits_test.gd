@@ -81,7 +81,7 @@ func _enter_combat(node_id: int) -> Node:
 
 
 func _press_end_turn(combat: Node) -> void:
-	combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	combat.get_node("%EndTurnButton").pressed.emit()
 
 
 # Plays `card_name` the way the player does: select it, then press Play.
@@ -91,7 +91,7 @@ func _play(combat: Node, card_name: String) -> bool:
 	if index < 0:
 		return false
 	combat.card_buttons[index].pressed.emit()
-	combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	combat.get_node("%PlayButton").pressed.emit()
 	return true
 
 

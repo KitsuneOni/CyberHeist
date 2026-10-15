@@ -1,179 +1,608 @@
-[gd_scene format=3 uid="uid://byjfp3s20ltpr"]
+[gd_scene load_steps=20 format=3 uid="uid://byjfp3s20ltpr"]
 
 [ext_resource type="Script" uid="uid://bpw8e5yf0ehlc" path="res://scenes/combat.gd" id="1_combat"]
-[ext_resource type="Script" path="res://scenes/detection_meter.gd" id="2_detection"]
+[ext_resource type="Theme" path="res://themes/terminal_theme.tres" id="2_theme"]
+[ext_resource type="Shader" path="res://shaders/crt_overlay.gdshader" id="3_crt"]
+[ext_resource type="FontFile" path="res://assets/fonts/vt323/VT323-Regular.ttf" id="4_display"]
+[ext_resource type="FontFile" path="res://assets/fonts/share-tech-mono/ShareTechMono-Regular.ttf" id="5_menu"]
+[ext_resource type="Texture2D" path="res://assets/ui/icons/game-icons/hooded-figure.svg" id="6_player"]
+[ext_resource type="Texture2D" path="res://assets/ui/icons/game-icons/cctv-camera.svg" id="7_enemy"]
+[ext_resource type="Script" path="res://scenes/detection_meter.gd" id="8_detection"]
 
-[node name="CombatScreen" type="Control" unique_id=299400783]
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
+shader = ExtResource("3_crt")
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bar_bg"]
+bg_color = Color(0.2, 1, 0.4, 0.06)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 1, 0.4, 0.45)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bar_fill"]
+bg_color = Color(0.2, 1, 0.4, 0.85)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+content_margin_left = 14.0
+content_margin_top = 10.0
+content_margin_right = 14.0
+content_margin_bottom = 10.0
+bg_color = Color(0.0509804, 0.0862745, 0.0705882, 0.92)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 1, 0.4, 0.35)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_intent"]
+content_margin_left = 14.0
+content_margin_top = 4.0
+content_margin_right = 14.0
+content_margin_bottom = 4.0
+bg_color = Color(0, 0.898, 1, 0.08)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0.898, 1, 0.8)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_plate"]
+bg_color = Color(0.0352941, 0.0627451, 0.0509804, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2, 1, 0.4, 0.7)
+shadow_color = Color(0.2, 1, 0.4, 0.12)
+shadow_size = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ring"]
+bg_color = Color(0.0352941, 0.0627451, 0.0509804, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2, 1, 0.4, 0.8)
+corner_radius_top_left = 64
+corner_radius_top_right = 64
+corner_radius_bottom_right = 64
+corner_radius_bottom_left = 64
+corner_detail = 16
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip"]
+content_margin_left = 8.0
+content_margin_top = 1.0
+content_margin_right = 8.0
+content_margin_bottom = 1.0
+bg_color = Color(0.2, 1, 0.4, 0.06)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.2, 1, 0.4, 0.6)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_cyan"]
+content_margin_left = 8.0
+content_margin_top = 1.0
+content_margin_right = 8.0
+content_margin_bottom = 1.0
+bg_color = Color(0, 0.898, 1, 0.08)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0.898, 1, 0.75)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_red"]
+content_margin_left = 8.0
+content_margin_top = 1.0
+content_margin_right = 8.0
+content_margin_bottom = 1.0
+bg_color = Color(1, 0.2, 0.333333, 0.1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(1, 0.2, 0.333333, 0.8)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_action"]
+content_margin_left = 18.0
+content_margin_top = 6.0
+content_margin_right = 18.0
+content_margin_bottom = 6.0
+bg_color = Color(0.2, 1, 0.4, 0.04)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2, 1, 0.4, 0.85)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_action_hover"]
+content_margin_left = 18.0
+content_margin_top = 6.0
+content_margin_right = 18.0
+content_margin_bottom = 6.0
+bg_color = Color(0.2, 1, 0.4, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2, 1, 0.4, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_action_pressed"]
+content_margin_left = 18.0
+content_margin_top = 6.0
+content_margin_right = 18.0
+content_margin_bottom = 6.0
+bg_color = Color(0, 0.898, 1, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0, 0.898, 1, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_action_disabled"]
+content_margin_left = 18.0
+content_margin_top = 6.0
+content_margin_right = 18.0
+content_margin_bottom = 6.0
+bg_color = Color(0, 0, 0, 0)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2, 1, 0.4, 0.2)
+
+[node name="CombatScreen" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme = ExtResource("2_theme")
 script = ExtResource("1_combat")
 
-[node name="NoiseBarContainer" type="Control" parent="." unique_id=1436714080]
-custom_minimum_size = Vector2(300, 30)
-anchors_preset = 0
-offset_left = 16.0
-offset_top = 14.0
-offset_right = 476.0
-offset_bottom = 55.0
-script = ExtResource("2_detection")
+[node name="DrawPhase" type="DrawPhase" parent="."]
+hand_size = 3
 
-[node name="NoiseBar" type="ProgressBar" parent="NoiseBarContainer" unique_id=560289160]
+[node name="Sentry" type="SentryNode" parent="."]
+
+[node name="Background" type="ColorRect" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
+color = Color(0.0392157, 0.0588235, 0.0509804, 1)
+
+[node name="Content" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 28
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 28
+theme_override_constants/margin_bottom = 14
+
+[node name="Column" type="VBoxContainer" parent="Content"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Header" type="HBoxContainer" parent="Content/Column"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="DetectionBlock" type="VBoxContainer" parent="Content/Column/Header"]
+custom_minimum_size = Vector2(460, 0)
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_constants/separation = 2
+
+[node name="NoiseBarContainer" type="Control" parent="Content/Column/Header/DetectionBlock"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(460, 42)
+layout_mode = 2
+script = ExtResource("8_detection")
+
+[node name="NoiseBar" type="ProgressBar" parent="Content/Column/Header/DetectionBlock/NoiseBarContainer"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_styles/background = SubResource("StyleBoxFlat_bar_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_bar_fill")
 show_percentage = false
 
-[node name="NoiseLabel" type="Label" parent="NoiseBarContainer" unique_id=1906396460]
+[node name="NoiseLabel" type="Label" parent="Content/Column/Header/DetectionBlock/NoiseBarContainer"]
+unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_colors/font_color = Color(0.85, 1, 0.9, 1)
+theme_override_colors/font_outline_color = Color(0.0392157, 0.0588235, 0.0509804, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 13
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="DrawPhase" type="DrawPhase" parent="." unique_id=1753657608]
-hand_size = 3
+[node name="HeaderSpacer" type="Control" parent="Content/Column/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
 
-[node name="Sentry" type="SentryNode" parent="." unique_id=1753657609]
+[node name="RunInfo" type="VBoxContainer" parent="Content/Column/Header"]
+layout_mode = 2
+theme_override_constants/separation = 0
 
-[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1484444958]
+[node name="TurnLabel" type="Label" parent="Content/Column/Header/RunInfo"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_fonts/font = ExtResource("5_menu")
+theme_override_font_sizes/font_size = 22
+text = "TURN 1"
+horizontal_alignment = 2
+
+[node name="CreditsLabel" type="Label" parent="Content/Column/Header/RunInfo"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 16
+text = "$ 0  credits on hand"
+horizontal_alignment = 2
+
+[node name="Arena" type="HBoxContainer" parent="Content/Column"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 20
+
+[node name="PlayerColumn" type="VBoxContainer" parent="Content/Column/Arena"]
+custom_minimum_size = Vector2(220, 0)
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 2
+
+[node name="Avatar" type="PanelContainer" parent="Content/Column/Arena/PlayerColumn"]
+custom_minimum_size = Vector2(96, 96)
+layout_mode = 2
+size_flags_horizontal = 4
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_ring")
+
+[node name="AvatarIcon" type="TextureRect" parent="Content/Column/Arena/PlayerColumn/Avatar"]
+modulate = Color(0.2, 1, 0.4, 0.9)
+custom_minimum_size = Vector2(60, 60)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+mouse_filter = 2
+texture = ExtResource("6_player")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="PlayerName" type="Label" parent="Content/Column/Arena/PlayerColumn"]
+layout_mode = 2
+theme_override_fonts/font = ExtResource("5_menu")
+theme_override_font_sizes/font_size = 18
+text = "OPERATOR"
+horizontal_alignment = 1
+
+[node name="PlayerChips" type="HBoxContainer" parent="Content/Column/Arena/PlayerColumn"]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="ShieldChip" type="PanelContainer" parent="Content/Column/Arena/PlayerColumn/PlayerChips"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_chip_cyan")
+
+[node name="ShieldLabel" type="Label" parent="Content/Column/Arena/PlayerColumn/PlayerChips/ShieldChip"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0, 0.898, 1, 1)
+theme_override_font_sizes/font_size = 14
+text = "shield 0"
+
+[node name="KnowledgeChip" type="PanelContainer" parent="Content/Column/Arena/PlayerColumn/PlayerChips"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_chip")
+
+[node name="KnowledgeLabel" type="Label" parent="Content/Column/Arena/PlayerColumn/PlayerChips/KnowledgeChip"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "knowledge 0 / 0"
+
+[node name="EnemyColumn" type="VBoxContainer" parent="Content/Column/Arena"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="IntentPanel" type="PanelContainer" parent="Content/Column/Arena/EnemyColumn"]
+layout_mode = 2
+size_flags_horizontal = 4
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_intent")
+
+[node name="IntentLabel" type="Label" parent="Content/Column/Arena/EnemyColumn/IntentPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0, 0.898, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "Sentry: nothing queued"
+horizontal_alignment = 1
+
+[node name="EnemyName" type="Label" parent="Content/Column/Arena/EnemyColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_fonts/font = ExtResource("4_display")
+theme_override_font_sizes/font_size = 40
+theme_override_colors/font_shadow_color = Color(0.2, 1, 0.4, 0.2)
+theme_override_constants/shadow_outline_size = 6
+theme_override_constants/shadow_offset_x = 0
+theme_override_constants/shadow_offset_y = 0
+text = "SECURITY"
+horizontal_alignment = 1
+
+[node name="EnemyPlate" type="PanelContainer" parent="Content/Column/Arena/EnemyColumn"]
+custom_minimum_size = Vector2(380, 150)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 3
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_plate")
+
+[node name="EnemyIcon" type="TextureRect" parent="Content/Column/Arena/EnemyColumn/EnemyPlate"]
+unique_name_in_owner = true
+modulate = Color(0.2, 1, 0.4, 0.85)
+custom_minimum_size = Vector2(120, 120)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+mouse_filter = 2
+texture = ExtResource("7_enemy")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="IntegrityBar" type="ProgressBar" parent="Content/Column/Arena/EnemyColumn"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(380, 12)
+layout_mode = 2
+size_flags_horizontal = 4
+mouse_filter = 2
+theme_override_styles/background = SubResource("StyleBoxFlat_bar_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_bar_fill")
+show_percentage = false
+
+[node name="HealthLabel" type="Label" parent="Content/Column/Arena/EnemyColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+horizontal_alignment = 1
+
+[node name="EnemyChips" type="HBoxContainer" parent="Content/Column/Arena/EnemyColumn"]
+custom_minimum_size = Vector2(0, 24)
+layout_mode = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="CorruptionChip" type="PanelContainer" parent="Content/Column/Arena/EnemyColumn/EnemyChips"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_chip_red")
+
+[node name="CorruptionLabel" type="Label" parent="Content/Column/Arena/EnemyColumn/EnemyChips/CorruptionChip"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.2, 0.333333, 1)
+theme_override_font_sizes/font_size = 14
+text = "corruption 0"
+
+[node name="ReadoutColumn" type="VBoxContainer" parent="Content/Column/Arena"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DetailPanel" type="PanelContainer" parent="Content/Column/Arena/ReadoutColumn"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="DetailContent" type="VBoxContainer" parent="Content/Column/Arena/ReadoutColumn/DetailPanel"]
+custom_minimum_size = Vector2(270, 0)
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ReadoutHeader" type="Label" parent="Content/Column/Arena/ReadoutColumn/DetailPanel/DetailContent"]
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 12
+text = "// card readout"
+
+[node name="DetailTitle" type="Label" parent="Content/Column/Arena/ReadoutColumn/DetailPanel/DetailContent"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_fonts/font = ExtResource("5_menu")
+theme_override_font_sizes/font_size = 18
+text = "Select a card to see its details"
+autowrap_mode = 2
+
+[node name="DetailStats" type="Label" parent="Content/Column/Arena/ReadoutColumn/DetailPanel/DetailContent"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0, 0.898, 1, 1)
+theme_override_font_sizes/font_size = 13
+autowrap_mode = 2
+
+[node name="DetailDescription" type="Label" parent="Content/Column/Arena/ReadoutColumn/DetailPanel/DetailContent"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 1, 0.9, 1)
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 2
+
+[node name="DetailKeywords" type="Label" parent="Content/Column/Arena/ReadoutColumn/DetailPanel/DetailContent"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 2
+
+[node name="ReadoutSpacer" type="Control" parent="Content/Column/Arena/ReadoutColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="CompleteEncounterButton" type="Button" parent="Content/Column/Arena/ReadoutColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 8
+tooltip_text = "Testing shortcut: clears this node without fighting."
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 14
+theme_override_colors/font_color = Color(0.2, 1, 0.4, 0.45)
+text = "[ skip node: test ]"
+
+[node name="StatusRow" type="HBoxContainer" parent="Content/Column"]
+custom_minimum_size = Vector2(0, 22)
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Prompt" type="Label" parent="Content/Column/StatusRow"]
+layout_mode = 2
+size_flags_vertical = 0
+theme_override_font_sizes/font_size = 15
+text = ">"
+
+[node name="StatusLabel" type="Label" parent="Content/Column/StatusRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.2, 1, 0.4, 0.8)
+theme_override_font_sizes/font_size = 15
+autowrap_mode = 2
+
+[node name="Bottom" type="HBoxContainer" parent="Content/Column"]
+custom_minimum_size = Vector2(0, 196)
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="EnergyBlock" type="VBoxContainer" parent="Content/Column/Bottom"]
+custom_minimum_size = Vector2(130, 0)
+layout_mode = 2
+theme_override_constants/separation = 2
+alignment = 2
+
+[node name="EnergyRing" type="PanelContainer" parent="Content/Column/Bottom/EnergyBlock"]
+custom_minimum_size = Vector2(92, 92)
+layout_mode = 2
+size_flags_horizontal = 4
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_ring")
+
+[node name="EnergyLabel" type="Label" parent="Content/Column/Bottom/EnergyBlock/EnergyRing"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_fonts/font = ExtResource("4_display")
+theme_override_font_sizes/font_size = 64
+theme_override_colors/font_shadow_color = Color(0.2, 1, 0.4, 0.25)
+theme_override_constants/shadow_outline_size = 6
+theme_override_constants/shadow_offset_x = 0
+theme_override_constants/shadow_offset_y = 0
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="EnergyMaxLabel" type="Label" parent="Content/Column/Bottom/EnergyBlock"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 13
+text = "energy 0 / 0"
+horizontal_alignment = 1
+
+[node name="CardContainer" type="HBoxContainer" parent="Content/Column/Bottom"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="TurnBlock" type="VBoxContainer" parent="Content/Column/Bottom"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+theme_override_constants/separation = 8
+alignment = 2
+
+[node name="PlayButton" type="Button" parent="Content/Column/Bottom/TurnBlock"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 20
+theme_override_styles/normal = SubResource("StyleBoxFlat_action")
+theme_override_styles/hover = SubResource("StyleBoxFlat_action_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_action_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_action_pressed")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_action_pressed")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_action_disabled")
+text = "PLAY CARD"
+
+[node name="EndTurnButton" type="Button" parent="Content/Column/Bottom/TurnBlock"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 26
+theme_override_styles/normal = SubResource("StyleBoxFlat_action")
+theme_override_styles/hover = SubResource("StyleBoxFlat_action_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_action_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_action_pressed")
+theme_override_styles/hover_pressed = SubResource("StyleBoxFlat_action_pressed")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_action_disabled")
+text = "END TURN"
+
+[node name="PileLabel" type="Label" parent="Content/Column/Bottom/TurnBlock"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 13
+text = "draw -- · discard --"
+horizontal_alignment = 1
+
+[node name="PlayCountLabel" type="Label" parent="Content/Column/Bottom/TurnBlock"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+theme_override_font_sizes/font_size = 12
+horizontal_alignment = 1
+
+[node name="CrtOverlay" type="ColorRect" parent="."]
+material = SubResource("ShaderMaterial_crt")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 16
-alignment = 1
-
-[node name="Title" type="Label" parent="VBoxContainer" unique_id=750235484]
-layout_mode = 2
-text = "CyberHeist — Draw Phase"
-horizontal_alignment = 1
-
-[node name="CreditsLabel" type="Label" parent="VBoxContainer" unique_id=502938484]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.65, 0.85, 0.72, 1)
-text = "Credits: 0"
-horizontal_alignment = 1
-
-[node name="TurnLabel" type="Label" parent="VBoxContainer" unique_id=502938474]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="IntentLabel" type="Label" parent="VBoxContainer" unique_id=502938483]
-layout_mode = 2
-text = "Sentry: nothing queued"
-horizontal_alignment = 1
-
-[node name="EnergyLabel" type="Label" parent="VBoxContainer" unique_id=502938471]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="PileLabel" type="Label" parent="VBoxContainer" unique_id=186934713]
-layout_mode = 2
-text = "Draw pile: -- | Discard pile: --"
-horizontal_alignment = 1
-
-[node name="PlayCountLabel" type="Label" parent="VBoxContainer" unique_id=174287500]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="StatusLabel" type="Label" parent="VBoxContainer" unique_id=502938472]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="HealthLabel" type="Label" parent="VBoxContainer" unique_id=316815099]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="ShieldLabel" type="Label" parent="VBoxContainer" unique_id=2032366159]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="KnowledgeLabel" type="Label" parent="VBoxContainer" unique_id=1220914727]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="CorruptionLabel" type="Label" parent="VBoxContainer" unique_id=1715288157]
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="CardContainer" type="HBoxContainer" parent="VBoxContainer" unique_id=847287290]
-layout_mode = 2
-alignment = 1
-
-[node name="DetailPanel" type="PanelContainer" parent="VBoxContainer" unique_id=502938475]
-layout_mode = 2
-size_flags_horizontal = 4
-
-[node name="DetailMargin" type="MarginContainer" parent="VBoxContainer/DetailPanel" unique_id=502938476]
-layout_mode = 2
-theme_override_constants/margin_left = 16
-theme_override_constants/margin_top = 12
-theme_override_constants/margin_right = 16
-theme_override_constants/margin_bottom = 12
-
-[node name="DetailContent" type="VBoxContainer" parent="VBoxContainer/DetailPanel/DetailMargin" unique_id=502938477]
-custom_minimum_size = Vector2(560, 0)
-layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="DetailTitle" type="Label" parent="VBoxContainer/DetailPanel/DetailMargin/DetailContent" unique_id=502938478]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.85, 0.9, 0.95, 1)
-theme_override_font_sizes/font_size = 18
-text = "Select a card to see its details"
-horizontal_alignment = 1
-
-[node name="DetailStats" type="Label" parent="VBoxContainer/DetailPanel/DetailMargin/DetailContent" unique_id=502938479]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.65, 0.85, 0.72, 1)
-theme_override_font_sizes/font_size = 14
-horizontal_alignment = 1
-
-[node name="DetailDescription" type="Label" parent="VBoxContainer/DetailPanel/DetailMargin/DetailContent" unique_id=502938480]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.82, 0.86, 0.9, 1)
-theme_override_font_sizes/font_size = 15
-horizontal_alignment = 1
-autowrap_mode = 2
-
-[node name="DetailKeywords" type="Label" parent="VBoxContainer/DetailPanel/DetailMargin/DetailContent" unique_id=502938481]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.65, 0.72, 0.78, 1)
-theme_override_font_sizes/font_size = 13
-horizontal_alignment = 1
-autowrap_mode = 2
-
-[node name="Buttons" type="HBoxContainer" parent="VBoxContainer" unique_id=1947668743]
-layout_mode = 2
-theme_override_constants/separation = 16
-alignment = 1
-
-[node name="EndTurnButton" type="Button" parent="VBoxContainer/Buttons" unique_id=18982048]
-layout_mode = 2
-text = "End Turn"
-
-[node name="PlayButton" type="Button" parent="VBoxContainer/Buttons" unique_id=2060252295]
-layout_mode = 2
-text = "Play Card"
-
-[node name="CompleteEncounterButton" type="Button" parent="VBoxContainer/Buttons" unique_id=502938473]
-layout_mode = 2
-text = "Complete Encounter"
+mouse_filter = 2
 
 [connection signal="security_phase" from="DrawPhase" to="Sentry" method="on_security_phase"]
 [connection signal="turn_resolved" from="Sentry" to="." method="_on_sentry_turn_resolved"]
-[connection signal="pressed" from="VBoxContainer/Buttons/EndTurnButton" to="." method="_on_end_turn_button_pressed"]
-[connection signal="pressed" from="VBoxContainer/Buttons/PlayButton" to="." method="_on_play_button_pressed"]
-[connection signal="pressed" from="VBoxContainer/Buttons/CompleteEncounterButton" to="." method="_on_complete_encounter_pressed"]
+[connection signal="pressed" from="Content/Column/Bottom/TurnBlock/EndTurnButton" to="." method="_on_end_turn_button_pressed"]
+[connection signal="pressed" from="Content/Column/Bottom/TurnBlock/PlayButton" to="." method="_on_play_button_pressed"]
+[connection signal="pressed" from="Content/Column/Arena/ReadoutColumn/CompleteEncounterButton" to="." method="_on_complete_encounter_pressed"]

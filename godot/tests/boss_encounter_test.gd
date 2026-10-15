@@ -98,7 +98,7 @@ func _nodes_in_zone(zone: int) -> Array:
 
 
 func _press_end_turn() -> void:
-	_combat.get_node("VBoxContainer/Buttons/EndTurnButton").pressed.emit()
+	_combat.get_node("%EndTurnButton").pressed.emit()
 
 
 # Fixture only: reuse the real draw API rather than add a debug gameplay API.
@@ -209,7 +209,7 @@ func _run() -> void:
 	_check(vpn_index >= 0, "VPN is in the full-deck hand")
 	if vpn_index >= 0:
 		_combat.card_buttons[vpn_index].pressed.emit()
-		_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+		_combat.get_node("%PlayButton").pressed.emit()
 		# VPN authors -10; 30% resistance lands it as -7.
 		_check(
 			_combat.status_label.text == "VPN played. Noise change: -7.",
@@ -235,7 +235,7 @@ func _run() -> void:
 		if malware_for_purge < 0:
 			break
 		_combat.card_buttons[malware_for_purge].pressed.emit()
-		_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+		_combat.get_node("%PlayButton").pressed.emit()
 		var corruption_before: int = _combat.sentry.corruption()
 		_check(corruption_before > 0, "Malware corrupts the boss before its Purge")
 
@@ -284,7 +284,7 @@ func _run() -> void:
 		_finish()
 		return
 	_combat.card_buttons[malware_index].pressed.emit()
-	_combat.get_node("VBoxContainer/Buttons/PlayButton").pressed.emit()
+	_combat.get_node("%PlayButton").pressed.emit()
 	_check(_combat.sentry.health() == 1, "Malware leaves the boss alive for the corruption tick")
 	var noise_before_victory: int = _noise_meter.noise
 	_press_end_turn()
