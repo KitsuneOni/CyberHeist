@@ -61,6 +61,8 @@
 # Run: godot --headless --path godot -s res://tests/shop_test.gd
 extends SceneTree
 
+const CardRarity := preload("res://scenes/card_rarity.gd")
+
 # Mirrors price_for in cyber_heist/src/shop.rs.
 const PRICE_BY_RARITY := {
 	"Common": 50,
@@ -337,6 +339,12 @@ func _run() -> void:
 			and row_text.contains(String(card.description))
 		)
 		_check(detailed, "slot %d shows the card's full details (%s)" % [slot, card.name])
+		var stripe: StyleBox = shop._rows[slot].get_child(0).get_theme_stylebox("normal")
+		_check(
+			stripe is StyleBoxFlat
+			and stripe.border_color == CardRarity.colour_for(String(card.rarity)),
+			"slot %d is marked in its %s rarity colour (#109)" % [slot, card.rarity]
+		)
 		_check(
 			int(card.price) == PRICE_BY_RARITY.get(card.rarity, -1),
 			"slot %d's price is set by its rarity (%s %d cr)" % [slot, card.rarity, card.price]

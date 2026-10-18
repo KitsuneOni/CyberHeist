@@ -30,6 +30,7 @@ extends Control
 @onready var corruption_label: Label = %CorruptionLabel
 @onready var complete_encounter_button: Button = %CompleteEncounterButton
 
+const CardRarity := preload("res://scenes/card_rarity.gd")
 const CardTooltip := preload("res://scenes/card_tooltip.gd")
 const CombatFx := preload("res://scenes/combat_fx.gd")
 
@@ -397,6 +398,8 @@ func card_face_text(index: int) -> String:
 # bottom in red. The button sits in a slot taller than itself so hovering or
 # selecting can lift it out of the hand without shifting its neighbours.
 func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
+	# The frame and cost ring are drawn in the card's rarity colour (#109).
+	var frame := CardRarity.colour_for(str(detail.get("rarity", "")))
 	var slot := Control.new()
 	slot.custom_minimum_size = Vector2(CARD_SIZE.x, CARD_SIZE.y + CARD_LIFT)
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -407,11 +410,11 @@ func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
 	button.focus_mode = Control.FOCUS_NONE
 	button.size = CARD_SIZE
 	button.position = Vector2(0, CARD_LIFT)
-	button.add_theme_stylebox_override("normal", _card_style(GREEN, 0.45, 1, 0.0))
-	button.add_theme_stylebox_override("hover", _card_style(GREEN, 0.9, 2, 0.06))
-	button.add_theme_stylebox_override("pressed", _card_style(GREEN, 1.0, 3, 0.14))
-	button.add_theme_stylebox_override("hover_pressed", _card_style(GREEN, 1.0, 3, 0.14))
-	button.add_theme_stylebox_override("disabled", _card_style(GREEN, 0.18, 1, 0.0))
+	button.add_theme_stylebox_override("normal", _card_style(frame, 0.85, 1, 0.0))
+	button.add_theme_stylebox_override("hover", _card_style(frame, 0.95, 2, 0.06))
+	button.add_theme_stylebox_override("pressed", _card_style(frame, 1.0, 3, 0.14))
+	button.add_theme_stylebox_override("hover_pressed", _card_style(frame, 1.0, 3, 0.14))
+	button.add_theme_stylebox_override("disabled", _card_style(frame, 0.22, 1, 0.0))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	slot.add_child(button)
 
@@ -436,7 +439,7 @@ func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
 	var ring := StyleBoxFlat.new()
 	ring.bg_color = CARD_BG
 	ring.set_border_width_all(2)
-	ring.border_color = GREEN
+	ring.border_color = frame
 	ring.set_corner_radius_all(13)
 	pip.add_theme_stylebox_override("panel", ring)
 	top.add_child(pip)
@@ -584,6 +587,9 @@ func _update_card_detail() -> void:
 		return
 
 	detail_title.text = CardTooltip.title_for(detail)
+	detail_title.add_theme_color_override(
+		"font_color", CardRarity.colour_for(str(detail.get("rarity", "")))
+	)
 	detail_stats.text = CardTooltip.stats_for(detail)
 	detail_description.text = str(detail.get("description", ""))
 	detail_keywords.text = CardTooltip.keywords_for(detail)
