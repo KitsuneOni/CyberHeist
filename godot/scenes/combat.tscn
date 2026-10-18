@@ -340,7 +340,31 @@ size_flags_horizontal = 4
 mouse_filter = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_intent")
 
-[node name="IntentLabel" type="Label" parent="Content/Column/Arena/EnemyColumn/IntentPanel"]
+[node name="IntentRow" type="HBoxContainer" parent="Content/Column/Arena/EnemyColumn/IntentPanel"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="IntentIcon" type="TextureRect" parent="Content/Column/Arena/EnemyColumn/IntentPanel/IntentRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(22, 22)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+modulate = Color(0, 0.898, 1, 1)
+expand_mode = 1
+stretch_mode = 5
+
+[node name="IntentValue" type="Label" parent="Content/Column/Arena/EnemyColumn/IntentPanel/IntentRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0, 0.898, 1, 1)
+theme_override_fonts/font = ExtResource("4_display")
+theme_override_font_sizes/font_size = 26
+vertical_alignment = 1
+
+[node name="IntentLabel" type="Label" parent="Content/Column/Arena/EnemyColumn/IntentPanel/IntentRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0, 0.898, 1, 1)

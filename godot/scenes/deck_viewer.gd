@@ -11,6 +11,8 @@ extends Control
 # back where it was.
 signal closed
 
+const CardRarity := preload("res://scenes/card_rarity.gd")
+
 const DIM_COLOUR := Color(0, 0, 0, 0.7)
 const PANEL_COLOUR := Color(0.0392157, 0.0588235, 0.0509804, 0.97)
 const BORDER_COLOUR := Color(0.2, 1, 0.4, 0.8)
@@ -182,7 +184,8 @@ func _row(card: Dictionary) -> VBoxContainer:
 	var row := VBoxContainer.new()
 	row.name = "Card_%s" % str(card.get("id", "unknown"))
 	row.add_theme_constant_override("separation", 4)
-	row.add_child(_line(heading_for(card), NAME_COLOUR, 18))
+	# The heading takes the card's rarity colour (#109).
+	row.add_child(_line(heading_for(card), CardRarity.colour_for(str(card.get("rarity", ""))), 18))
 	row.add_child(
 		_line("%s · %s" % [card.get("cost_text", ""), card.get("noise_text", "")], STATS_COLOUR, 14)
 	)

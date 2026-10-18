@@ -215,6 +215,20 @@ impl SentryNode {
         }
     }
 
+    /// The queued action as the intent icon shows it: `{kind, value}`, where
+    /// `kind` is `noise`, `drain_energy`, `restore_integrity`, `purge`,
+    /// `firewall` or `inject_malware`. `{}` when nothing is queued.
+    #[func]
+    fn queued_intent(&self) -> VarDictionary {
+        match self.sentry.queued_action(self.noise()) {
+            Some(action) => {
+                let (kind, value) = action.intent();
+                vdict! { "kind" => kind, "value" => value }
+            }
+            None => VarDictionary::new(),
+        }
+    }
+
     /// Whether this construct has an action that does more than make noise.
     #[func]
     fn has_ability(&self) -> bool {

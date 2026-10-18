@@ -6,6 +6,8 @@
 # The rules are in shop.rs (remove_card), and ShopNode is the bridge.
 extends Control
 
+const CardRarity := preload("res://scenes/card_rarity.gd")
+
 const PRICE_COLOUR := Color(0.2, 1, 0.4, 1)
 const UNAFFORDABLE_COLOUR := Color(1, 0.2, 0.333333, 1)
 
@@ -68,6 +70,8 @@ func _add_row(entry: Dictionary, offer: Dictionary) -> void:
 	details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	details.add_theme_font_size_override("font_size", 16)
 	details.mouse_filter = Control.MOUSE_FILTER_PASS
+	# A bar down the left in the card's rarity colour (#109).
+	details.add_theme_stylebox_override("normal", CardRarity.stripe_style(str(card.get("rarity", ""))))
 	details.text = _details_text(entry)
 	details.tooltip_text = _keyword_explanations(card)
 	row.add_child(details)

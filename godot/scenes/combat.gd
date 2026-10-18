@@ -5,6 +5,8 @@ extends Control
 @onready var sentry: Node = $Sentry
 @onready var turn_label: Label = %TurnLabel
 @onready var intent_label: Label = %IntentLabel
+@onready var intent_icon: TextureRect = %IntentIcon
+@onready var intent_value: Label = %IntentValue
 @onready var energy_label: Label = %EnergyLabel
 @onready var energy_max_label: Label = %EnergyMaxLabel
 @onready var pile_label: Label = %PileLabel
@@ -28,7 +30,9 @@ extends Control
 @onready var corruption_label: Label = %CorruptionLabel
 @onready var complete_encounter_button: Button = %CompleteEncounterButton
 
+const CardRarity := preload("res://scenes/card_rarity.gd")
 const CardTooltip := preload("res://scenes/card_tooltip.gd")
+const CombatFx := preload("res://scenes/combat_fx.gd")
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
@@ -45,6 +49,9 @@ const CARD_BG := Color(0.0509804, 0.0862745, 0.0705882, 1)
 const CARD_SIZE := Vector2(124, 172)
 # How far a card rises out of the hand when hovered or selected.
 const CARD_LIFT := 14.0
+# How long a new hand waits for the old one to start flying off before it
+# deals in.
+const FLY_AND_DEAL_GAP := 0.15
 
 # Art for each card type until real card art exists, tinted green like every
 # other icon on the terminal screens.
@@ -68,6 +75,28 @@ const ENEMY_ICONS := {
 }
 const STANDARD_ENEMY_ICON := "res://assets/ui/icons/game-icons/cctv-camera.svg"
 
+# The intent icon for each kind of move security can queue (story #103), and
+# how its number reads beside it. Purge has no number.
+const INTENT_ICONS := {
+	"noise": "res://assets/ui/icons/tabler/eye.svg",
+	"drain_energy": "res://assets/ui/icons/tabler/bolt.svg",
+	"restore_integrity": "res://assets/ui/icons/tabler/arrow-up-circle.svg",
+	"purge": "res://assets/ui/icons/tabler/trash.svg",
+	"firewall": "res://assets/ui/icons/game-icons/firewall.svg",
+	"inject_malware": "res://assets/ui/icons/tabler/bug.svg",
+}
+# Widest the intent line gets before it wraps, so a boss's long ability text
+# stays clear of the card readout beside it.
+const INTENT_MAX_WIDTH := 520.0
+const INTENT_VALUE_FORMATS := {
+	"noise": "+%d",
+	"drain_energy": "-%d",
+	"restore_integrity": "+%d",
+	"purge": "",
+	"firewall": "%d",
+	"inject_malware": "+%d",
+}
+
 var selected_index := -1
 var card_buttons: Array[Button] = []
 # The name and cost shown on each card face, in hand order.
@@ -77,6 +106,9 @@ var card_cost_labels: Array[Label] = []
 # Made in _ready rather than here, so a screen freed before it is ever shown
 # leaves nothing orphaned behind.
 var card_tooltip: PanelContainer
+# Card flights, the hand dealing in, hits and floating numbers (story #45).
+# Made in _ready for the same reason as the tooltip.
+var fx: Control
 # What the sentry did on its turn. Filled in while end_turn() is still
 # running and read once it returns.
 var sentry_turn: Dictionary = {}
@@ -92,6 +124,9 @@ var deck_viewer: Control
 
 func _ready() -> void:
 	draw_phase.apply_run_bonuses()
+	# Before the tooltip, so a card's tooltip draws over its flying ghost.
+	fx = CombatFx.new()
+	add_child(fx)
 	card_tooltip = CardTooltip.new()
 	add_child(card_tooltip)
 	shown_phase = sentry.phase()
@@ -137,6 +172,10 @@ func _on_end_turn_button_pressed() -> void:
 
 	selected_index = -1
 	status_label.text = ""
+	var energy_before: int = draw_phase.energy
+	var noise_before: int = NoiseMeterGlobal.noise
+	var health_before: int = sentry.health()
+	_discard_hand_on_screen()
 	var hand: PackedStringArray = draw_phase.end_turn()
 
 	var turn := sentry_turn
@@ -151,7 +190,11 @@ func _on_end_turn_button_pressed() -> void:
 		drained = draw_phase.drain_energy(int(turn.get("energy_drain", 0)))
 
 	_rebuild_card_buttons(hand)
+	_deal_hand_in(FLY_AND_DEAL_GAP)
 	_refresh_status_labels()
+	_show_sentry_turn(turn, noise_before, health_before, drained)
+	if draw_phase.energy != energy_before:
+		fx.punch(energy_label)
 
 	# A full noise meter means the player has been spotted, so the new hand
 	# never gets played and the detection screen takes over instead.
@@ -255,7 +298,60 @@ func _draw_hand() -> void:
 	status_label.text = ""
 	var hand: PackedStringArray = draw_phase.draw_hand()
 	_rebuild_card_buttons(hand)
+	_deal_hand_in(0.0)
 	_refresh_status_labels()
+
+
+# Every card in hand rises into place from below, left to right.
+func _deal_hand_in(delay: float) -> void:
+	for i in card_buttons.size():
+		fx.deal_in(card_buttons[i], _rest_height(i), delay + i * CombatFx.DEAL_STAGGER)
+
+
+# The hand about to be replaced flies off to the discard pile, so ending the
+# turn is seen to throw it away. Ghosts, because the real cards are about to
+# be freed.
+func _discard_hand_on_screen() -> void:
+	var pile := pile_label.get_global_rect().get_center()
+	for i in card_buttons.size():
+		fx.fly_card(card_buttons[i], pile, i * CombatFx.DEAL_STAGGER * 0.5, 0.4)
+
+
+# Where each card in hand sits on screen, so a rebuilt hand can slide the
+# cards that stayed from there to their new places.
+func _card_screen_positions() -> Array[float]:
+	var positions: Array[float] = []
+	for button in card_buttons:
+		positions.append(button.global_position.x if is_instance_valid(button) else 0.0)
+	return positions
+
+
+# After a card at `played` leaves the hand, the cards either side of it close
+# the gap from where they were, and any card the play drew is dealt in. The
+# new layout is only known once the hand has been sorted, so it waits for that.
+func _close_hand_gap(old_positions: Array[float], played: int) -> void:
+	# Two plays before the hand is next sorted: the later hand is the one on
+	# screen, so only its slide is kept.
+	if card_container.sort_children.is_connected(_slide_hand_into_place):
+		card_container.sort_children.disconnect(_slide_hand_into_place)
+	card_container.sort_children.connect(
+		_slide_hand_into_place.bind(card_buttons.duplicate(), old_positions, played),
+		CONNECT_ONE_SHOT
+	)
+
+
+func _slide_hand_into_place(buttons: Array, old_positions: Array[float], played: int) -> void:
+	var dealt := 0
+	for i in buttons.size():
+		var button: Button = buttons[i]
+		if not is_instance_valid(button):
+			continue
+		var was := i if i < played else i + 1
+		if was < old_positions.size():
+			fx.slide_from(button, old_positions[was])
+		else:
+			fx.deal_in(button, _rest_height(i), FLY_AND_DEAL_GAP + dealt * CombatFx.DEAL_STAGGER)
+			dealt += 1
 
 
 func _rebuild_card_buttons(names: PackedStringArray) -> void:
@@ -266,7 +362,10 @@ func _rebuild_card_buttons(names: PackedStringArray) -> void:
 	# The card under the mouse may be about to go, and a freed button never
 	# sends its mouse_exited.
 	card_tooltip.hide_tooltip()
+	# Taken out now rather than left for queue_free, so the new hand is laid
+	# out on its own and the gap-closing slide measures the right places.
 	for child in card_container.get_children():
+		card_container.remove_child(child)
 		child.queue_free()
 	card_buttons.clear()
 	card_name_labels.clear()
@@ -299,6 +398,8 @@ func card_face_text(index: int) -> String:
 # bottom in red. The button sits in a slot taller than itself so hovering or
 # selecting can lift it out of the hand without shifting its neighbours.
 func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
+	# The frame and cost ring are drawn in the card's rarity colour (#109).
+	var frame := CardRarity.colour_for(str(detail.get("rarity", "")))
 	var slot := Control.new()
 	slot.custom_minimum_size = Vector2(CARD_SIZE.x, CARD_SIZE.y + CARD_LIFT)
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -309,11 +410,11 @@ func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
 	button.focus_mode = Control.FOCUS_NONE
 	button.size = CARD_SIZE
 	button.position = Vector2(0, CARD_LIFT)
-	button.add_theme_stylebox_override("normal", _card_style(GREEN, 0.45, 1, 0.0))
-	button.add_theme_stylebox_override("hover", _card_style(GREEN, 0.9, 2, 0.06))
-	button.add_theme_stylebox_override("pressed", _card_style(GREEN, 1.0, 3, 0.14))
-	button.add_theme_stylebox_override("hover_pressed", _card_style(GREEN, 1.0, 3, 0.14))
-	button.add_theme_stylebox_override("disabled", _card_style(GREEN, 0.18, 1, 0.0))
+	button.add_theme_stylebox_override("normal", _card_style(frame, 0.85, 1, 0.0))
+	button.add_theme_stylebox_override("hover", _card_style(frame, 0.95, 2, 0.06))
+	button.add_theme_stylebox_override("pressed", _card_style(frame, 1.0, 3, 0.14))
+	button.add_theme_stylebox_override("hover_pressed", _card_style(frame, 1.0, 3, 0.14))
+	button.add_theme_stylebox_override("disabled", _card_style(frame, 0.22, 1, 0.0))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	slot.add_child(button)
 
@@ -338,7 +439,7 @@ func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
 	var ring := StyleBoxFlat.new()
 	ring.bg_color = CARD_BG
 	ring.set_border_width_all(2)
-	ring.border_color = GREEN
+	ring.border_color = frame
 	ring.set_corner_radius_all(13)
 	pip.add_theme_stylebox_override("panel", ring)
 	top.add_child(pip)
@@ -430,7 +531,7 @@ func _noise_tag_colour(noise_text: String) -> Color:
 
 func _on_card_clicked(index: int) -> void:
 	selected_index = index
-	_update_selection_visuals()
+	_update_selection_visuals(true)
 	_update_card_detail()
 
 
@@ -439,21 +540,32 @@ func _on_card_hovered(index: int) -> void:
 		return
 	card_tooltip.show_for(card_buttons[index], draw_phase.card_detail(index))
 	if not card_buttons[index].disabled:
-		_lift_card(index, true)
+		_lift_card(index, true, true)
 
 
 func _on_card_unhovered(index: int) -> void:
 	if index >= card_buttons.size():
 		return
 	card_tooltip.hide_for(card_buttons[index])
-	_lift_card(index, index == selected_index)
+	_lift_card(index, index == selected_index, true)
 
 
-func _lift_card(index: int, lifted: bool) -> void:
+# Raises or lowers a card. `animate` eases it there, as the mouse does; a
+# rebuilt hand is placed at once and leaves the motion to the deal.
+func _lift_card(index: int, lifted: bool, animate := false) -> void:
 	var button := card_buttons[index]
 	if not is_instance_valid(button):
 		return
-	button.position.y = 0.0 if lifted else CARD_LIFT
+	var y := 0.0 if lifted else CARD_LIFT
+	if animate:
+		fx.lift_to(button, y)
+	else:
+		button.position.y = y
+
+
+# The height a card rests at while not hovered: up if selected.
+func _rest_height(index: int) -> float:
+	return 0.0 if index == selected_index else CARD_LIFT
 
 
 # Fills the detail panel from the selected card, including an explanation of
@@ -475,15 +587,18 @@ func _update_card_detail() -> void:
 		return
 
 	detail_title.text = CardTooltip.title_for(detail)
+	detail_title.add_theme_color_override(
+		"font_color", CardRarity.colour_for(str(detail.get("rarity", "")))
+	)
 	detail_stats.text = CardTooltip.stats_for(detail)
 	detail_description.text = str(detail.get("description", ""))
 	detail_keywords.text = CardTooltip.keywords_for(detail)
 
 
-func _update_selection_visuals() -> void:
+func _update_selection_visuals(animate := false) -> void:
 	for i in card_buttons.size():
 		card_buttons[i].button_pressed = (i == selected_index)
-		_lift_card(i, i == selected_index)
+		_lift_card(i, i == selected_index, animate)
 
 
 # Screen destruction is deferred. Ignore queued input on a combat screen whose
@@ -499,6 +614,10 @@ func _on_play_button_pressed() -> void:
 	if not _can_act() or selected_index == -1:
 		return
 
+	var played := selected_index
+	var played_button: Button = card_buttons[played] if played < card_buttons.size() else null
+	var energy_before: int = draw_phase.energy
+	var knowledge_before: int = KnowledgeMeterGlobal.knowledge
 	var result: Dictionary = draw_phase.play_card(selected_index)
 	if result.get("ok", false):
 		# Every card type has its own sound, so the play is heard as well as
@@ -548,7 +667,10 @@ func _on_play_button_pressed() -> void:
 			message += " %s leaves the encounter." % result.get("name", "Card")
 		status_label.text = message + _escalation_message()
 
+		_show_card_played(result, played_button, energy_before, knowledge_before)
+		var old_positions := _card_screen_positions()
 		_rebuild_card_buttons(draw_phase.hand_names())
+		_close_hand_gap(old_positions, played)
 	else:
 		match result.get("error", ""):
 			"not_enough_energy":
@@ -564,6 +686,70 @@ func _on_play_button_pressed() -> void:
 
 	if NoiseMeterGlobal.is_at_cap():
 		_report_detected()
+
+
+# What a successful play looks like: the card flies to what it hit, and every
+# number it changed says so where that number is shown.
+func _show_card_played(
+	result: Dictionary, button: Button, energy_before: int, knowledge_before: int
+) -> void:
+	var damage_dealt: int = result.get("damage_dealt", 0)
+	var damage_blocked: int = result.get("damage_blocked", 0)
+	var shield_added: int = result.get("shield_added", 0)
+	var noise_change: int = result.get("noise_change", 0)
+	var corruption_added: int = result.get("corruption_added", 0)
+
+	if result.get("exhausted", false):
+		fx.dissolve_card(button)
+	elif damage_dealt > 0 or damage_blocked > 0 or corruption_added > 0:
+		fx.fly_card(button, enemy_icon.get_global_rect().get_center())
+	elif shield_added > 0:
+		fx.fly_card(button, shield_label.get_global_rect().get_center())
+	else:
+		fx.fly_card(button, pile_label.get_global_rect().get_center(), 0.0, 0.4)
+
+	if damage_dealt > 0:
+		fx.hit(enemy_icon)
+		fx.float_text("-%d" % damage_dealt, enemy_icon, RED)
+	if damage_blocked > 0:
+		fx.float_text("BLOCKED %d" % damage_blocked, enemy_icon, CYAN)
+	if corruption_added > 0:
+		fx.flash(enemy_icon, Color(GREEN, 1.0))
+		fx.float_text("+%d corruption" % corruption_added, enemy_icon, GREEN)
+	if shield_added > 0:
+		fx.punch(shield_label)
+		fx.float_text("+%d shield" % shield_added, shield_label, CYAN)
+	if noise_change != 0:
+		_show_noise_change(noise_change)
+	var knowledge_change: int = KnowledgeMeterGlobal.knowledge - knowledge_before
+	if knowledge_change != 0:
+		fx.punch(knowledge_label)
+		fx.float_text("%+d knowledge" % knowledge_change, knowledge_label, CYAN)
+	if draw_phase.energy != energy_before or result.get("max_energy_gained", 0) > 0:
+		fx.punch(energy_label)
+
+
+# What security's turn did, shown where it landed.
+func _show_sentry_turn(turn: Dictionary, noise_before: int, health_before: int, drained: int) -> void:
+	var noise_change: int = NoiseMeterGlobal.noise - noise_before
+	if noise_change != 0:
+		_show_noise_change(noise_change)
+	var health_change: int = sentry.health() - health_before
+	if health_change < 0:
+		fx.hit(enemy_icon)
+		fx.float_text("%d" % health_change, enemy_icon, RED)
+	elif health_change > 0:
+		fx.float_text("+%d" % health_change, enemy_icon, GREEN)
+	if int(turn.get("firewall", 0)) > 0:
+		fx.flash(enemy_icon, CYAN)
+	if drained > 0:
+		fx.float_text("-%d energy" % drained, energy_label, RED)
+
+
+# Noise going up is the danger, so it reads red; going down reads cyan.
+func _show_noise_change(change: int) -> void:
+	fx.punch(noise_label)
+	fx.float_text("%+d noise" % change, noise_label, RED if change > 0 else CYAN)
 
 
 func _report_sentry_defeated() -> void:
@@ -584,7 +770,12 @@ func _update_health_label() -> void:
 		health_label.text += "  [Firewall %d]" % firewall
 
 	integrity_bar.max_value = maxi(sentry.max_health(), 1)
-	integrity_bar.value = sentry.health()
+	# Set outright while the screen is first being built, so it opens full
+	# rather than filling up.
+	if is_node_ready():
+		fx.ease_bar(integrity_bar, sentry.health())
+	else:
+		integrity_bar.value = sentry.health()
 
 	var who: String = sentry.construct_name()
 	if sentry.phase() > 1:
@@ -607,6 +798,7 @@ func _refresh_status_labels() -> void:
 	_update_credits_label()
 	_update_turn_label()
 	_update_intent_label()
+	_fit_intent_label()
 	_update_pile_label()
 	_update_energy_label()
 	_update_noise_label()
@@ -669,6 +861,7 @@ func _update_energy_label() -> void:
 # Shows what the sentry will do next, so ending the turn is a choice made with
 # the threat in view rather than a coin flip.
 func _update_intent_label() -> void:
+	_update_intent_icon()
 	var action: String = sentry.queued_action_name()
 	if action == "":
 		intent_label.text = "%s: nothing queued" % sentry.construct_name()
@@ -686,6 +879,8 @@ func _update_intent_label() -> void:
 	if escalated:
 		action += ESCALATED_MARK
 	intent_label.add_theme_color_override("font_color", RED if escalated else CYAN)
+	intent_icon.modulate = RED if escalated else CYAN
+	intent_value.add_theme_color_override("font_color", RED if escalated else CYAN)
 
 	# An ability is announced with the intent rather than sprung afterwards, so
 	# ending the turn into a lockdown is a decision and not a surprise.
@@ -709,3 +904,28 @@ func _update_intent_label() -> void:
 				ability,
 			]
 		)
+
+
+# An icon for the kind of move security has queued, with its number, so the
+# threat reads at a glance before the line beside it is.
+func _update_intent_icon() -> void:
+	var intent: Dictionary = sentry.queued_intent()
+	var kind: String = intent.get("kind", "")
+	intent_icon.visible = INTENT_ICONS.has(kind)
+	intent_value.visible = INTENT_ICONS.has(kind)
+	if not INTENT_ICONS.has(kind):
+		return
+	intent_icon.texture = load(INTENT_ICONS[kind])
+	var value_format: String = INTENT_VALUE_FORMATS[kind]
+	intent_value.text = value_format % int(intent.get("value", 0)) if value_format != "" else ""
+	intent_value.visible = not intent_value.text.is_empty()
+
+
+# Wraps the intent line onto a second row once it is wider than
+# INTENT_MAX_WIDTH, and lets it shrink back to one row when it is not.
+func _fit_intent_label() -> void:
+	intent_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	intent_label.custom_minimum_size.x = 0
+	if intent_label.get_minimum_size().x > INTENT_MAX_WIDTH:
+		intent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		intent_label.custom_minimum_size.x = INTENT_MAX_WIDTH
