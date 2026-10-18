@@ -106,6 +106,11 @@ jobs:
       - name: Run headless card reward and run deck test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/card_reward_test.gd
 
+      # Common white, Uncommon green, Rare blue, Legendary gold: card frames,
+      # titles and the deck viewer are drawn in their rarity's colour.
+      - name: Run headless card rarity colour test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/card_rarity_test.gd
+
       - name: Run headless card hover tooltip test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/card_hover_test.gd
 
