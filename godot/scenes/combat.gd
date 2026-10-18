@@ -5,6 +5,8 @@ extends Control
 @onready var sentry: Node = $Sentry
 @onready var turn_label: Label = %TurnLabel
 @onready var intent_label: Label = %IntentLabel
+@onready var intent_icon: TextureRect = %IntentIcon
+@onready var intent_value: Label = %IntentValue
 @onready var energy_label: Label = %EnergyLabel
 @onready var energy_max_label: Label = %EnergyMaxLabel
 @onready var pile_label: Label = %PileLabel
@@ -67,6 +69,28 @@ const ENEMY_ICONS := {
 	"THE ARCHITECT": "res://assets/ui/icons/game-icons/cyber-eye.svg",
 }
 const STANDARD_ENEMY_ICON := "res://assets/ui/icons/game-icons/cctv-camera.svg"
+
+# The intent icon for each kind of move security can queue (story #103), and
+# how its number reads beside it. Purge has no number.
+const INTENT_ICONS := {
+	"noise": "res://assets/ui/icons/tabler/eye.svg",
+	"drain_energy": "res://assets/ui/icons/tabler/bolt.svg",
+	"restore_integrity": "res://assets/ui/icons/tabler/arrow-up-circle.svg",
+	"purge": "res://assets/ui/icons/tabler/trash.svg",
+	"firewall": "res://assets/ui/icons/game-icons/firewall.svg",
+	"inject_malware": "res://assets/ui/icons/tabler/bug.svg",
+}
+# Widest the intent line gets before it wraps, so a boss's long ability text
+# stays clear of the card readout beside it.
+const INTENT_MAX_WIDTH := 520.0
+const INTENT_VALUE_FORMATS := {
+	"noise": "+%d",
+	"drain_energy": "-%d",
+	"restore_integrity": "+%d",
+	"purge": "",
+	"firewall": "%d",
+	"inject_malware": "+%d",
+}
 
 var selected_index := -1
 var card_buttons: Array[Button] = []
@@ -607,6 +631,7 @@ func _refresh_status_labels() -> void:
 	_update_credits_label()
 	_update_turn_label()
 	_update_intent_label()
+	_fit_intent_label()
 	_update_pile_label()
 	_update_energy_label()
 	_update_noise_label()
@@ -669,6 +694,7 @@ func _update_energy_label() -> void:
 # Shows what the sentry will do next, so ending the turn is a choice made with
 # the threat in view rather than a coin flip.
 func _update_intent_label() -> void:
+	_update_intent_icon()
 	var action: String = sentry.queued_action_name()
 	if action == "":
 		intent_label.text = "%s: nothing queued" % sentry.construct_name()
@@ -686,6 +712,8 @@ func _update_intent_label() -> void:
 	if escalated:
 		action += ESCALATED_MARK
 	intent_label.add_theme_color_override("font_color", RED if escalated else CYAN)
+	intent_icon.modulate = RED if escalated else CYAN
+	intent_value.add_theme_color_override("font_color", RED if escalated else CYAN)
 
 	# An ability is announced with the intent rather than sprung afterwards, so
 	# ending the turn into a lockdown is a decision and not a surprise.
@@ -709,3 +737,28 @@ func _update_intent_label() -> void:
 				ability,
 			]
 		)
+
+
+# An icon for the kind of move security has queued, with its number, so the
+# threat reads at a glance before the line beside it is.
+func _update_intent_icon() -> void:
+	var intent: Dictionary = sentry.queued_intent()
+	var kind: String = intent.get("kind", "")
+	intent_icon.visible = INTENT_ICONS.has(kind)
+	intent_value.visible = INTENT_ICONS.has(kind)
+	if not INTENT_ICONS.has(kind):
+		return
+	intent_icon.texture = load(INTENT_ICONS[kind])
+	var value_format: String = INTENT_VALUE_FORMATS[kind]
+	intent_value.text = value_format % int(intent.get("value", 0)) if value_format != "" else ""
+	intent_value.visible = not intent_value.text.is_empty()
+
+
+# Wraps the intent line onto a second row once it is wider than
+# INTENT_MAX_WIDTH, and lets it shrink back to one row when it is not.
+func _fit_intent_label() -> void:
+	intent_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	intent_label.custom_minimum_size.x = 0
+	if intent_label.get_minimum_size().x > INTENT_MAX_WIDTH:
+		intent_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		intent_label.custom_minimum_size.x = INTENT_MAX_WIDTH
