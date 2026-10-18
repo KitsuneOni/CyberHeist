@@ -21,6 +21,8 @@
 # file and the scene.
 extends Control
 
+const CardRarity := preload("res://scenes/card_rarity.gd")
+
 const PRICE_COLOUR := Color(0.2, 1, 0.4, 1)
 const UNAFFORDABLE_COLOUR := Color(1, 0.2, 0.333333, 1)
 # Sold slots stay in place, dimmed, so the rest of the stock does not move.
@@ -180,6 +182,10 @@ func _refresh() -> void:
 		# refreshed with everything else.
 		_detail_labels[slot].text = _card_details_text(card)
 		_detail_labels[slot].tooltip_text = _keyword_explanations(card)
+		# A reroll can change the rarity, so the stripe is redone here too.
+		_detail_labels[slot].add_theme_stylebox_override(
+			"normal", CardRarity.stripe_style(str(card.get("rarity", "")))
+		)
 		_card_names[slot] = String(card.get("name", "the card"))
 
 		if card.get("sold", false):

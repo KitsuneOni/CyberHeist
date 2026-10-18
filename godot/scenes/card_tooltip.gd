@@ -11,6 +11,8 @@ extends PanelContainer
 
 # Gap between the hovered card and the tooltip, and the tooltip and the screen
 # edge it is kept inside.
+const CardRarity := preload("res://scenes/card_rarity.gd")
+
 const CARD_GAP := 8.0
 const SCREEN_MARGIN := 8.0
 const TEXT_WIDTH := 420.0
@@ -83,6 +85,10 @@ func show_for(anchor: Control, detail: Dictionary) -> void:
 		return
 
 	title_label.text = title_for(detail)
+	# The title takes the card's rarity colour (#109).
+	title_label.add_theme_color_override(
+		"font_color", CardRarity.colour_for(str(detail.get("rarity", "")))
+	)
 	stats_label.text = stats_for(detail)
 	description_label.text = str(detail.get("description", ""))
 	keywords_label.text = keywords_for(detail)

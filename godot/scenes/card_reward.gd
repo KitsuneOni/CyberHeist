@@ -5,6 +5,8 @@
 # still owned at the next encounter.
 extends Control
 
+const CardRarity := preload("res://scenes/card_rarity.gd")
+
 @onready var offer_container: VBoxContainer = $Page/RewardPanel/Margin/Content/OfferContainer
 @onready var deck_label: Label = $Page/RewardPanel/Margin/Content/DeckLabel
 @onready var status_label: Label = $Page/RewardPanel/Margin/Content/StatusLabel
@@ -45,7 +47,22 @@ func _build_offer_buttons() -> void:
 			card.get("description", ""),
 		]
 		button.pressed.connect(_on_card_chosen.bind(i))
-		offer_container.add_child(button)
+		offer_container.add_child(_with_rarity_stripe(button, str(card.get("rarity", ""))))
+
+
+# The offer's button behind a bar in the card's rarity colour (#109). A
+# separate bar rather than a button style, so hover and focus keep the theme's.
+func _with_rarity_stripe(button: Button, rarity: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var stripe := ColorRect.new()
+	stripe.name = "RarityStripe"
+	stripe.color = CardRarity.colour_for(rarity)
+	stripe.custom_minimum_size = Vector2(CardRarity.STRIPE_WIDTH, 0)
+	stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(stripe)
+	row.add_child(button)
+	return row
 
 
 func _on_card_chosen(index: int) -> void:
