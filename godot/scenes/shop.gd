@@ -54,6 +54,8 @@ var _leaving := false
 
 func _ready() -> void:
 	leave_button.pressed.connect(_on_leave_pressed)
+	if FlowCoordinator.is_in_dark_web_visit():
+		leave_button.text = "> Back to contracts"
 	scrub_logs_button.pressed.connect(_on_scrub_logs_pressed)
 	reroll_button.pressed.connect(_on_reroll_pressed)
 	upgrade_button.tooltip_text = "Pay credits to improve a card in your deck. The price depends on its rarity."
@@ -359,7 +361,11 @@ func _on_leave_pressed() -> void:
 		return
 	_leaving = true
 
-	var result: Dictionary = FlowCoordinator.complete_active_encounter()
+	var result: Dictionary
+	if FlowCoordinator.is_in_dark_web_visit():
+		result = FlowCoordinator.leave_shop_to_contracts()
+	else:
+		result = FlowCoordinator.complete_active_encounter()
 	if not result.get("ok", false):
 		# Let the player try again rather than stranding them in the shop.
 		_leaving = false

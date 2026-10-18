@@ -13,6 +13,8 @@
 //! docs/rust-godot-setup.md.
 
 use crate::starter_deck::StarterDeckEntry;
+use rand::Rng;
+use rand::seq::SliceRandom;
 
 /// Every card the player currently owns this run, one entry per physical card.
 ///
@@ -34,6 +36,29 @@ impl RunDeck {
             }
         }
         Self { card_ids }
+    }
+
+    pub fn upgrade_random(
+        &mut self,
+        count: usize,
+        upgraded_id_of: impl Fn(&str) -> Option<String>,
+        rng: &mut impl Rng,
+    ) -> usize {
+        let mut candidates: Vec<usize> = self
+            .card_ids
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| upgraded_id_of(id).is_some())
+            .map(|(index, _)| index)
+            .collect();
+        candidates.shuffle(rng);
+        candidates.truncate(count);
+        for &index in &candidates {
+            if let Some(upgraded) = upgraded_id_of(&self.card_ids[index]) {
+                self.card_ids[index] = upgraded;
+            }
+        }
+        candidates.len()
     }
 
     /// A deck holding exactly these cards, for a run resumed from a save.

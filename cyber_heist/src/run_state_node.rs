@@ -155,6 +155,21 @@ impl RunStateNode {
         entries
     }
 
+    #[func]
+    fn enter_dark_web_visit(&mut self) -> VarDictionary {
+        transition_result(self.state.enter_dark_web_visit())
+    }
+
+    #[func]
+    fn leave_dark_web_visit(&mut self) -> VarDictionary {
+        transition_result(self.state.leave_dark_web_visit())
+    }
+
+    #[func]
+    fn in_dark_web_visit(&self) -> bool {
+        self.state.in_dark_web_visit()
+    }
+
     /// The map key: what each encounter marker and status marker means.
     /// Returns `{encounter_types: [...], statuses: [...]}`.
     #[func]
@@ -460,6 +475,7 @@ pub(crate) fn snapshot_dictionary(state: &RunState) -> VarDictionary {
     vdict! {
         "phase" => state.phase().as_str(),
         "active_encounter" => &active_encounter,
+        "dark_web_visit" => state.in_dark_web_visit(),
     }
 }
 

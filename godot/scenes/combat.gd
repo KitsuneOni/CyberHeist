@@ -91,6 +91,7 @@ var deck_viewer: Control
 
 
 func _ready() -> void:
+	draw_phase.apply_run_bonuses()
 	card_tooltip = CardTooltip.new()
 	add_child(card_tooltip)
 	shown_phase = sentry.phase()

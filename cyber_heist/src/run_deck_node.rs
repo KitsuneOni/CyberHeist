@@ -123,6 +123,18 @@ impl RunDeckNode {
         self.deck.count_of(&card_id.to_string()) as i32
     }
 
+    #[func]
+    fn upgrade_random_cards(&mut self, count: i64) -> i64 {
+        let Some(db) = self.card_database() else {
+            godot_error!("RunDeckNode: no CardDatabaseGlobal, cannot upgrade cards.");
+            return 0;
+        };
+        let db = db.bind();
+        let count = usize::try_from(count).unwrap_or(0);
+        self.deck_mut()
+            .upgrade_random(count, |id| db.upgraded_id_of(id), &mut rand::rng()) as i64
+    }
+
     /// Adds a card to the run's deck. Returns false for an id the card
     /// database does not know, rather than storing something undrawable.
     #[func]

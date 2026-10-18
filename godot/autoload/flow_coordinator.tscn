@@ -9,4 +9,6 @@ script = ExtResource("1_flow")
 
 [node name="RunDeck" type="RunDeckNode" parent="."]
 
+[node name="Progression" type="ProgressionNode" parent="."]
+
 [node name="SaveGame" type="SaveGameNode" parent="."]
