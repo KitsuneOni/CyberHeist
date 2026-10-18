@@ -212,5 +212,10 @@ jobs:
       - name: Run headless security display test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/security_display_test.gd
 
+      # Walks a three-zone contract and checks each zone's map and combat
+      # backgrounds are its own, and that the map names the zone.
+      - name: Run headless zone theme test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/zone_theme_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh
