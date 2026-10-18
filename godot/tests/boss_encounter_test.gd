@@ -301,7 +301,7 @@ func _run() -> void:
 		"boss resistance is cleared on the reward screen"
 	)
 	var deck_size: int = _flow.run_deck_size()
-	reward._on_skip_pressed()
+	reward._on_continue_pressed()
 	_check(_screen().name == "ContractHub", "skipping the boss reward returns to the hub")
 	_check(_flow.run_deck_size() == deck_size, "skipping a boss reward leaves the deck unchanged")
 
