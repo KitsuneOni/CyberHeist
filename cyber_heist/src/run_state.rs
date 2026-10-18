@@ -215,6 +215,15 @@ impl RunState {
         Ok(())
     }
 
+    /// Replaces this run with a fresh one whatever it is doing, even part
+    /// way through an encounter, for quitting to the main menu. The run is
+    /// not lost: the save file keeps it as of its last safe point for
+    /// Continue. This only stops New contract picking the old run up from
+    /// behind the menu.
+    pub fn abandon(&mut self, rng: &mut impl Rng) {
+        *self = Self::generated(rng);
+    }
+
     pub fn phase(&self) -> ContractPhase {
         self.phase
     }
@@ -1499,6 +1508,21 @@ mod tests {
 
         assert_eq!(state.phase(), ContractPhase::Hub);
         assert_eq!(state.active_encounter(), None);
+    }
+
+    /// Story #110: quitting to the menu mid-fight leaves a fresh run
+    /// behind the menu, where starting one normally would be refused.
+    #[test]
+    fn a_run_can_be_abandoned_mid_encounter() {
+        let mut state = generated_run(5);
+        enter_first_encounter(&mut state);
+        assert!(state.start_new_run(&mut StdRng::seed_from_u64(3)).is_err());
+
+        state.abandon(&mut StdRng::seed_from_u64(3));
+
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert_eq!(state.active_encounter(), None);
+        assert!(!state.contract_started());
     }
 
     /// Story #116, scenario 2: the run remembers which events it has shown,
