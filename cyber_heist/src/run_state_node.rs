@@ -390,6 +390,14 @@ impl RunStateNode {
         transition_result(self.state.start_new_run(&mut rand::rng()))
     }
 
+    /// Swaps in a fresh run even mid-encounter, for quitting to the main
+    /// menu. The save file keeps the old run for Continue. Like
+    /// `start_new_run`, the deck and meters are reset by the coordinator.
+    #[func]
+    fn abandon_run(&mut self) {
+        self.state.abandon(&mut rand::rng());
+    }
+
     #[func]
     fn current_contract_node(&self) -> VarDictionary {
         encounter_dictionary(self.state.current_contract_node())

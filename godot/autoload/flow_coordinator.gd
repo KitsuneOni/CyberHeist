@@ -200,8 +200,8 @@ func save_progress() -> Dictionary:
 #
 # Refused from any other screen. close_settings() always returns to the main
 # menu, so opening settings from inside a run would lose the screen the player
-# was on. The pause menu story (G2) can lift this once settings remember where
-# they were opened from.
+# was on. During a run the pause menu shows settings over the paused screen
+# instead (story #110).
 func open_settings() -> Dictionary:
 	if not _is_showing(MAIN_MENU_SCENE_PATH):
 		return _failure("Settings can only be opened from the main menu.")
@@ -211,6 +211,58 @@ func open_settings() -> Dictionary:
 # Leaves the settings screen for the main menu, the only place it opens from.
 func close_settings() -> Dictionary:
 	return _show_screen(MAIN_MENU_SCENE_PATH)
+
+
+# Whether the pause menu can open: on any screen of a run, but not on the main
+# menu or the settings screen, which are outside one.
+func can_pause() -> bool:
+	return (
+		_screen_host_is_ready()
+		and _screen_host.get_child_count() > 0
+		and not _is_showing(MAIN_MENU_SCENE_PATH)
+		and not _is_showing(SETTINGS_SCENE_PATH)
+	)
+
+
+# Whether the run on screen is at a safe point, where saving keeps it exactly
+# as it is. Mid-fight or mid-event it is not, and the save holds the safe
+# point before it.
+func is_at_safe_point() -> bool:
+	var snapshot := run_snapshot()
+	if snapshot.get("phase", "") != "encounter_active":
+		return true
+	var active = snapshot.get("active_encounter")
+	return typeof(active) == TYPE_DICTIONARY and active.get("type", "") == "shop"
+
+
+# The pause menu's Save and Quit (story #110). Saves the run if it is at a
+# safe point; mid-fight or mid-event the save already holds the safe point
+# before it, so Continue picks up from there. The save is then read back so
+# the main menu offers Continue, and a fresh run is put behind the menu so
+# New contract starts over rather than carrying on this one. Returns {ok: true,
+# saved_now}, where saved_now says this run was saved as it stands; or
+# {ok: false, error} with the run left as it was.
+func save_and_quit_to_menu() -> Dictionary:
+	if not can_pause():
+		return _failure("There is no run to save and quit from.")
+	var prepared := _prepare_screen(MAIN_MENU_SCENE_PATH)
+	if not prepared.get("ok", false):
+		return prepared
+
+	var saved_now := false
+	if is_at_safe_point():
+		var saved := save_progress()
+		if not saved.get("ok", false):
+			_dispose_screen(prepared["screen"])
+			return _failure("The run could not be saved: %s" % saved.get("error", "unknown error"))
+		saved_now = true
+	if not _save_path.is_empty():
+		use_save_file(_save_path)
+
+	_run_state.abandon_run()
+	_reset_run_extras()
+	_replace_screen(prepared["screen"])
+	return {"ok": true, "saved_now": saved_now}
 
 
 func open_dark_web_shop() -> Dictionary:
@@ -684,15 +736,9 @@ func start_new_run() -> Dictionary:
 		_dispose_screen(prepared["screen"])
 		return transition
 
-	_run_deck.reset_to_starter()
-	_reset_run_meters()
 	# The reward screen sits at the hub phase, so a new run can start from it.
 	# Its payout belongs to the old run and must not reach the next one.
-	_pending_reward = {}
-	_run_points_earned = 0
-	_caught_penalty = {}
-	var player_state: Node = get_node("/root/PlayerStateGlobal")
-	player_state.clear_upgrades()
+	_reset_run_extras()
 	_replace_screen(prepared["screen"])
 	# The new run replaces the old one's save.
 	save_progress()
@@ -734,6 +780,19 @@ func _replace_screen(screen: Node) -> void:
 		noise_meter.set_resistance_percent(0)
 
 	_screen_host.add_child(screen)
+
+
+# Everything a run keeps outside RunStateNode, put back to how a new run
+# starts: the deck, the shared meters, the coordinator's screen results and
+# the card upgrades. Credits carry over, as they always do.
+func _reset_run_extras() -> void:
+	_run_deck.reset_to_starter()
+	_reset_run_meters()
+	_pending_reward = {}
+	_run_points_earned = 0
+	_caught_penalty = {}
+	var player_state: Node = get_node("/root/PlayerStateGlobal")
+	player_state.clear_upgrades()
 
 
 # Clears what the shared meters carried through the old run. Resistance goes

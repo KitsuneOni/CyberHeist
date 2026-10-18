@@ -1,4 +1,4 @@
-# The settings screen, reached from the main menu. For now it holds the three
+# The settings screen, reached from the main menu or the pause menu. For now it holds the three
 # volume sliders story #111 needs; display options belong to the settings menu
 # story and can be added below them.
 #
@@ -9,10 +9,17 @@
 # Navigation goes through FlowCoordinator like every other screen.
 extends Control
 
+# Sent when Back is pressed while shown over the pause menu, which closes it.
+signal closed
+
 const SELECTED_PREFIX := "> "
 const IDLE_PREFIX := "  "
 const BACK_LABEL := "Back"
 const SAVE_DELAY_SECONDS := 0.4
+
+# Set by the pause menu, which shows settings over a paused run (story #110).
+# Back then closes this overlay instead of going to the main menu.
+var embedded := false
 
 @onready var master_slider: HSlider = %MasterSlider
 @onready var music_slider: HSlider = %MusicSlider
@@ -105,6 +112,9 @@ func _render_back_label() -> void:
 
 
 func _on_back_pressed() -> void:
+	if embedded:
+		closed.emit()
+		return
 	var result: Dictionary = FlowCoordinator.close_settings()
 	if not result.get("ok", false):
 		status_label.text = "Could not leave settings: %s" % result.get("error", "unknown error")
