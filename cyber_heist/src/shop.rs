@@ -50,6 +50,9 @@ pub const STOCK_SIZE: usize = 5;
 /// card such as VPN without spending a turn on them, but well short of a rare.
 pub const SCRUB_LOGS_PRICE: i64 = 60;
 
+/// What removing a card from the deck costs, in credits. Once per visit.
+pub const REMOVE_CARD_PRICE: i64 = 50;
+
 /// How much noise Scrub Logs takes off the shared meter.
 pub const SCRUB_LOGS_NOISE_REDUCTION: i32 = 20;
 
@@ -127,6 +130,15 @@ pub struct Purchase {
     pub credits_left: i64,
 }
 
+/// A card the player has just had removed from their deck, for the screen to report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedCard {
+    pub card_id: String,
+    pub price: i64,
+    /// The player's credits after paying.
+    pub credits_left: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Upgrade {
     pub from_id: String,
@@ -178,6 +190,9 @@ pub enum ShopError {
     NotInShop,
 
     NotInDeck,
+
+    /// Removing would leave the run with no cards to draw.
+    DeckTooSmall,
 }
 
 impl ShopError {
@@ -191,6 +206,7 @@ impl ShopError {
             ShopError::NothingToReroll => "nothing_to_reroll",
             ShopError::NotInShop => "not_in_shop",
             ShopError::NotInDeck => "not_in_deck",
+            ShopError::DeckTooSmall => "deck_too_small",
         }
     }
 }
@@ -206,6 +222,10 @@ pub struct ShopVisit {
     slots: Vec<ShopSlot>,
     scrub_logs_sold: bool,
     rerolls: u32,
+    /// Defaults to false so a shop visit saved before removal existed still
+    /// loads.
+    #[serde(default)]
+    removal_used: bool,
 }
 
 impl ShopVisit {
@@ -220,12 +240,63 @@ impl ShopVisit {
             slots,
             scrub_logs_sold: false,
             rerolls: 0,
+            removal_used: false,
         }
     }
 
     /// The stock in display order, sold slots included.
     pub fn slots(&self) -> &[ShopSlot] {
         &self.slots
+    }
+
+    /// Whether the once-per-visit card removal has already been used.
+    pub fn removal_used(&self) -> bool {
+        self.removal_used
+    }
+
+    /// Whether a card removal can be bought right now. The screen enables its
+    /// button by this, and `remove_card` refuses exactly when it is false.
+    pub fn can_remove_card(&self, credits: i64, deck_len: usize) -> bool {
+        self.removal_refusal(credits, deck_len).is_none()
+    }
+
+    /// Removes one copy of `card_id` from `deck` for good: takes
+    /// [`REMOVE_CARD_PRICE`] from `credits` and uses up this visit's removal.
+    /// Nothing replaces the card. Every check happens before anything changes.
+    pub fn remove_card(
+        &mut self,
+        card_id: &str,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+    ) -> Result<RemovedCard, ShopError> {
+        if let Some(refusal) = self.removal_refusal(*credits, deck.len()) {
+            return Err(refusal);
+        }
+        if deck.count_of(card_id) == 0 {
+            return Err(ShopError::NotInDeck);
+        }
+
+        charge(credits, REMOVE_CARD_PRICE)?;
+        deck.remove_one(card_id);
+        self.removal_used = true;
+
+        Ok(RemovedCard {
+            card_id: card_id.to_string(),
+            price: REMOVE_CARD_PRICE,
+            credits_left: *credits,
+        })
+    }
+
+    fn removal_refusal(&self, credits: i64, deck_len: usize) -> Option<ShopError> {
+        if self.removal_used {
+            Some(ShopError::AlreadySold)
+        } else if deck_len <= 1 {
+            Some(ShopError::DeckTooSmall)
+        } else if !covers(credits, REMOVE_CARD_PRICE) {
+            Some(ShopError::NotEnoughCredits)
+        } else {
+            None
+        }
     }
 
     /// Checks a visit read back from a save is one `open` could have rolled
@@ -586,6 +657,7 @@ mod tests {
             }],
             scrub_logs_sold: false,
             rerolls: 0,
+            removal_used: false,
         }
     }
 
@@ -1320,5 +1392,84 @@ mod tests {
                 "a visit with {description} was not refused"
             );
         }
+    }
+
+    // --- Card removal -----------------------------------------------------
+
+    fn deck_of(ids: &[&str]) -> RunDeck {
+        RunDeck::from_card_ids(ids.iter().map(|id| id.to_string()).collect())
+    }
+
+    #[test]
+    fn removing_a_card_takes_one_copy_and_its_price() {
+        let mut shop = shop_selling("strike", 10);
+        let mut deck = deck_of(&["strike", "strike", "vpn"]);
+        let mut credits = 80;
+
+        let removed = shop.remove_card("strike", &mut credits, &mut deck).unwrap();
+
+        assert_eq!(removed.price, REMOVE_CARD_PRICE);
+        assert_eq!(credits, 80 - REMOVE_CARD_PRICE);
+        assert_eq!(removed.credits_left, credits);
+        assert_eq!(deck.count_of("strike"), 1);
+        assert_eq!(deck.len(), 2);
+        assert!(shop.removal_used());
+    }
+
+    #[test]
+    fn a_card_can_be_removed_only_once_per_visit() {
+        let mut shop = shop_selling("strike", 10);
+        let mut deck = deck_of(&["strike", "vpn", "trojan"]);
+        let mut credits = 500;
+        shop.remove_card("strike", &mut credits, &mut deck).unwrap();
+
+        assert_eq!(
+            shop.remove_card("vpn", &mut credits, &mut deck),
+            Err(ShopError::AlreadySold)
+        );
+        assert_eq!(credits, 500 - REMOVE_CARD_PRICE);
+        assert_eq!(deck.len(), 2);
+    }
+
+    #[test]
+    fn removal_refusals_change_nothing() {
+        let cases: [(&[&str], i64, &str, ShopError); 3] = [
+            (&["strike"], 500, "strike", ShopError::DeckTooSmall),
+            (
+                &["strike", "vpn"],
+                REMOVE_CARD_PRICE - 1,
+                "strike",
+                ShopError::NotEnoughCredits,
+            ),
+            (&["strike", "vpn"], 500, "trojan", ShopError::NotInDeck),
+        ];
+        for (ids, start, card, expected) in cases {
+            let mut shop = shop_selling("strike", 10);
+            let mut deck = deck_of(ids);
+            let mut credits = start;
+
+            assert_eq!(
+                shop.remove_card(card, &mut credits, &mut deck),
+                Err(expected)
+            );
+            assert_eq!(credits, start, "{expected:?}");
+            assert_eq!(deck.len(), ids.len(), "{expected:?}");
+            assert!(!shop.removal_used(), "{expected:?}");
+            assert!(
+                expected == ShopError::NotInDeck || !shop.can_remove_card(credits, deck.len()),
+                "{expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_visit_saved_before_removal_existed_still_loads() {
+        let mut saved = serde_json::to_value(shop_selling("strike", 10)).unwrap();
+        let fields = saved.as_object_mut().unwrap();
+        assert!(fields.remove("removal_used").is_some());
+
+        let visit: ShopVisit = serde_json::from_value(saved).unwrap();
+
+        assert!(!visit.removal_used());
     }
 }

@@ -39,6 +39,7 @@ var change_contract_button: Button = $Page/VBox/MapPanel/MapMargin/MapContent/Ch
 # Made in _ready rather than here, so a screen freed before it is ever shown
 # leaves nothing orphaned behind.
 var view_deck_button: Button
+var dark_web_button: Button
 var deck_viewer: Control
 
 
@@ -49,6 +50,7 @@ func _ready() -> void:
 	offer_picker.offer_chosen.connect(_on_offer_chosen)
 	change_contract_button.pressed.connect(_on_change_contract_pressed)
 	_add_deck_viewer()
+	_add_dark_web_button()
 	_build_key()
 
 	if FlowCoordinator.needs_contract_choice():
@@ -81,6 +83,33 @@ func _show_map() -> void:
 	change_contract_button.visible = FlowCoordinator.can_change_contract()
 	_show_available_encounters()
 
+
+# A Dark web shop button above the picker and the map, so it is there whether
+# the player is choosing a contract or looking at the route. Added in code so
+# the hub scene file doesn't change.
+func _add_dark_web_button() -> void:
+	dark_web_button = Button.new()
+	dark_web_button.name = "DarkWebShopButton"
+	dark_web_button.text = "Dark web shop"
+	dark_web_button.custom_minimum_size = Vector2(0, 44)
+	dark_web_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	dark_web_button.tooltip_text = "Spend credits on permanent upgrades that carry into future runs."
+	dark_web_button.pressed.connect(_on_dark_web_pressed)
+	offer_picker.get_parent().add_child(dark_web_button)
+
+
+func _on_dark_web_pressed() -> void:
+	var result: Dictionary = FlowCoordinator.open_dark_web_shop()
+	if result.get("ok", false):
+		return
+
+	# The map's status label is hidden while the picker is up, so the message
+	# goes wherever the player is looking.
+	var message := "Could not open the dark web shop: %s" % result.get("error", "unknown error")
+	if is_choosing_contract():
+		offer_picker.show_error(message)
+	else:
+		status_label.text = message
 
 func _show_available_encounters() -> void:
 	status_label.text = ""

@@ -18,7 +18,9 @@ use crate::events::{EventDefinition, event_catalogue, random_event};
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_stats::RunStats;
-use crate::shop::{Purchase, Reroll, ScrubbedLogs, ShopError, ShopVisit};
+use crate::shop::{
+    self, Purchase, RemovedCard, Reroll, ScrubbedLogs, ShopError, ShopVisit, Upgrade,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +128,12 @@ pub struct RunState {
     /// screen during the same visit cannot reroll it. Always `None` outside a
     /// shop encounter.
     shop_visit: Option<ShopVisit>,
+    /// Whether the player is browsing the shop from the dark web screen
+    /// rather than from a shop encounter. It happens at the hub phase, and
+    /// the visit's stock is kept in `shop_visit` just as for an encounter.
+    /// Defaults to false so saves from before it existed still load.
+    #[serde(default)]
+    dark_web_visit: bool,
 }
 
 impl Default for RunState {
@@ -141,6 +149,7 @@ impl Default for RunState {
             stats: RunStats::default(),
             seen_events: Vec::new(),
             shop_visit: None,
+            dark_web_visit: false,
         }
     }
 }
@@ -177,6 +186,7 @@ impl RunState {
             stats: RunStats::default(),
             seen_events: Vec::new(),
             shop_visit: None,
+            dark_web_visit: false,
         }
     }
 
@@ -326,6 +336,7 @@ impl RunState {
         self.phase = ContractPhase::EncounterActive;
         self.contract_started = true;
         self.shop_visit = None;
+        self.dark_web_visit = false;
         self.active_encounter = Some(ActiveEncounter {
             id: selection.node_id.to_string(),
             encounter_type: selection.encounter_type,
@@ -436,14 +447,49 @@ impl RunState {
         }
     }
 
-    /// Whether the run is in a shop encounter: the only time there is a shop
-    /// visit to open or buy from.
+    /// Whether the run is in a shop: a shop encounter, or a visit entered
+    /// from the dark web screen. The only times there is a shop visit to open
+    /// or buy from.
     pub fn is_in_shop(&self) -> bool {
+        self.dark_web_visit || self.is_in_shop_encounter()
+    }
+
+    fn is_in_shop_encounter(&self) -> bool {
         self.phase == ContractPhase::EncounterActive
             && self
                 .active_encounter
                 .as_ref()
                 .is_some_and(|encounter| encounter.encounter_type() == EncounterType::Shop)
+    }
+
+    /// Whether the player entered the current shop from the dark web screen.
+    pub fn in_dark_web_visit(&self) -> bool {
+        self.dark_web_visit
+    }
+
+    pub fn enter_dark_web_visit(&mut self) -> Result<(), RunStateError> {
+        self.require_phase("enter the shop from the dark web", ContractPhase::Hub)?;
+        if self.dark_web_visit {
+            return Err(RunStateError::InvalidTransition {
+                action: "enter the shop from the dark web",
+                phase: self.phase,
+            });
+        }
+        self.dark_web_visit = true;
+        self.shop_visit = None;
+        Ok(())
+    }
+
+    pub fn leave_dark_web_visit(&mut self) -> Result<(), RunStateError> {
+        if !self.dark_web_visit {
+            return Err(RunStateError::InvalidTransition {
+                action: "leave the dark web shop visit",
+                phase: self.phase,
+            });
+        }
+        self.dark_web_visit = false;
+        self.shop_visit = None;
+        Ok(())
     }
 
     /// The shop visit the run is in, opening it with stock rolled from `pool`
@@ -523,6 +569,31 @@ impl RunState {
         Ok(reroll)
     }
 
+    pub fn remove_card_in_shop(
+        &mut self,
+        card_id: &str,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+    ) -> Result<RemovedCard, ShopError> {
+        let removed = self.open_visit_mut()?.remove_card(card_id, credits, deck)?;
+        self.stats.record_credit_change(-removed.price);
+        Ok(removed)
+    }
+
+    pub fn upgrade_card_in_shop(
+        &mut self,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+        card_id: &str,
+        upgraded_id: &str,
+        rarity: Rarity,
+    ) -> Result<Upgrade, ShopError> {
+        self.open_visit_mut()?;
+        let upgrade = shop::upgrade_card(credits, deck, card_id, upgraded_id, rarity)?;
+        self.stats.record_credit_change(-upgrade.price);
+        Ok(upgrade)
+    }
+
     /// The shop visit to act on, or [`ShopError::NotInShop`] unless the run
     /// is in a shop encounter whose visit has been opened.
     fn open_visit_mut(&mut self) -> Result<&mut ShopVisit, ShopError> {
@@ -578,6 +649,11 @@ impl RunState {
             .map_err(RunStateError::ContractMap)?;
         self.validate_restored_map_layout()?;
         self.validate_restored_seen_events()?;
+        if self.dark_web_visit && self.phase != ContractPhase::Hub {
+            return Err(RunStateError::InconsistentRun(
+                "a dark web shop visit is kept for a run not at the hub",
+            ));
+        }
         if self.shop_visit.is_some() && !self.is_in_shop() {
             return Err(RunStateError::InconsistentRun(
                 "a shop's stock is kept for a run not in a shop",

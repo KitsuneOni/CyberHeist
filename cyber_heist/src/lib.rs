@@ -13,6 +13,8 @@ mod events;
 mod events_node;
 mod knowledge;
 mod noise_meter;
+mod progression_node;
+mod relics;
 mod run_deck;
 mod run_deck_node;
 mod run_state;
@@ -34,6 +36,7 @@ use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
 use knowledge::KnowledgeMeter;
 use noise_meter::NoiseMeter;
+use progression_node::{PROGRESSION_PATH, ProgressionNode};
 use run_deck_node::RunDeckNode;
 use sentry_node::SentryNode;
 
@@ -476,6 +479,7 @@ impl DrawPhase {
             .bind_mut()
             .sentry_mut()
             .clear_corruption_boost();
+        self.apply_starting_corrupting_boost();
 
         self.turn_number += 1;
         self.energy = self.max_energy;
@@ -502,6 +506,29 @@ impl DrawPhase {
         let before = self.energy;
         self.energy = self.energy.saturating_sub(amount.max(0)).max(0);
         before - self.energy
+    }
+
+    #[func]
+    fn apply_run_bonuses(&mut self) {
+        let Some(progression_node) = self
+            .base()
+            .try_get_node_as::<ProgressionNode>(PROGRESSION_PATH)
+        else {
+            return;
+        };
+        let (extra_energy, extra_draw) = {
+            let progression_node = progression_node.bind();
+            let progression = progression_node.progression();
+            (
+                progression.bonus_max_energy(),
+                progression.bonus_cards_drawn(),
+            )
+        };
+
+        self.max_energy += extra_energy;
+        self.energy = self.max_energy;
+        self.hand_size += extra_draw;
+        self.apply_starting_corrupting_boost();
     }
 
     #[func]
@@ -553,6 +580,28 @@ impl DrawPhase {
 
     fn current_noise(&self) -> i32 {
         self.noise_meter().bind().get_noise()
+    }
+
+    fn starting_corrupting_boost(&self) -> i32 {
+        let Some(node) = self
+            .base()
+            .try_get_node_as::<ProgressionNode>(PROGRESSION_PATH)
+        else {
+            return 0;
+        };
+        let node = node.bind();
+        node.progression().starting_corrupting_boost()
+    }
+
+    fn apply_starting_corrupting_boost(&mut self) {
+        let boost = self.starting_corrupting_boost();
+        if boost > 0 {
+            self.sentry_node()
+                .clone()
+                .bind_mut()
+                .sentry_mut()
+                .add_corruption_boost(boost);
+        }
     }
 
     /// Puts whatever Inject Malware the sentry just ran into this

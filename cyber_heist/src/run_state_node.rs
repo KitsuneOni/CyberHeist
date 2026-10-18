@@ -14,7 +14,7 @@ use crate::events::EventDefinition;
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_state::{RunState, RunStateError};
-use crate::shop::{Purchase, Reroll, ScrubbedLogs, ShopError, ShopVisit};
+use crate::shop::{Purchase, RemovedCard, Reroll, ScrubbedLogs, ShopError, ShopVisit, Upgrade};
 
 /// Where `FlowCoordinator` keeps the run. Other nodes that need the run look
 /// it up here, and treat it as optional so their scenes still run on their
@@ -86,6 +86,27 @@ impl RunStateNode {
     pub(crate) fn reroll_shop(&mut self, credits: &mut i64) -> Result<Reroll, ShopError> {
         self.state.reroll_shop(credits, &mut rand::rng())
     }
+
+    pub(crate) fn remove_card_in_shop(
+        &mut self,
+        card_id: &str,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+    ) -> Result<RemovedCard, ShopError> {
+        self.state.remove_card_in_shop(card_id, credits, deck)
+    }
+
+    pub(crate) fn upgrade_card_in_shop(
+        &mut self,
+        credits: &mut i64,
+        deck: &mut RunDeck,
+        card_id: &str,
+        upgraded_id: &str,
+        rarity: Rarity,
+    ) -> Result<Upgrade, ShopError> {
+        self.state
+            .upgrade_card_in_shop(credits, deck, card_id, upgraded_id, rarity)
+    }
 }
 
 #[godot_api]
@@ -132,6 +153,21 @@ impl RunStateNode {
             });
         }
         entries
+    }
+
+    #[func]
+    fn enter_dark_web_visit(&mut self) -> VarDictionary {
+        transition_result(self.state.enter_dark_web_visit())
+    }
+
+    #[func]
+    fn leave_dark_web_visit(&mut self) -> VarDictionary {
+        transition_result(self.state.leave_dark_web_visit())
+    }
+
+    #[func]
+    fn in_dark_web_visit(&self) -> bool {
+        self.state.in_dark_web_visit()
     }
 
     /// The map key: what each encounter marker and status marker means.
@@ -439,6 +475,7 @@ pub(crate) fn snapshot_dictionary(state: &RunState) -> VarDictionary {
     vdict! {
         "phase" => state.phase().as_str(),
         "active_encounter" => &active_encounter,
+        "dark_web_visit" => state.in_dark_web_visit(),
     }
 }
 

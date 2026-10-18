@@ -38,6 +38,7 @@ const SOLD_ROW_ALPHA := 0.45
 @onready var reroll_price_label: Label = %RerollPriceLabel
 @onready var reroll_button: Button = %RerollButton
 @onready var upgrade_button: Button = %UpgradeButton
+@onready var remove_button: Button = %RemoveButton
 
 # Each stock slot's controls and current card name, keyed by the slot number
 # ShopNode reports (and buy() takes), never by position in the stock list, so a
@@ -53,10 +54,14 @@ var _leaving := false
 
 func _ready() -> void:
 	leave_button.pressed.connect(_on_leave_pressed)
+	if FlowCoordinator.is_in_dark_web_visit():
+		leave_button.text = "> Back to contracts"
 	scrub_logs_button.pressed.connect(_on_scrub_logs_pressed)
 	reroll_button.pressed.connect(_on_reroll_pressed)
 	upgrade_button.tooltip_text = "Pay credits to improve a card in your deck. The price depends on its rarity."
 	upgrade_button.pressed.connect(_on_upgrade_pressed)
+	remove_button.tooltip_text = "Pay once per visit to remove a card from your deck for good. Curses can be removed too."
+	remove_button.pressed.connect(_on_remove_pressed)
 	_build_stock_rows()
 	_refresh()
 	_focus_first_control()
@@ -194,6 +199,7 @@ func _refresh() -> void:
 
 	_refresh_scrub_logs()
 	_refresh_reroll()
+	_refresh_remove()
 
 
 # The services sit in the footer beside Leave, so the five cards keep the
@@ -355,8 +361,35 @@ func _on_leave_pressed() -> void:
 		return
 	_leaving = true
 
-	var result: Dictionary = FlowCoordinator.complete_active_encounter()
+	var result: Dictionary
+	if FlowCoordinator.is_in_dark_web_visit():
+		result = FlowCoordinator.leave_shop_to_contracts()
+	else:
+		result = FlowCoordinator.complete_active_encounter()
 	if not result.get("ok", false):
 		# Let the player try again rather than stranding them in the shop.
 		_leaving = false
 		status_label.text = "Could not leave the shop: %s" % result.get("error", "unknown error")
+
+
+
+func _refresh_remove() -> void:
+	var offer: Dictionary = shop_node.removal_offer()
+	if offer.get("sold", false):
+		remove_button.text = "> Remove (used)"
+		remove_button.disabled = true
+	else:
+		remove_button.text = "> Remove (%d cr)" % int(offer.get("price", 0))
+		remove_button.disabled = not offer.get("affordable", false)
+	_update_focus_mode(remove_button)
+
+
+func _on_remove_pressed() -> void:
+	if _leaving:
+		return
+	_leaving = true
+
+	var result: Dictionary = FlowCoordinator.open_shop_remove()
+	if not result.get("ok", false):
+		_leaving = false
+		status_label.text = "Could not open the remove screen: %s" % result.get("error", "unknown error")

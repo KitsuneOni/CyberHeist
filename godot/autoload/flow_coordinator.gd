@@ -10,6 +10,9 @@ const SHOP_UPGRADE_SCENE_PATH := "res://scenes/shop_upgrade.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
 const VICTORY_SCENE_PATH := "res://scenes/victory_screen.tscn"
+const DARK_WEB_SHOP_SCENE_PATH := "res://scenes/dark_web_shop.tscn"
+const PROGRESSION_FILE_PATH := "user://cyberheist_progression.ron"
+const SHOP_REMOVE_SCENE_PATH := "res://scenes/shop_remove.tscn"
 const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
@@ -32,6 +35,7 @@ const DEFAULT_SAVE_PATH := "user://cyberheist_save.json"
 @onready var _run_state: Node = $RunState
 @onready var _run_deck: Node = $RunDeck
 @onready var _save_game: Node = $SaveGame
+@onready var _progression: Node = $Progression
 
 var _screen_host: Node
 # What the encounter just cleared paid out, {credits, guaranteed_rare}, kept
@@ -50,6 +54,9 @@ var _save_path := ""
 # Empty when it was read, or there was none.
 var _save_load_error := ""
 
+# Points the last finished run earned, for the victory screen to show.
+var _run_points_earned := 0
+
 
 # Where the headless tests live. A test drives the game from its own
 # SceneTree script in here.
@@ -64,6 +71,9 @@ func _ready() -> void:
 	if _is_running_a_test():
 		return
 	use_save_file(DEFAULT_SAVE_PATH)
+	var progression_result: Dictionary = _progression.use_file(PROGRESSION_FILE_PATH)
+	if not progression_result.get("ok", false):
+		push_warning("Permanent progress could not be read, so it starts empty: %s" % progression_result.get("error", "unknown error"))
 
 
 func _is_running_a_test() -> bool:
@@ -96,6 +106,7 @@ func bind_screen_host(host: Node) -> void:
 # any saved run straight away; the credit balance read from the save stays.
 func start_new_contract() -> Dictionary:
 	_save_game.discard_saved_run()
+	_progression.reset()
 	var result := _show_current_run_screen()
 	if result.get("ok", false):
 		save_progress()
@@ -201,6 +212,65 @@ func open_settings() -> Dictionary:
 func close_settings() -> Dictionary:
 	return _show_screen(MAIN_MENU_SCENE_PATH)
 
+
+func open_dark_web_shop() -> Dictionary:
+	if run_snapshot().get("phase", "") != "hub" or not _pending_reward.is_empty():
+		return _failure("The dark web shop can only be opened between encounters.")
+	return _show_screen(DARK_WEB_SHOP_SCENE_PATH)
+
+func close_dark_web_shop() -> Dictionary:
+	return _show_screen(HUB_SCENE_PATH)
+
+# Enters the normal shop from the dark web screen. Costs every point held, so
+# it needs at least one, and is refused outside the hub phase or while a card
+# reward waits. The shop screen opens its stock as it appears, so the run is
+# marked first. Saved on entry, so quitting inside the shop resumes it.
+func enter_shop_from_dark_web() -> Dictionary:
+	if run_snapshot().get("phase", "") != "hub" or not _pending_reward.is_empty():
+		return _failure("The shop can only be entered between encounters.")
+
+	var prepared := _prepare_screen(SHOP_SCENE_PATH)
+	if not prepared.get("ok", false):
+		return prepared
+
+	var transition: Dictionary = _run_state.enter_dark_web_visit()
+	if not transition.get("ok", false):
+		_dispose_screen(prepared["screen"])
+		return transition
+
+	var spent: Dictionary = _progression.spend_points_for_shop()
+	if not spent.get("ok", false):
+		_run_state.leave_dark_web_visit()
+		_dispose_screen(prepared["screen"])
+		return _failure("You need at least 1 point to enter the shop.")
+
+	_replace_screen(prepared["screen"])
+	save_progress()
+	return {"ok": true}
+
+func leave_shop_to_contracts() -> Dictionary:
+	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	if not prepared.get("ok", false):
+		return prepared
+
+	var transition: Dictionary = _run_state.leave_dark_web_visit()
+	if not transition.get("ok", false):
+		_dispose_screen(prepared["screen"])
+		return transition
+
+	_replace_screen(prepared["screen"])
+	save_progress()
+	return transition
+
+
+# Whether the shop on screen was entered from the dark web.
+func is_in_dark_web_visit() -> bool:
+	return _run_state.in_dark_web_visit()
+
+
+# Whether there are enough points to enter the shop from the dark web.
+func can_enter_shop_from_dark_web() -> bool:
+	return _progression.can_enter_shop()
 
 # Whether the screen currently showing was loaded from `path`.
 func _is_showing(path: String) -> bool:
@@ -317,10 +387,14 @@ func select_encounter(node_id: int) -> Dictionary:
 	if not prepared.get("ok", false):
 		return prepared
 
+	var run_was_started: bool = _run_state.contract_started()
 	var transition: Dictionary = _run_state.select_encounter(node_id)
 	if not transition.get("ok", false):
 		_dispose_screen(prepared["screen"])
 		return transition
+
+	if not run_was_started:
+		_apply_run_start_relics()
 
 	_replace_screen(prepared["screen"])
 	# A shop is the one encounter that is a safe point, saved with its stock
@@ -365,6 +439,7 @@ func complete_active_encounter() -> Dictionary:
 	# the payout also counts as credits earned in the run's stats.
 	change_credits(_pending_reward["credits"])
 	_pay_contract_reward()
+	_award_run_points(completion)
 	if next_scene == HUB_SCENE_PATH:
 		# Nothing is waiting to be chosen after an event or a shop, so a save
 		# made at the hub does not resume on a card reward.
@@ -510,6 +585,10 @@ func finish_reward() -> Dictionary:
 func open_shop_upgrade() -> Dictionary:
 	return _show_shop_screen(SHOP_UPGRADE_SCENE_PATH)
 
+# Opens the remove card screen from the shop. As with upgrades, the run stays
+# in the shop encounter, so the visit is untouched.
+func open_shop_remove() -> Dictionary:
+	return _show_shop_screen(SHOP_REMOVE_SCENE_PATH)
 
 # Goes back from the upgrade screen to the same shop visit.
 func return_to_shop() -> Dictionary:
@@ -518,7 +597,10 @@ func return_to_shop() -> Dictionary:
 
 func _show_shop_screen(path: String) -> Dictionary:
 	var active = run_snapshot().get("active_encounter")
-	if typeof(active) != TYPE_DICTIONARY or active.get("type", "") != "shop":
+	var in_shop_encounter: bool = (
+		typeof(active) == TYPE_DICTIONARY and active.get("type", "") == "shop"
+	)
+	if not in_shop_encounter and not is_in_dark_web_visit():
 		return _failure("There is no shop visit to go back to.")
 
 	var prepared := _prepare_screen(path)
@@ -607,6 +689,7 @@ func start_new_run() -> Dictionary:
 	# The reward screen sits at the hub phase, so a new run can start from it.
 	# Its payout belongs to the old run and must not reach the next one.
 	_pending_reward = {}
+	_run_points_earned = 0
 	_caught_penalty = {}
 	var player_state: Node = get_node("/root/PlayerStateGlobal")
 	player_state.clear_upgrades()
@@ -681,6 +764,9 @@ func _destination_for_snapshot(snapshot: Dictionary, card_reward_waiting: bool) 
 	var phase: String = snapshot.get("phase", "")
 	match phase:
 		"hub":
+			# A shop entered from the dark web is a hub phase with its own screen.
+			if snapshot.get("dark_web_visit", false):
+				return {"ok": true, "path": SHOP_SCENE_PATH}
 			# A fight's card reward is chosen at the hub phase, so a run saved
 			# before choosing one resumes on it.
 			if card_reward_waiting:
@@ -709,3 +795,31 @@ func _failure(error: String) -> Dictionary:
 		"ok": false,
 		"error": error,
 	}
+
+
+
+func _award_run_points(completion: Dictionary) -> void:
+	if not completion.get("wins_contract", false):
+		return
+	var player_state: Node = get_node("/root/PlayerStateGlobal")
+	_run_points_earned = _progression.award_run_completion(player_state.money())
+
+
+func _apply_run_start_relics() -> void:
+	var count: int = _progression.cards_to_upgrade_at_run_start()
+	if count > 0:
+		_run_deck.upgrade_random_cards(count)
+
+
+func run_points_earned() -> int:
+	return _run_points_earned
+
+
+func progression_points() -> int:
+	return _progression.points()
+
+func relic_listing() -> Array:
+	return _progression.relic_listing()
+
+func buy_relic(relic_id: String) -> Dictionary:
+	return _progression.buy_relic(relic_id)
