@@ -120,6 +120,9 @@ var shown_phase := 1
 # orphaned behind.
 var view_deck_button: Button
 var deck_viewer: Control
+# Set once _ready has finished. is_node_ready() is already true inside _ready,
+# so it cannot tell the first build apart from later updates.
+var _built := false
 
 
 func _ready() -> void:
@@ -133,6 +136,7 @@ func _ready() -> void:
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
 	_add_deck_viewer()
+	_built = true
 
 
 # A Deck button above Play Card, and the viewer it opens, for checking the
@@ -772,7 +776,7 @@ func _update_health_label() -> void:
 	integrity_bar.max_value = maxi(sentry.max_health(), 1)
 	# Set outright while the screen is first being built, so it opens full
 	# rather than filling up.
-	if is_node_ready():
+	if _built:
 		fx.ease_bar(integrity_bar, sentry.health())
 	else:
 		integrity_bar.value = sentry.health()
