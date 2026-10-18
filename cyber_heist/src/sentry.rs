@@ -182,6 +182,22 @@ impl SentryAction {
             ability,
         }
     }
+
+    /// What the intent icon shows for this action (story #103): the kind of
+    /// move, named for the screen to pick its icon, and the one number that
+    /// matters most for it. An action that only makes noise shows its noise;
+    /// one with an ability shows what the ability does, since the noise is
+    /// already on the intent line. A purge has no amount, so it shows 0.
+    pub fn intent(&self) -> (&'static str, i32) {
+        match self.ability {
+            SentryAbility::None => ("noise", self.noise.max(0)),
+            SentryAbility::DrainEnergy(amount) => ("drain_energy", amount.max(0)),
+            SentryAbility::RestoreIntegrity(amount) => ("restore_integrity", amount.max(0)),
+            SentryAbility::Purge => ("purge", 0),
+            SentryAbility::Firewall(amount) => ("firewall", amount.max(0)),
+            SentryAbility::InjectMalware(count) => ("inject_malware", count.max(0)),
+        }
+    }
 }
 
 /// A named security construct and the actions it works through.
@@ -756,6 +772,34 @@ impl Sentry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_intent_names_its_kind_and_the_number_that_matters() {
+        let cases = [
+            (SentryAbility::None, ("noise", 4)),
+            (SentryAbility::DrainEnergy(2), ("drain_energy", 2)),
+            (SentryAbility::RestoreIntegrity(6), ("restore_integrity", 6)),
+            (SentryAbility::Purge, ("purge", 0)),
+            (SentryAbility::Firewall(8), ("firewall", 8)),
+            (SentryAbility::InjectMalware(1), ("inject_malware", 1)),
+        ];
+        for (ability, expected) in cases {
+            assert_eq!(
+                SentryAction::with_ability("Probe", 4, ability).intent(),
+                expected,
+                "{ability:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_intent_never_shows_a_negative_amount() {
+        assert_eq!(SentryAction::new("Quiet", -3).intent(), ("noise", 0));
+        assert_eq!(
+            SentryAction::with_ability("Odd", 1, SentryAbility::Firewall(-5)).intent(),
+            ("firewall", 0)
+        );
+    }
 
     #[test]
     fn a_new_sentry_has_its_first_action_queued() {
