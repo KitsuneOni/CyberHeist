@@ -222,6 +222,9 @@ pub struct ShopVisit {
     slots: Vec<ShopSlot>,
     scrub_logs_sold: bool,
     rerolls: u32,
+    /// Defaults to false so a shop visit saved before removal existed still
+    /// loads.
+    #[serde(default)]
     removal_used: bool,
 }
 
@@ -1389,5 +1392,84 @@ mod tests {
                 "a visit with {description} was not refused"
             );
         }
+    }
+
+    // --- Card removal -----------------------------------------------------
+
+    fn deck_of(ids: &[&str]) -> RunDeck {
+        RunDeck::from_card_ids(ids.iter().map(|id| id.to_string()).collect())
+    }
+
+    #[test]
+    fn removing_a_card_takes_one_copy_and_its_price() {
+        let mut shop = shop_selling("strike", 10);
+        let mut deck = deck_of(&["strike", "strike", "vpn"]);
+        let mut credits = 80;
+
+        let removed = shop.remove_card("strike", &mut credits, &mut deck).unwrap();
+
+        assert_eq!(removed.price, REMOVE_CARD_PRICE);
+        assert_eq!(credits, 80 - REMOVE_CARD_PRICE);
+        assert_eq!(removed.credits_left, credits);
+        assert_eq!(deck.count_of("strike"), 1);
+        assert_eq!(deck.len(), 2);
+        assert!(shop.removal_used());
+    }
+
+    #[test]
+    fn a_card_can_be_removed_only_once_per_visit() {
+        let mut shop = shop_selling("strike", 10);
+        let mut deck = deck_of(&["strike", "vpn", "trojan"]);
+        let mut credits = 500;
+        shop.remove_card("strike", &mut credits, &mut deck).unwrap();
+
+        assert_eq!(
+            shop.remove_card("vpn", &mut credits, &mut deck),
+            Err(ShopError::AlreadySold)
+        );
+        assert_eq!(credits, 500 - REMOVE_CARD_PRICE);
+        assert_eq!(deck.len(), 2);
+    }
+
+    #[test]
+    fn removal_refusals_change_nothing() {
+        let cases: [(&[&str], i64, &str, ShopError); 3] = [
+            (&["strike"], 500, "strike", ShopError::DeckTooSmall),
+            (
+                &["strike", "vpn"],
+                REMOVE_CARD_PRICE - 1,
+                "strike",
+                ShopError::NotEnoughCredits,
+            ),
+            (&["strike", "vpn"], 500, "trojan", ShopError::NotInDeck),
+        ];
+        for (ids, start, card, expected) in cases {
+            let mut shop = shop_selling("strike", 10);
+            let mut deck = deck_of(ids);
+            let mut credits = start;
+
+            assert_eq!(
+                shop.remove_card(card, &mut credits, &mut deck),
+                Err(expected)
+            );
+            assert_eq!(credits, start, "{expected:?}");
+            assert_eq!(deck.len(), ids.len(), "{expected:?}");
+            assert!(!shop.removal_used(), "{expected:?}");
+            assert!(
+                expected == ShopError::NotInDeck || !shop.can_remove_card(credits, deck.len()),
+                "{expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_visit_saved_before_removal_existed_still_loads() {
+        let mut saved = serde_json::to_value(shop_selling("strike", 10)).unwrap();
+        let fields = saved.as_object_mut().unwrap();
+        assert!(fields.remove("removal_used").is_some());
+
+        let visit: ShopVisit = serde_json::from_value(saved).unwrap();
+
+        assert!(!visit.removal_used());
     }
 }

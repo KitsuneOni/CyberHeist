@@ -21,7 +21,6 @@ var _enter_armed := false
 
 
 func _ready() -> void:
-	FlowCoordinator._progression.award_run_completion(1500)
 	back_button.pressed.connect(_on_back_pressed)
 	status_label.text = "Finish a contract to earn 1 point, plus 1 for every 500 credits you hold."
 	enter_shop_button.tooltip_text = "Spend all your points to browse the normal shop once. Leaving takes you back to the contracts."

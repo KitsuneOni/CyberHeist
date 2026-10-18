@@ -213,4 +213,34 @@ mod tests {
     fn an_empty_deck_has_an_empty_tally() {
         assert!(RunDeck::default().tally().is_empty());
     }
+
+    #[test]
+    fn removing_a_card_takes_only_one_copy() {
+        let mut deck = RunDeck::from_starter_entries(&[entry("strike", 2), entry("vpn", 1)]);
+
+        assert!(deck.remove_one("strike"));
+        assert_eq!(deck.count_of("strike"), 1);
+        assert_eq!(deck.len(), 2);
+        assert!(!deck.remove_one("wannacry"), "a card the run does not own");
+        assert_eq!(deck.len(), 2);
+    }
+
+    #[test]
+    fn a_random_upgrade_touches_only_upgradable_cards_up_to_the_count() {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+
+        let upgraded_id_of = |id: &str| (id == "strike").then(|| "strike_plus".to_string());
+        let mut deck = RunDeck::from_starter_entries(&[entry("strike", 3), entry("vpn", 2)]);
+
+        let upgraded = deck.upgrade_random(2, upgraded_id_of, &mut StdRng::seed_from_u64(7));
+
+        assert_eq!(upgraded, 2);
+        assert_eq!(deck.count_of("strike_plus"), 2);
+        assert_eq!(deck.count_of("strike"), 1);
+        assert_eq!(deck.count_of("vpn"), 2, "cards with no upgrade are left");
+
+        let upgraded = deck.upgrade_random(5, upgraded_id_of, &mut StdRng::seed_from_u64(7));
+        assert_eq!(upgraded, 1, "only as many as can be upgraded");
+    }
 }

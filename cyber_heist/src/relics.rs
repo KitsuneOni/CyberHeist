@@ -205,3 +205,127 @@ impl Progression {
         *self = Self::default();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_points(points: u32) -> Progression {
+        Progression {
+            points,
+            relics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_finished_run_earns_a_point_plus_one_per_500_credits() {
+        let mut progression = Progression::default();
+
+        assert_eq!(progression.award_run_completion(0), 1);
+        assert_eq!(progression.award_run_completion(1499), 3);
+        assert_eq!(
+            progression.award_run_completion(-200),
+            1,
+            "debt earns no bonus"
+        );
+        assert_eq!(progression.points(), 5);
+    }
+
+    #[test]
+    fn buying_a_relic_spends_its_price_and_keeps_it() {
+        let mut progression = with_points(2);
+
+        assert_eq!(progression.buy(Relic::ExtraEnergy), Ok(()));
+
+        assert!(progression.owns(Relic::ExtraEnergy));
+        assert_eq!(progression.points(), 2 - RELIC_PRICE);
+        assert_eq!(progression.bonus_max_energy(), EXTRA_ENERGY);
+        assert_eq!(progression.bonus_cards_drawn(), 0, "only what was bought");
+    }
+
+    #[test]
+    fn a_relic_is_refused_when_owned_unavailable_or_unaffordable() {
+        let mut progression = with_points(5);
+        progression.buy(Relic::ExtraDraw).unwrap();
+
+        assert_eq!(
+            progression.buy(Relic::ExtraDraw),
+            Err(RelicError::AlreadyOwned)
+        );
+        assert_eq!(progression.buy(Relic::Might), Err(RelicError::NotAvailable));
+        assert_eq!(
+            with_points(0).buy(Relic::DeckUpgrade),
+            Err(RelicError::NotEnoughPoints)
+        );
+        assert_eq!(
+            progression.points(),
+            5 - RELIC_PRICE,
+            "refusals cost nothing"
+        );
+    }
+
+    #[test]
+    fn each_relic_grants_its_own_bonus() {
+        let mut progression = with_points(4);
+        for relic in [
+            Relic::ExtraEnergy,
+            Relic::ExtraDraw,
+            Relic::CorruptingStart,
+            Relic::DeckUpgrade,
+        ] {
+            progression.buy(relic).unwrap();
+        }
+
+        assert_eq!(progression.bonus_max_energy(), EXTRA_ENERGY);
+        assert_eq!(progression.bonus_cards_drawn(), EXTRA_CARDS_DRAWN);
+        assert_eq!(
+            progression.starting_corrupting_boost(),
+            STARTING_CORRUPTING_BOOST
+        );
+        assert_eq!(
+            progression.cards_upgraded_at_run_start(),
+            CARDS_UPGRADED_AT_RUN_START
+        );
+    }
+
+    #[test]
+    fn entering_the_shop_spends_every_point_and_needs_one() {
+        let mut progression = with_points(3);
+
+        assert_eq!(progression.spend_points_for_shop(), Ok(3));
+        assert_eq!(progression.points(), 0);
+        assert_eq!(
+            progression.spend_points_for_shop(),
+            Err(RelicError::NotEnoughPoints)
+        );
+    }
+
+    #[test]
+    fn a_reset_forgets_points_and_relics() {
+        let mut progression = with_points(3);
+        progression.buy(Relic::ExtraEnergy).unwrap();
+
+        progression.reset();
+
+        assert_eq!(progression, Progression::default());
+    }
+
+    #[test]
+    fn a_loaded_progression_owns_each_relic_once() {
+        let loaded = Progression {
+            points: 0,
+            relics: vec![Relic::ExtraDraw, Relic::ExtraDraw, Relic::ExtraEnergy],
+        }
+        .sanitized();
+
+        assert_eq!(loaded.relics, vec![Relic::ExtraDraw, Relic::ExtraEnergy]);
+    }
+
+    #[test]
+    fn every_relic_id_round_trips() {
+        for relic in Relic::ALL {
+            assert_eq!(Relic::from_id(relic.id()), Some(relic));
+        }
+        assert_eq!(Relic::from_id("nope"), None);
+    }
+}
