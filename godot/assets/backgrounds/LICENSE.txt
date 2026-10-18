@@ -1,0 +1,13 @@
+Cyberpunk Visual Novel Background Pack (Free), by DreamBreaker Designs
+https://dreambreaker-designs.itch.io/free-cyberpunk-visual-novel-background-pack
+
+Terms as stated on the pack's itch.io page (checked 2026-10-19):
+"Totally free to use, even commercially without attribution (though it is
+appreciated!)". Attribution and donations are not required.
+
+The author states the backgrounds were generated with Midjourney AI and
+lightly edited in Photoshop.
+
+The files here are modified from the originals: cropped to 1280x720, toned
+down, and colour graded per zone. Sources: office-6 (zone 1), facility-2
+(zone 2), facility-4 (zone 3).

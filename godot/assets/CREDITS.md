@@ -11,6 +11,24 @@ licence file next to the assets it covers.
 | Share Tech Mono | Menu and label text | SIL OFL 1.1 (`fonts/share-tech-mono/OFL.txt`) | https://fonts.google.com/specimen/Share+Tech+Mono |
 | VT323 | Headings, wordmark, large numbers | SIL OFL 1.1 (`fonts/vt323/OFL.txt`) | https://fonts.google.com/specimen/VT323 |
 
+## Backgrounds
+
+### Zone backgrounds (`backgrounds/`)
+
+From the free Cyberpunk Visual Novel Background Pack by **DreamBreaker
+Designs** (`backgrounds/LICENSE.txt`). Source:
+https://dreambreaker-designs.itch.io/free-cyberpunk-visual-novel-background-pack
+
+Free to use, including commercially, with no attribution required. The author
+states the pack was generated with Midjourney AI. Modified: cropped to
+1280x720 and colour graded per zone.
+
+| File | Zone | Original |
+|---|---|---|
+| `zone_1_corporate.jpg` | Corporate Network | `office-6.png` |
+| `zone_2_bank.jpg` | Bank | `facility-2.png` |
+| `zone_3_vault.jpg` | Data Vault | `facility-4.png` |
+
 ## Icons
 
 ### Tabler Icons (`ui/icons/tabler/`)
