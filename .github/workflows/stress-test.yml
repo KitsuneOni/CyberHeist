@@ -197,5 +197,10 @@ jobs:
       - name: Run headless security actions test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/security_actions_test.gd
 
+      # The security system's sprite, name, integrity bar and next-move icon
+      # are on screen, and the bar and icon follow damage and the queue.
+      - name: Run headless security display test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/security_display_test.gd
+
       - name: Run headless shared noise and social threshold test
         run: GODOT_BIN="$HOME/godot-bin/godot" bash godot/tests/run_shared_noise_test.sh
