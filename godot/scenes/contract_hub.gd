@@ -12,7 +12,9 @@
 extends Control
 
 const DeckViewer := preload("res://scenes/deck_viewer.gd")
+const ZoneTheme := preload("res://scenes/zone_theme.gd")
 
+const CHOOSING_EYEBROW := "CONTRACT ROUTE"
 const CHOOSING_TITLE := "Choose your contract"
 const CHOOSING_SUBTITLE := "Longer contracts take more zones and pay more when you win."
 const MAP_TITLE := "Choose your next breach"
@@ -23,6 +25,7 @@ const MAP_SUBTITLE := "Each route changes which encounters remain available for 
 # a contract that never grows from waiting forever.
 const MAX_LAYOUT_FRAMES := 8
 
+@onready var eyebrow_label: Label = $Page/VBox/Eyebrow
 @onready var title_label: Label = $Page/VBox/Title
 @onready var subtitle_label: Label = $Page/VBox/Subtitle
 @onready var offer_picker: PanelContainer = $Page/VBox/OfferPicker
@@ -41,6 +44,11 @@ var change_contract_button: Button = $Page/VBox/MapPanel/MapMargin/MapContent/Ch
 var view_deck_button: Button
 var dark_web_button: Button
 var deck_viewer: Control
+# The current zone's art behind the map (story #115). Hidden while a contract
+# is being chosen, since no zone has been entered yet.
+var zone_backdrop: TextureRect
+# The Eyebrow's colour in the scene, for the contract picker.
+var _choosing_eyebrow_colour: Color
 
 
 func _ready() -> void:
@@ -52,6 +60,8 @@ func _ready() -> void:
 	_add_deck_viewer()
 	_add_dark_web_button()
 	_build_key()
+	zone_backdrop = ZoneTheme.add_backdrop($Background, ZoneTheme.current(FlowCoordinator))
+	_choosing_eyebrow_colour = eyebrow_label.get_theme_color("font_color")
 
 	if FlowCoordinator.needs_contract_choice():
 		_show_contract_choice()
@@ -65,6 +75,9 @@ func is_choosing_contract() -> bool:
 
 
 func _show_contract_choice() -> void:
+	zone_backdrop.visible = false
+	eyebrow_label.text = CHOOSING_EYEBROW
+	eyebrow_label.add_theme_color_override("font_color", _choosing_eyebrow_colour)
 	title_label.text = CHOOSING_TITLE
 	subtitle_label.text = CHOOSING_SUBTITLE
 	map_panel.visible = false
@@ -76,6 +89,15 @@ func _show_contract_choice() -> void:
 
 
 func _show_map() -> void:
+	var zone := ZoneTheme.current(FlowCoordinator)
+	zone_backdrop.visible = true
+	# "ZONE 2 // BANK", in the zone's colour, so the player sees where in the
+	# heist they are before reading anything else.
+	eyebrow_label.text = "ZONE %d // %s" % [
+		int(FlowCoordinator.zone_progress().get("current_zone", 0)) + 1,
+		String(zone["name"]).to_upper(),
+	]
+	eyebrow_label.add_theme_color_override("font_color", zone["accent"])
 	title_label.text = MAP_TITLE
 	subtitle_label.text = MAP_SUBTITLE
 	offer_picker.visible = false
@@ -136,9 +158,10 @@ func _show_available_encounters() -> void:
 func _update_progress() -> void:
 	var progress: Dictionary = FlowCoordinator.contract_progress()
 	var zones: Dictionary = FlowCoordinator.zone_progress()
-	progress_label.text = "Zone %d of %d  ·  Contract progress: %d of %d encounters complete" % [
+	progress_label.text = "Zone %d of %d: %s  ·  Contract progress: %d of %d encounters complete" % [
 		int(zones.get("current_zone", 0)) + 1,
 		int(zones.get("total_zones", 1)),
+		ZoneTheme.current(FlowCoordinator)["name"],
 		int(progress.get("completed", 0)),
 		int(progress.get("total", 0)),
 	]
