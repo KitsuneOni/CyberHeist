@@ -2,6 +2,7 @@ extends Node
 
 const MAIN_MENU_SCENE_PATH := "res://scenes/main_menu.tscn"
 const SETTINGS_SCENE_PATH := "res://scenes/settings_menu.tscn"
+const HOW_TO_PLAY_SCENE_PATH := "res://scenes/how_to_play.tscn"
 const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
@@ -215,14 +216,29 @@ func close_settings() -> Dictionary:
 	return _show_screen(MAIN_MENU_SCENE_PATH)
 
 
+# Opens the How to play screen from the main menu (story #113). Like settings
+# it is outside any run, so it changes no run state, and it is refused from
+# anywhere else because closing it always returns to the main menu.
+func open_how_to_play() -> Dictionary:
+	if not _is_showing(MAIN_MENU_SCENE_PATH):
+		return _failure("How to play can only be opened from the main menu.")
+	return _show_screen(HOW_TO_PLAY_SCENE_PATH)
+
+
+# Leaves How to play for the main menu, the only place it opens from.
+func close_how_to_play() -> Dictionary:
+	return _show_screen(MAIN_MENU_SCENE_PATH)
+
+
 # Whether the pause menu can open: on any screen of a run, but not on the main
-# menu or the settings screen, which are outside one.
+# menu, the settings screen or How to play, which are outside one.
 func can_pause() -> bool:
 	return (
 		_screen_host_is_ready()
 		and _screen_host.get_child_count() > 0
 		and not _is_showing(MAIN_MENU_SCENE_PATH)
 		and not _is_showing(SETTINGS_SCENE_PATH)
+		and not _is_showing(HOW_TO_PLAY_SCENE_PATH)
 	)
 
 

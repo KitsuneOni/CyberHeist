@@ -719,6 +719,24 @@ shown and saved, using a scratch settings file:
 godot --headless --path godot -s res://tests/display_settings_test.gd
 ```
 
+## How to play (story #113)
+
+The main menu's **How to play** entry, between Continue run and Settings, opens
+`scenes/how_to_play.tscn`. It is a single screen of short explanations
+(energy, noise, detection, intents, the map and winning) that stands in for a
+full tutorial. Like settings it is outside any run: `FlowCoordinator.open_how_to_play()`
+is refused from anywhere but the main menu, `close_how_to_play()` returns
+there, and the pause menu does not open over it.
+
+The text is the `TOPICS` constant in `scenes/how_to_play.gd`, laid out in two
+columns in code, so it can be reworded without touching the scene. Keep it in
+step with the rules when a number it quotes changes (5 cards and 3 energy a
+turn, detection at 100, alert at 60).
+
+```sh
+godot --headless --path godot -s res://tests/how_to_play_test.gd
+```
+
 ## Saving and continuing (story #10)
 
 The game saves itself; there is no save button. One JSON file,
