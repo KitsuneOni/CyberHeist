@@ -11,6 +11,7 @@ const EXTRA_ENERGY: i32 = 1;
 const EXTRA_CARDS_DRAWN: i32 = 1;
 const STARTING_CORRUPTING_BOOST: i32 = 1;
 const CARDS_UPGRADED_AT_RUN_START: usize = 5;
+const STARTING_MIGHT: i32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Relic {
@@ -64,13 +65,13 @@ impl Relic {
             Relic::DeckUpgrade => format!(
                 "When a run begins, {CARDS_UPGRADED_AT_RUN_START} random cards in your deck are upgraded."
             ),
-            Relic::Might => "Gain 1 Might. Not available yet.".to_string(),
+            Relic::Might => "Gain 1 Might at the start of ecah combat.".to_string(),
         }
     }
 
     /// Whether the relic can be bought yet.
     pub fn is_available(self) -> bool {
-        !matches!(self, Relic::Might)
+        true
     }
 }
 
@@ -194,6 +195,14 @@ impl Progression {
         }
     }
 
+    pub fn starting_might(&self) -> i32 {
+        if self.owns(Relic::Might) {
+            STARTING_MIGHT
+        } else {
+            0
+        }
+    }
+
     pub fn cards_upgraded_at_run_start(&self) -> usize {
         if self.owns(Relic::DeckUpgrade) {
             CARDS_UPGRADED_AT_RUN_START
@@ -252,7 +261,6 @@ mod tests {
             progression.buy(Relic::ExtraDraw),
             Err(RelicError::AlreadyOwned)
         );
-        assert_eq!(progression.buy(Relic::Might), Err(RelicError::NotAvailable));
         assert_eq!(
             with_points(0).buy(Relic::DeckUpgrade),
             Err(RelicError::NotEnoughPoints)

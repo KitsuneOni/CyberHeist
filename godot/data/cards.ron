@@ -349,12 +349,12 @@
     (
         id:"gaming_chair",
         name:"Gaming Chair",
-        description:"Reduce the cost of Corrupting cards by 1",
+        description:"Corrupting cards cost 1 less this combat",
         cost: 2,
         noise_generated: 10,
         card_type: Skill,
         rarity: Rare,
-        keywords: [],
+        keywords: [CorruptingDiscount(1)],
     ),
     (
         id:"zero_day_trojan",

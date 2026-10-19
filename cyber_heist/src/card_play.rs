@@ -38,6 +38,8 @@ pub struct PlayedCard {
     pub firewall_stripped: i32,
     /// Stacks of Might this play granted.
     pub might_gained: i32,
+    /// Corrupting discount this play granted.
+    pub corrupting_discount_gained: i32,
 }
 
 #[derive(Default)]
@@ -52,6 +54,7 @@ struct KeywordEffects {
     corruption_boost_added: i32,
     firewall_stripped: i32,
     might_gained: i32,
+    corrupting_discount_gained: i32,
 }
 
 /// Plain damage, which a firewall can absorb. Might adds to each hit that
@@ -187,6 +190,44 @@ pub fn hand_energy_tax(hand: &[CardData], exclude_index: usize, current_noise: i
         .sum()
 }
 
+fn total_corrupting_discount(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::CorruptingDiscount(amount) => *amount as i32,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// The discount that applies to this card: the full amount for a card that
+/// applies corruption, nothing for any other card.
+fn corrupting_discount_for(card: &CardData, current_noise: i32, discount: i32) -> i32 {
+    let applies_corruption = card
+        .active_keywords(current_noise)
+        .iter()
+        .any(|keyword| matches!(keyword, Keyword::Corrupting(amount) if *amount > 0));
+    if applies_corruption { discount } else { 0 }
+}
+
+/// What the card at `index` costs to play right now: its own cost plus any
+/// tax from other cards in hand, less the Corrupting discount, never below
+/// zero. Shared by playing and by the prices shown on the cards, so the two
+/// cannot disagree.
+pub fn current_cost(
+    hand: &[CardData],
+    index: usize,
+    current_noise: i32,
+    effects: &PlayerEffects,
+) -> i32 {
+    let Some(card) = hand.get(index) else {
+        return 0;
+    };
+    let tax = hand_energy_tax(hand, index, current_noise);
+    let discount = corrupting_discount_for(card, current_noise, effects.corrupting_discount());
+    (i32::from(card.cost) + tax - discount).max(0)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_keywords(
     active_keywords: &[Keyword],
@@ -214,6 +255,8 @@ fn resolve_keywords(
     let damage_dealt =
         blockable.dealt + sentry.take_damage(total_penetrating(active_keywords, might));
     let might_gained = player_effects.add_might(total_might(active_keywords));
+    let corrupting_discount_gained =
+        player_effects.add_corrupting_discount(total_corrupting_discount(active_keywords));
 
     let mut knowledge_gain = total_knowledge(active_keywords);
     if was_corrupted {
@@ -245,6 +288,7 @@ fn resolve_keywords(
         corruption_boost_added,
         firewall_stripped,
         might_gained,
+        corrupting_discount_gained,
     }
 }
 
@@ -265,11 +309,11 @@ pub fn play_card(
         return Err(PlayError::Detected);
     }
     let index = usize::try_from(index).map_err(|_| PlayError::InvalidIndex)?;
-    let card = hand.get(index).ok_or(PlayError::InvalidIndex)?;
+    hand.get(index).ok_or(PlayError::InvalidIndex)?;
 
     let pre_play_noise = noise.noise();
     let tax = hand_energy_tax(hand, index, pre_play_noise);
-    let cost = i32::from(card.cost) + tax;
+    let cost = current_cost(hand, index, pre_play_noise, player_effects);
     if cost > *energy {
         return Err(PlayError::NotEnoughEnergy);
     }
@@ -315,6 +359,7 @@ pub fn play_card(
         exhausted: active_keywords.contains(&Keyword::Exhaust),
         firewall_stripped: keyword_effects.firewall_stripped,
         might_gained: keyword_effects.might_gained,
+        corrupting_discount_gained: keyword_effects.corrupting_discount_gained,
     };
     if !played.exhausted {
         deck.discard(vec![card]);
@@ -391,6 +436,7 @@ pub fn resolve_end_of_turn_effects(
             exhausted: false,
             firewall_stripped: keyword_effects.firewall_stripped,
             might_gained: keyword_effects.might_gained,
+            corrupting_discount_gained: keyword_effects.corrupting_discount_gained,
         });
         deck.discard(vec![card]);
     }

@@ -381,6 +381,7 @@ impl DrawPhase {
                     "exhausted" => played.exhausted,
                     "firewall_stripped" => played.firewall_stripped,
                     "might_gained" => played.might_gained,
+                    "corrupting_discount_gained" => played.corrupting_discount_gained,
                 }
             }
             Err(error) => {
@@ -424,7 +425,11 @@ impl DrawPhase {
         };
 
         let noise = self.current_noise();
-        let mut detail = card_detail_dictionary(&card_text::describe(card, noise));
+        let mut detail = card_detail_dictionary(&card_text::describe_with_might(
+            card,
+            noise,
+            self.effects.might(),
+        ));
         detail.set("ok", true);
         detail
     }
@@ -432,13 +437,8 @@ impl DrawPhase {
     #[func]
     fn hand_costs(&self) -> PackedInt32Array {
         let noise = self.current_noise();
-        self.hand
-            .iter()
-            .enumerate()
-            .map(|(index, card)| {
-                let tax = card_play::hand_energy_tax(&self.hand, index, noise);
-                card.cost as i32 + tax
-            })
+        (0..self.hand.len())
+            .map(|index| card_play::current_cost(&self.hand, index, noise, &self.effects))
             .collect()
     }
 
@@ -529,18 +529,20 @@ impl DrawPhase {
         else {
             return;
         };
-        let (extra_energy, extra_draw) = {
+        let (extra_energy, extra_draw, starting_might) = {
             let progression_node = progression_node.bind();
             let progression = progression_node.progression();
             (
                 progression.bonus_max_energy(),
                 progression.bonus_cards_drawn(),
+                progression.starting_might(),
             )
         };
 
         self.max_energy += extra_energy;
         self.energy = self.max_energy;
         self.hand_size += extra_draw;
+        self.effects.add_might(starting_might);
         self.apply_starting_corrupting_boost();
     }
 

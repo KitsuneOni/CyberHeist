@@ -80,6 +80,7 @@ pub enum Keyword {
     Might(i32),
     StripFirewall(i32),
     KnowledgeIfCorrupted(i32),
+    CorruptingDiscount(u32),
 }
 
 #[allow(dead_code)]

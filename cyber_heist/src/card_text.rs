@@ -94,6 +94,7 @@ pub fn keyword_label(keyword: &Keyword) -> String {
         Keyword::StripFirewall(percent) if *percent >= 100 => "Strip Firewall".to_string(),
         Keyword::StripFirewall(percent) => format!("Strip {percent}% Firewall"),
         Keyword::KnowledgeIfCorrupted(amount) => format!("Knowledge +{amount} if corrupted"),
+        Keyword::CorruptingDiscount(amount) => format!("Corrupting Discount {amount}"),
     }
 }
 
@@ -157,6 +158,9 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
         Keyword::KnowledgeIfCorrupted(amount) => format!(
             "If the target is corrupted when this is played, gain {amount} extra Knowledge."
         ),
+        Keyword::CorruptingDiscount(amount) => format!(
+            "For the rest of this combat, every card that applies Corrupting costs {amount} less energy, to a minimum of 0. It stacks if played again."
+        ),
     }
 }
 
@@ -179,6 +183,40 @@ pub fn describe(card: &CardData, current_noise: i32) -> CardDetail {
             })
             .collect(),
     }
+}
+
+/// Like `describe`, but with the player's current Might worked into the
+/// damage numbers, so a card reads what it will actually deal.
+pub fn describe_with_might(card: &CardData, current_noise: i32, might: i32) -> CardDetail {
+    let mut detail = describe(card, current_noise);
+    if might <= 0 {
+        return detail;
+    }
+
+    // The detail's keywords are built from the active keywords in order, so
+    // the two line up one for one.
+    let keywords = card.active_keywords(current_noise);
+    let mut total_damage = 0_i32;
+    for (shown, keyword) in detail.keywords.iter_mut().zip(&keywords) {
+        let (boosted, total) = match keyword {
+            Keyword::Damage(amount) if *amount > 0 => {
+                let total = amount.saturating_add(might);
+                (Keyword::Damage(total), total)
+            }
+            Keyword::Penetrating(amount) if *amount > 0 => {
+                let total = amount.saturating_add(might);
+                (Keyword::Penetrating(total), total)
+            }
+            _ => continue,
+        };
+        total_damage = total_damage.saturating_add(total);
+        shown.label = format!("{} (Might +{might})", keyword_label(&boosted));
+        shown.explanation = keyword_explanation(&boosted);
+    }
+    if total_damage > 0 {
+        detail.description = format!("{} With Might: {total_damage} damage.", detail.description);
+    }
+    detail
 }
 
 #[cfg(test)]

@@ -29,6 +29,8 @@ extends Control
 @onready var corruption_chip: Control = %CorruptionChip
 @onready var corruption_label: Label = %CorruptionLabel
 @onready var complete_encounter_button: Button = %CompleteEncounterButton
+@onready var might_chip: Control = %MightChip
+@onready var might_label: Label = %MightLabel
 
 const CardRarity := preload("res://scenes/card_rarity.gd")
 const CardTooltip := preload("res://scenes/card_tooltip.gd")
@@ -119,7 +121,6 @@ var shown_phase := 1
 # rather than here, so a screen freed before it is ever shown leaves nothing
 # orphaned behind.
 var view_deck_button: Button
-var might_label: Label
 var deck_viewer: Control
 # Set once _ready has finished. is_node_ready() is already true inside _ready,
 # so it cannot tell the first build apart from later updates.
@@ -135,7 +136,6 @@ func _ready() -> void:
 	add_child(card_tooltip)
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
-	_add_might_label()
 	_draw_hand()
 	_add_deck_viewer()
 	_built = true
@@ -172,28 +172,10 @@ func _disable_shortcut_on_final_boss() -> void:
 	complete_encounter_button.tooltip_text = FINAL_BOSS_SHORTCUT_HINT
 
 
-# A Might readout beside Knowledge, shown only while there is some. Added in
-# code so the combat scene file doesn't change.
-func _add_might_label() -> void:
-	might_label = Label.new()
-	might_label.name = "MightLabel"
-	might_label.theme_type_variation = knowledge_label.theme_type_variation
-	might_label.add_theme_font_size_override(
-		"font_size", knowledge_label.get_theme_font_size("font_size")
-	)
-	might_label.add_theme_color_override("font_color", GREEN)
-	might_label.visible = false
-	var row := knowledge_label.get_parent()
-	row.add_child(might_label)
-	row.move_child(might_label, knowledge_label.get_index() + 1)
-
-
 func _update_might_label() -> void:
-	if might_label == null:
-		return
 	var might: int = draw_phase.might()
 	might_label.text = "might %d" % might
-	might_label.visible = might > 0
+	might_chip.visible = might > 0
 	
 func _on_end_turn_button_pressed() -> void:
 	if not _can_act():
@@ -666,7 +648,7 @@ func _on_play_button_pressed() -> void:
 		var energy_tax_paid: int = result.get("energy_tax_paid", 0)
 		var firewall_stripped: int = result.get("firewall_stripped", 0)
 		var might_gained: int = result.get("might_gained", 0)
-
+		var corrupting_discount_gained: int = result.get("corrupting_discount_gained", 0)
 		var message: String = (
 			"%s played. Noise change: %+d."
 			% [
@@ -696,6 +678,8 @@ func _on_play_button_pressed() -> void:
 			message += " Firewall stripped: %d." % firewall_stripped
 		if might_gained > 0:
 			message += " Might +%d (this combat)." % might_gained
+		if corrupting_discount_gained > 0:
+			message += " Corrupting cards cost %d less (this combat)." % corrupting_discount_gained
 		# Exhausted cards, such as security's Injected Malware, are gone for
 		# the rest of the fight rather than waiting in the discard pile.
 		if result.get("exhausted", false):
