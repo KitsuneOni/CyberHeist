@@ -8,9 +8,10 @@ use godot::builtin::VarDictionary;
 use godot::prelude::*;
 
 use crate::NOISE_METER_PATH;
+use crate::encounter_text::security_type_text;
 use crate::noise_meter::NoiseMeter;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
-use crate::sentry::{SecurityTier, Sentry};
+use crate::sentry::{SecurityTier, SecurityType, Sentry};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -87,7 +88,11 @@ impl SentryNode {
         } else if profile.at("is_elite").booleanize() {
             SecurityTier::Elite
         } else {
-            SecurityTier::Standard
+            // An ordinary node fields the type of security the map gave it.
+            // Anything that is not a combat but still mounts this screen, as
+            // the headless tests do on events and shops, gets a Warden.
+            let security = profile.at("security").to::<GString>().to_string();
+            SecurityTier::Standard(SecurityType::from_name(&security).unwrap_or_default())
         };
         Some((zone, tier))
     }
@@ -141,6 +146,24 @@ impl SentryNode {
     #[func]
     fn construct_name(&self) -> GString {
         GString::from(self.sentry.name())
+    }
+
+    /// The type of security on an ordinary combat node, for the combat
+    /// screen to explain: `{type, name, description}`, or an empty
+    /// dictionary for an elite, a boss or a screen with no run behind it.
+    #[func]
+    fn security_type(&self) -> VarDictionary {
+        match self.encounter_profile() {
+            Some((_, SecurityTier::Standard(kind))) => {
+                let text = security_type_text(kind);
+                vdict! {
+                    "type" => kind.as_str(),
+                    "name" => text.name,
+                    "description" => text.description,
+                }
+            }
+            _ => VarDictionary::new(),
+        }
     }
 
     #[func]
