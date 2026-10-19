@@ -146,7 +146,7 @@ func _run() -> void:
 	_check(_state() == after, "a repeated Play press with no selection cannot apply recovery again")
 
 	# Normal turn ordering still applies after recovery. Use the normal hand size.
-	_combat.draw_phase.hand_size = 3
+	_combat.draw_phase.hand_size = 5
 	_combat.get_node("%EndTurnButton").pressed.emit()
 	_check(
 		_combat.noise_label.text == "Noise: 91 / 100",
@@ -163,7 +163,7 @@ func _run() -> void:
 		"the originally announced action and value ran after VPN"
 	)
 	_check(_combat.draw_phase.energy == 3, "ending the turn refreshes energy")
-	_check(_combat.draw_phase.hand_names().size() == 3, "ending the turn deals a normal hand")
+	_check(_combat.draw_phase.hand_names().size() == 5, "ending the turn deals a normal hand")
 	_check(
 		_flow.run_snapshot().phase == "encounter_active",
 		"the enemy turn does not catch the recovered player"

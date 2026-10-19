@@ -165,7 +165,6 @@ theme = ExtResource("2_theme")
 script = ExtResource("1_combat")
 
 [node name="DrawPhase" type="DrawPhase" parent="."]
-hand_size = 3
 
 [node name="Sentry" type="SentryNode" parent="."]
 
