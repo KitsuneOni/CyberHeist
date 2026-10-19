@@ -4,7 +4,7 @@
 #   Scenario: The game opens on the main menu
 #     Given I launch the game
 #     Then I see the main menu rather than the contract map
-#     And I can choose New contract, Continue run, Settings or Quit
+#     And I can choose New contract, Continue run, How to play, Settings or Quit
 #
 #   Scenario: Start a new run
 #     Given I am on the main menu
@@ -105,7 +105,7 @@ func _run() -> void:
 	# --- keyboard navigation ---
 	_check(new_contract.has_focus(), "New contract is selected when the menu opens")
 	_check(
-		new_contract.find_valid_focus_neighbor(SIDE_BOTTOM) == settings_button,
+		new_contract.find_valid_focus_neighbor(SIDE_BOTTOM) == menu.how_to_play_button,
 		"moving down from New contract skips the unavailable Continue run"
 	)
 
