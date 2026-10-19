@@ -26,8 +26,9 @@ const BOSS_MULTIPLIER: i64 = 3;
 
 /// Credits paid for clearing an encounter of `encounter_type` in `zone`.
 ///
-/// Only fights pay out here. Events and shops settle their own credits, and
-/// the entry node is not an encounter at all, so they pay nothing.
+/// Only fights pay out here. Events and shops settle their own credits, a
+/// safehouse pays in noise or an upgrade rather than credits, and the entry
+/// node is not an encounter at all, so they pay nothing.
 pub fn credits_for(encounter_type: EncounterType, zone: usize) -> i64 {
     let zone = i64::try_from(zone).unwrap_or(i64::MAX);
     let combat = COMBAT_CREDITS.saturating_add(COMBAT_CREDITS_PER_ZONE.saturating_mul(zone));
@@ -36,7 +37,10 @@ pub fn credits_for(encounter_type: EncounterType, zone: usize) -> i64 {
         EncounterType::Combat => combat,
         EncounterType::Elite => combat.saturating_mul(ELITE_MULTIPLIER),
         EncounterType::Boss => combat.saturating_mul(BOSS_MULTIPLIER),
-        EncounterType::Entry | EncounterType::Event | EncounterType::Shop => 0,
+        EncounterType::Entry
+        | EncounterType::Event
+        | EncounterType::Shop
+        | EncounterType::Safehouse => 0,
     }
 }
 
@@ -48,7 +52,8 @@ pub fn guaranteed_rarity(encounter_type: EncounterType) -> Option<Rarity> {
         EncounterType::Entry
         | EncounterType::Combat
         | EncounterType::Event
-        | EncounterType::Shop => None,
+        | EncounterType::Shop
+        | EncounterType::Safehouse => None,
     }
 }
 
@@ -105,6 +110,7 @@ mod tests {
             EncounterType::Entry,
             EncounterType::Event,
             EncounterType::Shop,
+            EncounterType::Safehouse,
         ] {
             assert_eq!(credits_for(kind, 0), 0, "{kind:?}");
             assert_eq!(guaranteed_rarity(kind), None, "{kind:?}");

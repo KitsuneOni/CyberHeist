@@ -21,6 +21,9 @@ pub enum EncounterType {
     Combat,
     Event,
     Shop,
+    /// Somewhere to lie low and cut noise, or upgrade a card instead. No
+    /// fight, and the player picks one of the two (see `safehouse.rs`).
+    Safehouse,
     Elite,
     /// The security system guarding the end of a zone. One per zone, always
     /// alone in its column, and the only way through to the zone after it.
@@ -34,6 +37,7 @@ impl EncounterType {
             Self::Combat => "combat",
             Self::Event => "event",
             Self::Shop => "shop",
+            Self::Safehouse => "safehouse",
             Self::Elite => "elite",
             Self::Boss => "boss",
         }
@@ -430,11 +434,13 @@ impl ContractMap {
             }
 
             // Mostly fights, with quieter nodes mixed through so a route has
-            // some texture to it.
+            // some texture to it. Safehouses are about as common as elites,
+            // so a breather is something to route towards, not a given.
             node.encounter_type = match rng.random_range(0..100u8) {
-                0..=54 => EncounterType::Combat,
-                55..=74 => EncounterType::Event,
-                75..=89 => EncounterType::Shop,
+                0..=49 => EncounterType::Combat,
+                50..=67 => EncounterType::Event,
+                68..=79 => EncounterType::Shop,
+                80..=89 => EncounterType::Safehouse,
                 _ => EncounterType::Elite,
             };
         }
@@ -1947,6 +1953,33 @@ mod tests {
     #[test]
     fn the_same_seed_generates_the_same_contract() {
         assert_eq!(generated(7), generated(7));
+    }
+
+    /// Safehouse card #112: a safehouse is a node type of its own on the
+    /// map, placed among the ordinary encounters rather than in a boss,
+    /// entry or target slot.
+    #[test]
+    fn generated_contracts_place_safehouses_among_the_ordinary_encounters() {
+        let mut safehouses = 0;
+        for seed in 0..50 {
+            let contract = generated(seed);
+            for node in contract.nodes.values() {
+                if node.encounter_type != EncounterType::Safehouse {
+                    continue;
+                }
+                safehouses += 1;
+                assert_ne!(node.id, contract.start_node, "seed {seed}");
+                assert!(!node.next_nodes.is_empty(), "seed {seed}: not the target");
+            }
+        }
+        assert!(safehouses > 0, "no generated contract had a safehouse");
+    }
+
+    #[test]
+    fn a_safehouse_is_not_a_fight() {
+        assert!(!EncounterType::Safehouse.is_fight());
+        assert!(!EncounterType::Safehouse.is_boss());
+        assert_eq!(EncounterType::Safehouse.as_str(), "safehouse");
     }
 
     #[test]
