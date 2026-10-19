@@ -31,6 +31,8 @@ extends Control
 @onready var complete_encounter_button: Button = %CompleteEncounterButton
 @onready var might_chip: Control = %MightChip
 @onready var might_label: Label = %MightLabel
+@onready var corrupting_discount_chip: Control = %CorruptingDiscountChip
+@onready var corrupting_discount_label: Label = %CorruptingDiscountLabel
 
 const CardRarity := preload("res://scenes/card_rarity.gd")
 const CardTooltip := preload("res://scenes/card_tooltip.gd")
@@ -232,11 +234,19 @@ func _disable_shortcut_on_final_boss() -> void:
 	complete_encounter_button.disabled = true
 	complete_encounter_button.tooltip_text = FINAL_BOSS_SHORTCUT_HINT
 
+
 func _update_might_label() -> void:
 	var might: int = draw_phase.might()
-	might_label.text = "might %d" % might
+	might_label.text = "%d" % might
 	might_chip.visible = might > 0
-	
+
+
+func _update_corrupting_discount_label() -> void:
+	var discount: int = draw_phase.corrupting_discount()
+	corrupting_discount_label.text = "-%d" % discount
+	corrupting_discount_chip.visible = discount > 0
+
+
 func _on_end_turn_button_pressed() -> void:
 	if not _can_act():
 		return
@@ -905,6 +915,7 @@ func _refresh_status_labels() -> void:
 	_update_knowledge_label()
 	_update_corruption_label()
 	_update_might_label()
+	_update_corrupting_discount_label()
 
 
 # Refreshed alongside everything else, so spending or earning shows up the
