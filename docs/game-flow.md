@@ -647,7 +647,7 @@ there, and the pause menu does not open over it.
 
 The text is the `TOPICS` constant in `scenes/how_to_play.gd`, laid out in two
 columns in code, so it can be reworded without touching the scene. Keep it in
-step with the rules when a number it quotes changes (5 cards and 3 energy a
+step with the rules when a number it quotes changes (3 cards and 3 energy a
 turn, detection at 100, alert at 60).
 
 ```sh
