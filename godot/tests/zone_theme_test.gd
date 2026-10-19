@@ -141,6 +141,11 @@ func _run() -> void:
 		_finish()
 		return
 
+	# A new run opens on the computer desktop (story #25), and contracts.exe
+	# is what opens the offer picker.
+	_check(_flow.open_contracts().get("ok", false), "contracts.exe opens the offer picker")
+	await _settle()
+
 	var hub := _screen()
 	_check(
 		hub != null and hub.name == "ContractHub" and _backdrop_path(hub) == "",
