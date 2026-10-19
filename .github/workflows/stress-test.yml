@@ -190,6 +190,11 @@ jobs:
       - name: Run headless pause menu test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/pause_menu_test.gd
 
+      # How to play opens from the main menu, covers energy, noise, detection,
+      # intents and the map, and Back or Escape return to the menu.
+      - name: Run headless how to play test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/how_to_play_test.gd
+
       # Plays cards and ends a turn, checking the hand deals in and closes up,
       # a hit drains the integrity bar, and every ghost and number cleans up.
       - name: Run headless combat animation test
