@@ -582,6 +582,12 @@ impl DrawPhase {
     fn might(&self) -> i32 {
         self.effects.might()
     }
+
+    /// Energy off every Corrupting card for this combat.
+    #[func]
+    fn corrupting_discount(&self) -> i32 {
+        self.effects.corrupting_discount()
+    }
 }
 
 impl DrawPhase {
