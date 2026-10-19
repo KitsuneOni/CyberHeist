@@ -35,9 +35,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/margin_left = 88
-theme_override_constants/margin_top = 64
+theme_override_constants/margin_top = 40
 theme_override_constants/margin_right = 88
-theme_override_constants/margin_bottom = 64
+theme_override_constants/margin_bottom = 32
 
 [node name="Column" type="VBoxContainer" parent="Content"]
 layout_mode = 2
@@ -47,24 +47,30 @@ theme_override_constants/separation = 4
 [node name="Title" type="Label" parent="Content/Column"]
 layout_mode = 2
 theme_type_variation = &"DisplayLabel"
-theme_override_font_sizes/font_size = 96
+theme_override_font_sizes/font_size = 72
 text = "SETTINGS"
 
 [node name="Hint" type="Label" parent="Content/Column"]
 layout_mode = 2
 theme_type_variation = &"DimLabel"
-text = "audio levels. 0 is silent; changes apply and save at once_"
+text = "changes apply and save at once_"
 
 [node name="Spacer" type="Control" parent="Content/Column"]
-custom_minimum_size = Vector2(0, 40)
+custom_minimum_size = Vector2(0, 20)
 layout_mode = 2
 mouse_filter = 2
+
+[node name="AudioHeading" type="Label" parent="Content/Column"]
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+text = "AUDIO  ·  0 is silent"
 
 [node name="Volumes" type="GridContainer" parent="Content/Column"]
 layout_mode = 2
 size_flags_horizontal = 0
 theme_override_constants/h_separation = 24
-theme_override_constants/v_separation = 18
+theme_override_constants/v_separation = 12
 columns = 3
 
 [node name="MasterLabel" type="Label" parent="Content/Column/Volumes"]
@@ -126,8 +132,102 @@ layout_mode = 2
 theme_type_variation = &"DimLabel"
 text = "0%"
 
+[node name="DisplayHeading" type="Label" parent="Content/Column"]
+custom_minimum_size = Vector2(0, 52)
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+text = "DISPLAY  ·  enter or left/right to change"
+vertical_alignment = 2
+
+[node name="Display" type="GridContainer" parent="Content/Column"]
+layout_mode = 2
+size_flags_horizontal = 0
+theme_override_constants/h_separation = 24
+theme_override_constants/v_separation = 4
+columns = 3
+
+[node name="WindowModeLabel" type="Label" parent="Content/Column/Display"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+text = "Display mode"
+
+[node name="WindowModeButton" type="Button" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 0)
+layout_mode = 2
+accessibility_name = "Display mode"
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 22
+alignment = 0
+
+[node name="WindowModeNote" type="Label" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+
+[node name="WindowSizeLabel" type="Label" parent="Content/Column/Display"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+text = "Window size"
+
+[node name="WindowSizeButton" type="Button" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 0)
+layout_mode = 2
+accessibility_name = "Window size"
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 22
+alignment = 0
+
+[node name="WindowSizeNote" type="Label" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+
+[node name="VsyncLabel" type="Label" parent="Content/Column/Display"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+text = "VSync"
+
+[node name="VsyncButton" type="Button" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 0)
+layout_mode = 2
+accessibility_name = "Vertical sync"
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 22
+alignment = 0
+
+[node name="VsyncNote" type="Label" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+
+[node name="CrtLabel" type="Label" parent="Content/Column/Display"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+text = "CRT effect"
+
+[node name="CrtButton" type="Button" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 0)
+layout_mode = 2
+accessibility_name = "CRT scanline effect"
+theme_type_variation = &"TerminalMenuButton"
+theme_override_font_sizes/font_size = 22
+alignment = 0
+
+[node name="CrtNote" type="Label" parent="Content/Column/Display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+theme_type_variation = &"DimLabel"
+
 [node name="Spacer2" type="Control" parent="Content/Column"]
-custom_minimum_size = Vector2(0, 40)
+custom_minimum_size = Vector2(0, 20)
 layout_mode = 2
 mouse_filter = 2
 
