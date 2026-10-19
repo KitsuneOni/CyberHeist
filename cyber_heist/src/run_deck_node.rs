@@ -11,7 +11,6 @@ use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
 use crate::card_reward;
 use crate::card_text;
-use crate::progression_node::{PROGRESSION_PATH, ProgressionNode};
 use crate::run_deck::RunDeck;
 use crate::starter_deck;
 use crate::{CARD_DATABASE_PATH, card_detail_dictionary};
@@ -170,29 +169,13 @@ impl RunDeckNode {
             return Array::new();
         };
 
-        let all: Vec<(String, Rarity)> = db
+        let pool: Vec<(String, Rarity)> = db
             .bind()
             .all()
             .map(|card| (card.id.clone(), card.rarity))
             .collect();
-        // Only unlocked cards are offered. A screen running without a
-        // progression behind it offers everything, as it did before unlocks.
-        let pool = match self
-            .base()
-            .try_get_node_as::<ProgressionNode>(PROGRESSION_PATH)
-        {
-            Some(node) => node.bind().progression().open_pool(all),
-            None => all,
-        };
-
         let count = count.max(0) as usize;
-        // An elite or boss wants a Rare, but while every Rare is locked it
-        // gets the best card that is open instead.
-        let guaranteed = if guaranteed_rare {
-            card_reward::attainable_guarantee(&pool, Rarity::Rare)
-        } else {
-            None
-        };
+        let guaranteed = guaranteed_rare.then_some(Rarity::Rare);
         let ids = card_reward::offer_with_guarantee(&pool, count, guaranteed, &mut rand::rng());
 
         self.describe_reward_cards(ids.iter().map(String::as_str))

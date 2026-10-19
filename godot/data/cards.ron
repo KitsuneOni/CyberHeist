@@ -48,7 +48,7 @@
         cost: 2,
         noise_generated: 5,
         card_type: Attack,
-        rarity: Uncommon,
+        rarity: Common,
         keywords: [Damage(8), Corrupting(4)],
         upgrade: Some((
             description: Some("Deal 8 damage and corrupt the enemy for 8 points"),
@@ -119,7 +119,7 @@
         cost: 2,
         noise_generated: 5,
         card_type: Attack,
-        rarity: Uncommon,
+        rarity: Common,
         keywords: [Penetrating(12)],
         upgrade: Some((
             cost: Some(1),
@@ -228,7 +228,7 @@
         cost: 2,
         noise_generated: 5,
         card_type: Recon,
-        rarity: Uncommon,
+        rarity: Common,
         keywords: [Knowledge(1), CorruptingBoost(2)],
         upgrade: Some((
             description: Some("Gain knowledge, Gain 4 Corrupting boost"),
@@ -242,7 +242,7 @@
         cost: 1,
         noise_generated: 15,
         card_type: SocialEngineering,
-        rarity: Uncommon,
+        rarity: Common,
         keywords: [Damage(18)],
         upgrade: Some((
             description: Some("Deal 25 damage"),
@@ -293,7 +293,7 @@
         cost: 2,
         noise_generated: 10,
         card_type: Attack,
-        rarity: Uncommon,
+        rarity: Common,
         keywords: [Penetrating(14)],
         upgrade: Some((
             cost: Some(1),
@@ -392,7 +392,7 @@
         cost: 3,
         noise_generated: 20,
         card_type: SocialEngineering,
-        rarity: Legendary,
+        rarity: Rare,
         keywords: [Penetrating(30)],
         upgrade: Some((
             cost: Some(2),
@@ -444,7 +444,7 @@
         cost: 3,
         noise_generated: 20,
         card_type: SocialEngineering,
-        rarity: Legendary,
+        rarity: Rare,
         keywords: [Corrupting(15)],
         upgrade: Some((
             description: Some("Gain 10 noise - Apply 15 Corrupt"),

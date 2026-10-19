@@ -38,7 +38,6 @@ const CombatFx := preload("res://scenes/combat_fx.gd")
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
-const ALLOW_FINAL_BOSS_SKIP := true
 # Marks an action security takes from its alert set, on the intent and in the
 # turn report, so the player can tell loud play is what changed it.
 const ESCALATED_MARK := " [ESCALATED]"
@@ -167,7 +166,7 @@ func _add_deck_viewer() -> void:
 # Skipping the final boss would win the whole contract reward without a fight,
 # so the testing shortcut is off for it. Every other encounter keeps it.
 func _disable_shortcut_on_final_boss() -> void:
-	if ALLOW_FINAL_BOSS_SKIP or not FlowCoordinator.active_encounter_wins_contract():
+	if not FlowCoordinator.active_encounter_wins_contract():
 		return
 	complete_encounter_button.disabled = true
 	complete_encounter_button.tooltip_text = FINAL_BOSS_SHORTCUT_HINT
@@ -296,7 +295,7 @@ func _report_detected() -> void:
 func _on_complete_encounter_pressed() -> void:
 	if not _can_act():
 		return
-	if not ALLOW_FINAL_BOSS_SKIP and FlowCoordinator.active_encounter_wins_contract():
+	if FlowCoordinator.active_encounter_wins_contract():
 		status_label.text = FINAL_BOSS_SHORTCUT_HINT
 		return
 
