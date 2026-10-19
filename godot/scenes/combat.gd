@@ -38,7 +38,7 @@ const CombatFx := preload("res://scenes/combat_fx.gd")
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
-const ALLOW_FINAL_BOSS_SKIP := true
+const ALLOW_FINAL_BOSS_SKIP := false
 # Marks an action security takes from its alert set, on the intent and in the
 # turn report, so the player can tell loud play is what changed it.
 const ESCALATED_MARK := " [ESCALATED]"
