@@ -7,6 +7,7 @@ const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
 const SHOP_SCENE_PATH := "res://scenes/shop.tscn"
+const SAFEHOUSE_SCENE_PATH := "res://scenes/safehouse.tscn"
 const SHOP_UPGRADE_SCENE_PATH := "res://scenes/shop_upgrade.tscn"
 const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
@@ -19,6 +20,7 @@ const ENCOUNTER_SCENES := {
 	"combat": COMBAT_SCENE_PATH,
 	"event": EVENT_SCENE_PATH,
 	"shop": SHOP_SCENE_PATH,
+	"safehouse": SAFEHOUSE_SCENE_PATH,
 	# Elites and bosses are combat encounters; what makes them one is the
 	# construct behind them, which SentryNode builds from the run rather than
 	# from the scene.
@@ -26,9 +28,9 @@ const ENCOUNTER_SCENES := {
 	"boss": COMBAT_SCENE_PATH,
 }
 
-# Encounter types that earn a card reward when cleared. Event and shop nodes
-# hand out their own rewards, so they go straight back to the hub. Leaving the
-# shop is completing its node.
+# Encounter types that earn a card reward when cleared. Event, shop and
+# safehouse nodes hand out their own rewards, so they go straight back to the
+# hub. Leaving the shop or the safehouse is completing its node.
 const REWARDING_ENCOUNTERS := ["combat", "elite", "boss"]
 
 # Where the game keeps the player's save between sessions (story #10).

@@ -14,6 +14,7 @@ use crate::events::EventDefinition;
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_state::{RunState, RunStateError};
+use crate::safehouse::{LayLow, SafehouseError, SafehouseUpgrade, SafehouseVisit};
 use crate::shop::{Purchase, RemovedCard, Reroll, ScrubbedLogs, ShopError, ShopVisit, Upgrade};
 
 /// Where `FlowCoordinator` keeps the run. Other nodes that need the run look
@@ -106,6 +107,30 @@ impl RunStateNode {
     ) -> Result<Upgrade, ShopError> {
         self.state
             .upgrade_card_in_shop(credits, deck, card_id, upgraded_id, rarity)
+    }
+}
+
+/// The safehouse visit lives on the run too, so `SafehouseNode` reaches it
+/// through here. See `RunState::safehouse_visit`.
+impl RunStateNode {
+    pub(crate) fn safehouse_visit(&self) -> Option<&SafehouseVisit> {
+        self.state.safehouse_visit()
+    }
+
+    pub(crate) fn lie_low_in_safehouse(
+        &mut self,
+        noise: &mut NoiseLevel,
+    ) -> Result<LayLow, SafehouseError> {
+        self.state.lie_low_in_safehouse(noise)
+    }
+
+    pub(crate) fn upgrade_in_safehouse(
+        &mut self,
+        deck: &mut RunDeck,
+        card_id: &str,
+        upgraded_id: Option<&str>,
+    ) -> Result<SafehouseUpgrade, SafehouseError> {
+        self.state.upgrade_in_safehouse(deck, card_id, upgraded_id)
     }
 }
 
