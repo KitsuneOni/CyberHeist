@@ -593,7 +593,9 @@ player gets **one** of two things there, never both:
 
 Both are free: what a safehouse costs is the slot on the route that could have
 been a fight paying credits, or a shop. About one ordinary node in ten is a
-safehouse, the same as elites (`ContractMap::assign_encounter_types`).
+safehouse, the same as elites (`ContractMap::assign_encounter_types`). A
+safehouse never leads straight into another: one that would is a combat
+instead, so no route can rest twice in a row and skip a fight.
 
 The rules are plain Rust in `cyber_heist/src/safehouse.rs`. Entering a
 safehouse node opens a `SafehouseVisit` on the run (`RunState::select_encounter`),
