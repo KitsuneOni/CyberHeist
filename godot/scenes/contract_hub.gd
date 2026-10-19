@@ -8,7 +8,9 @@
 # and only shows the map once one is accepted. The accepted offer is what
 # winning the contract pays, so every run the player starts carries a reward.
 # Until they enter an encounter, Change contract on the map brings the picker
-# back so they can swap to another offer.
+# back so they can swap to another offer. The picker is opened from the
+# computer desktop (story #25), and Back to desktop returns there until an
+# offer is accepted.
 extends Control
 
 const DeckViewer := preload("res://scenes/deck_viewer.gd")
@@ -39,7 +41,7 @@ var change_contract_button: Button = $Page/VBox/MapPanel/MapMargin/MapContent/Ch
 # Made in _ready rather than here, so a screen freed before it is ever shown
 # leaves nothing orphaned behind.
 var view_deck_button: Button
-var dark_web_button: Button
+var desktop_button: Button
 var deck_viewer: Control
 
 
@@ -50,7 +52,7 @@ func _ready() -> void:
 	offer_picker.offer_chosen.connect(_on_offer_chosen)
 	change_contract_button.pressed.connect(_on_change_contract_pressed)
 	_add_deck_viewer()
-	_add_dark_web_button()
+	_add_desktop_button()
 	_build_key()
 
 	if FlowCoordinator.needs_contract_choice():
@@ -69,6 +71,7 @@ func _show_contract_choice() -> void:
 	subtitle_label.text = CHOOSING_SUBTITLE
 	map_panel.visible = false
 	offer_picker.visible = true
+	desktop_button.visible = FlowCoordinator.is_between_contracts()
 	# Opens on the contract already accepted, if any, so Accept straight away
 	# keeps it.
 	var accepted_index := int(FlowCoordinator.accepted_contract_offer().get("index", -1))
@@ -79,37 +82,37 @@ func _show_map() -> void:
 	title_label.text = MAP_TITLE
 	subtitle_label.text = MAP_SUBTITLE
 	offer_picker.visible = false
+	desktop_button.visible = false
 	map_panel.visible = true
 	change_contract_button.visible = FlowCoordinator.can_change_contract()
 	_show_available_encounters()
 
 
-# A Dark web shop button above the picker and the map, so it is there whether
-# the player is choosing a contract or looking at the route. Added in code so
-# the hub scene file doesn't change.
-func _add_dark_web_button() -> void:
-	dark_web_button = Button.new()
-	dark_web_button.name = "DarkWebShopButton"
-	dark_web_button.text = "Dark web shop"
-	dark_web_button.custom_minimum_size = Vector2(0, 44)
-	dark_web_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	dark_web_button.tooltip_text = "Spend credits on permanent upgrades that carry into future runs."
-	dark_web_button.pressed.connect(_on_dark_web_pressed)
-	offer_picker.get_parent().add_child(dark_web_button)
+# A Back to desktop button under the offer picker, shown while no contract is
+# accepted yet. The desktop is where the dark web shop and the player's tools
+# are, so this is the way back to them before committing to a job. Added in
+# code so the hub scene file doesn't change.
+func _add_desktop_button() -> void:
+	desktop_button = Button.new()
+	desktop_button.name = "DesktopButton"
+	desktop_button.text = "Back to desktop"
+	desktop_button.custom_minimum_size = Vector2(0, 44)
+	desktop_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	desktop_button.tooltip_text = "Return to your computer to visit the dark web or check your tools."
+	desktop_button.visible = false
+	desktop_button.pressed.connect(_on_desktop_pressed)
+	var column := offer_picker.get_parent()
+	column.add_child(desktop_button)
+	column.move_child(desktop_button, offer_picker.get_index() + 1)
 
 
-func _on_dark_web_pressed() -> void:
-	var result: Dictionary = FlowCoordinator.open_dark_web_shop()
-	if result.get("ok", false):
-		return
+func _on_desktop_pressed() -> void:
+	var result: Dictionary = FlowCoordinator.return_to_desktop()
+	if not result.get("ok", false):
+		offer_picker.show_error(
+			"Could not return to the desktop: %s" % result.get("error", "unknown error")
+		)
 
-	# The map's status label is hidden while the picker is up, so the message
-	# goes wherever the player is looking.
-	var message := "Could not open the dark web shop: %s" % result.get("error", "unknown error")
-	if is_choosing_contract():
-		offer_picker.show_error(message)
-	else:
-		status_label.text = message
 
 func _show_available_encounters() -> void:
 	status_label.text = ""

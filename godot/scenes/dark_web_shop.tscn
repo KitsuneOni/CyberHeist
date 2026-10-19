@@ -94,7 +94,7 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 0
 theme_type_variation = &"TerminalMenuButton"
-text = "> Back to contracts"
+text = "> Back to desktop"
 alignment = 0
 
 [node name="EnterShopButton" type="Button" parent="Content/Column/Footer"]
