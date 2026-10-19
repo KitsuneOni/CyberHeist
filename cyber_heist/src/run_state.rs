@@ -675,6 +675,8 @@ impl RunState {
     pub fn report_caught(&mut self) -> Result<(), RunStateError> {
         self.require_phase("report caught", ContractPhase::EncounterActive)?;
         self.phase = ContractPhase::Caught;
+        // Being caught ends the stay, so the safehouse is not left open.
+        self.safehouse_visit = None;
         Ok(())
     }
 
@@ -1061,6 +1063,16 @@ mod tests {
             Err(SafehouseError::AlreadyUsed)
         );
         assert_eq!(noise.noise(), 60);
+    }
+
+    #[test]
+    fn being_caught_in_a_safehouse_closes_it_and_the_run_still_restores() {
+        let mut state = in_a_safehouse();
+
+        state.report_caught().unwrap();
+
+        assert_eq!(state.safehouse_visit(), None);
+        assert_eq!(state.validate_restored(), Ok(()));
     }
 
     #[test]
