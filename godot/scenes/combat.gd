@@ -98,6 +98,16 @@ const INTENT_VALUE_FORMATS := {
 	"inject_malware": "+%d",
 }
 
+# Keyboard shortcuts (story #118): the number keys play the card in that
+# place in the hand, 1 for the leftmost, and E ends the turn.
+const PLAY_CARD_KEYS: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]
+const PLAY_CARD_KEYPAD_KEYS: Array[Key] = [
+	KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5, KEY_KP_6, KEY_KP_7, KEY_KP_8, KEY_KP_9
+]
+const END_TURN_KEY := KEY_E
+const END_TURN_LABEL := "END TURN [E]"
+const KEY_HINT_COLOUR := Color(0.2, 1, 0.4, 0.55)
+
 var selected_index := -1
 var card_buttons: Array[Button] = []
 # The name and cost shown on each card face, in hand order.
@@ -140,7 +150,54 @@ func _ready() -> void:
 	_disable_shortcut_on_final_boss()
 	_draw_hand()
 	_add_deck_viewer()
+	%EndTurnButton.text = END_TURN_LABEL
 	_built = true
+
+
+# The shortcuts take the same path as the mouse: a number selects that card
+# and presses Play, and E presses End Turn, so every rule and animation is
+# shared. Keys are ignored while the deck viewer is open over the fight, and
+# the pause menu stops them by pausing the tree.
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if deck_viewer != null and deck_viewer.is_open():
+		return
+
+	if key.keycode == END_TURN_KEY:
+		get_viewport().set_input_as_handled()
+		_on_end_turn_button_pressed()
+		return
+
+	var slot := hand_slot_for_key(key)
+	if slot >= 0:
+		get_viewport().set_input_as_handled()
+		play_card_at(slot)
+
+
+# Which place in the hand a key plays, 0 for the leftmost, or -1 when the key
+# is not a card shortcut. The top-row digits are matched by their physical
+# place, so they work on layouts that need Shift for the digits themselves.
+static func hand_slot_for_key(key: InputEventKey) -> int:
+	var slot := PLAY_CARD_KEYS.find(key.physical_keycode)
+	if slot == -1:
+		slot = PLAY_CARD_KEYS.find(key.keycode)
+	if slot == -1:
+		slot = PLAY_CARD_KEYPAD_KEYS.find(key.keycode)
+	return slot
+
+
+# Plays the card at `index` in the hand, as selecting it and pressing Play
+# would. A place with no card says so rather than doing nothing silently.
+func play_card_at(index: int) -> void:
+	if not _can_act():
+		return
+	if index >= card_buttons.size():
+		status_label.text = "There is no card %d in your hand." % (index + 1)
+		return
+	_on_card_clicked(index)
+	_on_play_button_pressed()
 
 
 # A Deck button above Play Card, and the viewer it opens, for checking the
@@ -451,6 +508,21 @@ func _build_card(card_name: String, cost: int, detail: Dictionary) -> Button:
 	ring.set_corner_radius_all(13)
 	pip.add_theme_stylebox_override("panel", ring)
 	top.add_child(pip)
+
+	# The number key that plays this card, in the corner of its face. Only
+	# the first nine places have a key.
+	var place := card_container.get_child_count()
+	var key_hint := _card_label(str(place), 11)
+	key_hint.name = "KeyHint"
+	key_hint.visible = place <= PLAY_CARD_KEYS.size()
+	key_hint.add_theme_color_override("font_color", KEY_HINT_COLOUR)
+	key_hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	key_hint.offset_left = -16
+	key_hint.offset_top = -20
+	key_hint.offset_right = -6
+	key_hint.offset_bottom = -4
+	key_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	button.add_child(key_hint)
 
 	var cost_label := _card_label(str(cost), 16)
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
