@@ -33,6 +33,7 @@ extends Control
 const CardRarity := preload("res://scenes/card_rarity.gd")
 const CardTooltip := preload("res://scenes/card_tooltip.gd")
 const CombatFx := preload("res://scenes/combat_fx.gd")
+const ZoneTheme := preload("res://scenes/zone_theme.gd")
 
 const NO_SELECTION_HINT := "Select a card to see its details"
 const FINAL_BOSS_SHORTCUT_HINT := "The final boss has to be beaten to win the contract."
@@ -120,6 +121,8 @@ var shown_phase := 1
 # orphaned behind.
 var view_deck_button: Button
 var deck_viewer: Control
+# The art of the zone this fight is in, behind everything (story #115).
+var zone_backdrop: TextureRect
 # Set once _ready has finished. is_node_ready() is already true inside _ready,
 # so it cannot tell the first build apart from later updates.
 var _built := false
@@ -127,6 +130,7 @@ var _built := false
 
 func _ready() -> void:
 	draw_phase.apply_run_bonuses()
+	zone_backdrop = ZoneTheme.add_backdrop($Background, ZoneTheme.current(FlowCoordinator))
 	# Before the tooltip, so a card's tooltip draws over its flying ghost.
 	fx = CombatFx.new()
 	add_child(fx)
