@@ -682,6 +682,16 @@ impl Sentry {
         self.firewall
     }
 
+    /// Removes `percent` of the firewall standing, rounded up, and returns how
+    /// much went. 100 or more takes all of it.
+    pub fn strip_firewall(&mut self, percent: i32) -> i32 {
+        let percent = i64::from(percent.clamp(0, 100));
+        let removed = ((i64::from(self.firewall) * percent + 99) / 100) as i32;
+        let removed = removed.clamp(0, self.firewall);
+        self.firewall -= removed;
+        removed
+    }
+
     /// Takes the firewall down at the start of the construct's turn, so it
     /// only ever covers the player turn after it went up. Returns what was
     /// still standing.

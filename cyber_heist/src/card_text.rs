@@ -90,6 +90,10 @@ pub fn keyword_label(keyword: &Keyword) -> String {
         Keyword::EnergyTax(amount) => format!("Energy Tax {amount}"),
         Keyword::Exhaust => "Exhaust".to_string(),
         Keyword::Flip => "Flip".to_string(),
+        Keyword::Might(amount) => format!("Might {amount}"),
+        Keyword::StripFirewall(percent) if *percent >= 100 => "Strip Firewall".to_string(),
+        Keyword::StripFirewall(percent) => format!("Strip {percent}% Firewall"),
+        Keyword::KnowledgeIfCorrupted(amount) => format!("Knowledge +{amount} if corrupted"),
     }
 }
 
@@ -141,6 +145,18 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
         Keyword::ResolveAtEndOfTurn => {
             "Playing this card spends its cost and does nothing else - otherwise all card effects will fire at end of turn.".to_string()
         }
+        Keyword::Might(amount) => format!(
+            "Gain {amount} Might for the rest of this combat. Each point adds 1 to every Damage and Penetrating hit you deal, and it stacks if you play it again."
+        ),
+        Keyword::StripFirewall(percent) if *percent >= 100 => {
+            "Removes all of the target's firewall.".to_string()
+        }
+        Keyword::StripFirewall(percent) => format!(
+            "Removes {percent}% of the target's firewall, rounded up."
+        ),
+        Keyword::KnowledgeIfCorrupted(amount) => format!(
+            "If the target is corrupted when this is played, gain {amount} extra Knowledge."
+        ),
     }
 }
 

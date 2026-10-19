@@ -119,6 +119,7 @@ var shown_phase := 1
 # rather than here, so a screen freed before it is ever shown leaves nothing
 # orphaned behind.
 var view_deck_button: Button
+var might_label: Label
 var deck_viewer: Control
 # Set once _ready has finished. is_node_ready() is already true inside _ready,
 # so it cannot tell the first build apart from later updates.
@@ -134,6 +135,7 @@ func _ready() -> void:
 	add_child(card_tooltip)
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
+	_add_might_label()
 	_draw_hand()
 	_add_deck_viewer()
 	_built = true
@@ -170,6 +172,29 @@ func _disable_shortcut_on_final_boss() -> void:
 	complete_encounter_button.tooltip_text = FINAL_BOSS_SHORTCUT_HINT
 
 
+# A Might readout beside Knowledge, shown only while there is some. Added in
+# code so the combat scene file doesn't change.
+func _add_might_label() -> void:
+	might_label = Label.new()
+	might_label.name = "MightLabel"
+	might_label.theme_type_variation = knowledge_label.theme_type_variation
+	might_label.add_theme_font_size_override(
+		"font_size", knowledge_label.get_theme_font_size("font_size")
+	)
+	might_label.add_theme_color_override("font_color", GREEN)
+	might_label.visible = false
+	var row := knowledge_label.get_parent()
+	row.add_child(might_label)
+	row.move_child(might_label, knowledge_label.get_index() + 1)
+
+
+func _update_might_label() -> void:
+	if might_label == null:
+		return
+	var might: int = draw_phase.might()
+	might_label.text = "might %d" % might
+	might_label.visible = might > 0
+	
 func _on_end_turn_button_pressed() -> void:
 	if not _can_act():
 		return
@@ -639,6 +664,8 @@ func _on_play_button_pressed() -> void:
 		var corruption_added: int = result.get("corruption_added", 0)
 		var corruption_boost_added: int = result.get("corruption_boost_added", 0)
 		var energy_tax_paid: int = result.get("energy_tax_paid", 0)
+		var firewall_stripped: int = result.get("firewall_stripped", 0)
+		var might_gained: int = result.get("might_gained", 0)
 
 		var message: String = (
 			"%s played. Noise change: %+d."
@@ -665,6 +692,10 @@ func _on_play_button_pressed() -> void:
 			message += " (+%d energy tax)" % energy_tax_paid
 		if corruption_boost_added > 0:
 			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
+		if firewall_stripped > 0:
+			message += " Firewall stripped: %d." % firewall_stripped
+		if might_gained > 0:
+			message += " Might +%d (this combat)." % might_gained
 		# Exhausted cards, such as security's Injected Malware, are gone for
 		# the rest of the fight rather than waiting in the discard pile.
 		if result.get("exhausted", false):
@@ -699,6 +730,10 @@ func _show_card_played(
 ) -> void:
 	var damage_dealt: int = result.get("damage_dealt", 0)
 	var damage_blocked: int = result.get("damage_blocked", 0)
+	var firewall_stripped: int = result.get("firewall_stripped", 0)
+	if firewall_stripped > 0:
+		fx.flash(enemy_icon, CYAN)
+		fx.float_text("-%d firewall" % firewall_stripped, enemy_icon, CYAN)
 	var shield_added: int = result.get("shield_added", 0)
 	var noise_change: int = result.get("noise_change", 0)
 	var corruption_added: int = result.get("corruption_added", 0)
@@ -810,6 +845,7 @@ func _refresh_status_labels() -> void:
 	_update_shield_label()
 	_update_knowledge_label()
 	_update_corruption_label()
+	_update_might_label()
 
 
 # Refreshed alongside everything else, so spending or earning shows up the

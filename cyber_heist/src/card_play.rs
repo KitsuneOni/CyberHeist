@@ -2,6 +2,7 @@ use rand::Rng;
 
 use crate::card_data::{CardData, CardType, Keyword};
 use crate::deck::Deck;
+use crate::effects::PlayerEffects;
 use crate::knowledge::Knowledge;
 use crate::noise_meter::NoiseLevel;
 use crate::sentry::Sentry;
@@ -33,6 +34,10 @@ pub struct PlayedCard {
     /// True when the card exhausted: it left the encounter instead of going
     /// to the discard pile, so it will not come round again this fight.
     pub exhausted: bool,
+    /// Firewall this play removed from the construct.
+    pub firewall_stripped: i32,
+    /// Stacks of Might this play granted.
+    pub might_gained: i32,
 }
 
 #[derive(Default)]
@@ -45,25 +50,60 @@ struct KeywordEffects {
     max_energy_gained: i32,
     corruption_added: i32,
     corruption_boost_added: i32,
+    firewall_stripped: i32,
+    might_gained: i32,
 }
 
-/// Plain damage, which a firewall can absorb.
-fn total_damage(keywords: &[Keyword]) -> i32 {
+/// Plain damage, which a firewall can absorb. Might adds to each hit that
+/// deals any damage.
+fn total_damage(keywords: &[Keyword], might: i32) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Damage(amount) => *amount,
+            Keyword::Damage(amount) if *amount > 0 => amount.saturating_add(might),
             _ => 0,
         })
         .sum()
 }
 
-/// Penetrating damage, which goes straight through a firewall.
-fn total_penetrating(keywords: &[Keyword]) -> i32 {
+/// Penetrating damage, which goes straight through a firewall. Might adds
+/// to each hit the same way.
+fn total_penetrating(keywords: &[Keyword], might: i32) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Penetrating(amount) => *amount,
+            Keyword::Penetrating(amount) if *amount > 0 => amount.saturating_add(might),
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_might(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Might(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_strip_firewall(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::StripFirewall(percent) => *percent,
+            _ => 0,
+        })
+        .sum::<i32>()
+        .min(100)
+}
+
+fn total_knowledge_if_corrupted(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::KnowledgeIfCorrupted(amount) => *amount,
             _ => 0,
         })
         .sum()
@@ -157,12 +197,30 @@ fn resolve_keywords(
     noise: &mut NoiseLevel,
     sentry: &mut Sentry,
     knowledge: &mut Knowledge,
+    player_effects: &mut PlayerEffects,
     rng: &mut impl Rng,
 ) -> KeywordEffects {
+    // Read before anything below changes the target, so a card's own
+    // corruption can never satisfy its own condition.
+    let was_corrupted = sentry.corruption() > 0;
+
     let shield_added = noise.add_shield(total_shield(active_keywords));
-    let blockable = sentry.take_blockable_damage(total_damage(active_keywords));
-    let damage_dealt = blockable.dealt + sentry.take_damage(total_penetrating(active_keywords));
-    let knowledge_change = knowledge.add(total_knowledge(active_keywords));
+    let firewall_stripped = sentry.strip_firewall(total_strip_firewall(active_keywords));
+
+    // Might as it stood when the card was played: Might this card grants
+    // applies from the next hit on.
+    let might = player_effects.might();
+    let blockable = sentry.take_blockable_damage(total_damage(active_keywords, might));
+    let damage_dealt =
+        blockable.dealt + sentry.take_damage(total_penetrating(active_keywords, might));
+    let might_gained = player_effects.add_might(total_might(active_keywords));
+
+    let mut knowledge_gain = total_knowledge(active_keywords);
+    if was_corrupted {
+        knowledge_gain += total_knowledge_if_corrupted(active_keywords);
+    }
+    let knowledge_change = knowledge.add(knowledge_gain);
+
     let corruption_added = sentry.add_corruption(total_corrupting(active_keywords));
     let corruption_boost_added =
         sentry.add_corruption_boost(total_corrupting_boost(active_keywords));
@@ -185,6 +243,8 @@ fn resolve_keywords(
         max_energy_gained,
         corruption_added,
         corruption_boost_added,
+        firewall_stripped,
+        might_gained,
     }
 }
 
@@ -197,6 +257,7 @@ pub fn play_card(
     noise: &mut NoiseLevel,
     sentry: &mut Sentry,
     knowledge: &mut Knowledge,
+    player_effects: &mut PlayerEffects,
     rng: &mut impl Rng,
     index: i32,
 ) -> Result<PlayedCard, PlayError> {
@@ -218,10 +279,11 @@ pub fn play_card(
 
     let active_keywords = card.active_keywords(pre_play_noise);
 
-    let (effects, noise_change) = if active_keywords.contains(&Keyword::ResolveAtEndOfTurn) {
+    let (keyword_effects, noise_change) = if active_keywords.contains(&Keyword::ResolveAtEndOfTurn)
+    {
         (KeywordEffects::default(), 0)
     } else {
-        let effects = resolve_keywords(
+        let keyword_effects = resolve_keywords(
             &active_keywords,
             hand,
             deck,
@@ -230,26 +292,29 @@ pub fn play_card(
             noise,
             sentry,
             knowledge,
+            player_effects,
             rng,
         );
         let noise_change = noise.add(i32::from(card.noise_generated));
-        (effects, noise_change)
+        (keyword_effects, noise_change)
     };
 
     let played = PlayedCard {
         name: card.display_name(pre_play_noise),
         card_type: card.card_type,
         noise_change,
-        damage_dealt: effects.damage_dealt,
-        damage_blocked: effects.damage_blocked,
-        shield_added: effects.shield_added,
-        cards_drawn: effects.cards_drawn,
-        knowledge_change: effects.knowledge_change,
-        max_energy_gained: effects.max_energy_gained,
-        corruption_added: effects.corruption_added,
-        corruption_boost_added: effects.corruption_boost_added,
+        damage_dealt: keyword_effects.damage_dealt,
+        damage_blocked: keyword_effects.damage_blocked,
+        shield_added: keyword_effects.shield_added,
+        cards_drawn: keyword_effects.cards_drawn,
+        knowledge_change: keyword_effects.knowledge_change,
+        max_energy_gained: keyword_effects.max_energy_gained,
+        corruption_added: keyword_effects.corruption_added,
+        corruption_boost_added: keyword_effects.corruption_boost_added,
         energy_tax_paid: tax,
         exhausted: active_keywords.contains(&Keyword::Exhaust),
+        firewall_stripped: keyword_effects.firewall_stripped,
+        might_gained: keyword_effects.might_gained,
     };
     if !played.exhausted {
         deck.discard(vec![card]);
@@ -275,6 +340,7 @@ pub fn resolve_end_of_turn_effects(
     noise: &mut NoiseLevel,
     sentry: &mut Sentry,
     knowledge: &mut Knowledge,
+    player_effects: &mut PlayerEffects,
     rng: &mut impl Rng,
 ) -> Vec<PlayedCard> {
     let snapshot_noise = noise.noise();
@@ -295,7 +361,7 @@ pub fn resolve_end_of_turn_effects(
         let current_noise = noise.noise();
         let active_keywords = card.active_keywords(current_noise);
 
-        let effects = resolve_keywords(
+        let keyword_effects = resolve_keywords(
             &active_keywords,
             hand,
             deck,
@@ -304,6 +370,7 @@ pub fn resolve_end_of_turn_effects(
             noise,
             sentry,
             knowledge,
+            player_effects,
             rng,
         );
         let noise_change = noise.add(i32::from(card.noise_generated));
@@ -312,16 +379,18 @@ pub fn resolve_end_of_turn_effects(
             name: card.display_name(current_noise),
             card_type: card.card_type,
             noise_change,
-            damage_dealt: effects.damage_dealt,
-            damage_blocked: effects.damage_blocked,
-            shield_added: effects.shield_added,
-            cards_drawn: effects.cards_drawn,
-            knowledge_change: effects.knowledge_change,
-            max_energy_gained: effects.max_energy_gained,
-            corruption_added: effects.corruption_added,
-            corruption_boost_added: effects.corruption_boost_added,
+            damage_dealt: keyword_effects.damage_dealt,
+            damage_blocked: keyword_effects.damage_blocked,
+            shield_added: keyword_effects.shield_added,
+            cards_drawn: keyword_effects.cards_drawn,
+            knowledge_change: keyword_effects.knowledge_change,
+            max_energy_gained: keyword_effects.max_energy_gained,
+            corruption_added: keyword_effects.corruption_added,
+            corruption_boost_added: keyword_effects.corruption_boost_added,
             energy_tax_paid: 0,
             exhausted: false,
+            firewall_stripped: keyword_effects.firewall_stripped,
+            might_gained: keyword_effects.might_gained,
         });
         deck.discard(vec![card]);
     }
@@ -342,6 +411,7 @@ mod tests {
         sentry: Sentry,
         noise: NoiseLevel,
         knowledge: Knowledge,
+        effects: PlayerEffects,
         rng: StdRng,
     }
 
@@ -358,6 +428,7 @@ mod tests {
                 sentry: Sentry::warden_7(),
                 noise: level,
                 knowledge: Knowledge::new(3),
+                effects: PlayerEffects::default(),
                 rng: StdRng::seed_from_u64(4),
             }
         }
@@ -380,6 +451,7 @@ mod tests {
                 &mut self.noise,
                 &mut self.sentry,
                 &mut self.knowledge,
+                &mut self.effects,
                 &mut self.rng,
                 index,
             )
