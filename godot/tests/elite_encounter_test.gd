@@ -202,3 +202,65 @@ func _run() -> void:
 			continue
 
 		reinforced = true
+		_check(
+			announced == "+%d integrity" % REINFORCE,
+			"Reinforce is announced with the intent (got '%s')" % announced
+		)
+		_check(
+			sentry.health() == health_before + REINFORCE,
+			"and restores that much integrity (%d -> %d)" % [health_before, sentry.health()]
+		)
+		_check(
+			_combat.status_label.text.contains("Reinforce restored %d integrity" % REINFORCE),
+			"and the screen says so (got '%s')" % _combat.status_label.text
+		)
+		break
+	_check(reinforced, "the elite reinforces within its first few turns")
+	_check(_flow.run_snapshot().phase == "encounter_active", "the elite fight is still on")
+
+	# --- scenario 2: beating it pays better ---------------------------------
+	# Rares start locked, so the reward could not hold one in a fresh test.
+	# Every locked card is Rare or better, so unlocking some means the elite's
+	# guaranteed card is a Rare or a Legendary.
+	_flow._progression.unlock_cards_for_win()
+
+	var credits_before: int = _player.money()
+	var stats_before := int(_flow.run_summary().get("credits_earned", -1))
+	sentry.take_damage(sentry.health())
+	_press_end_turn()
+	_check(_flow.run_snapshot().phase == "hub", "defeating the elite completes the encounter")
+
+	var earned: int = _player.money() - credits_before
+	_check(
+		int(_flow.run_summary().get("credits_earned", -1)) == stats_before + earned,
+		"the elite's payout counts as credits earned in the run's stats"
+	)
+	_check(
+		earned > _standard_combat_credits,
+		"the elite pays more than a standard combat (%d > %d)" % [earned, _standard_combat_credits]
+	)
+
+	var reward := _screen()
+	_check(reward != null and reward.name == "CardReward", "beating the elite offers a card reward")
+	if reward == null or reward.name != "CardReward":
+		_finish()
+		return
+
+	var rare_offered := false
+	for card: Dictionary in reward.offered:
+		var rarity := str(card.get("rarity", ""))
+		if rarity == "Rare" or rarity == "Legendary":
+			rare_offered = true
+	_check(reward.offered.size() == 3, "the elite reward offers a full hand of choices")
+	_check(rare_offered, "and at least one of them is a Rare or better")
+	_check(
+		reward.status_label.text.contains("+%d credits" % earned),
+		"the reward screen shows the payout (got '%s')" % reward.status_label.text
+	)
+	_check(_noise_meter.get_resistance_percent() == 0, "elite resistance does not outlive the fight")
+
+	reward._on_skip_pressed()
+	_check(_screen().name == "ContractHub", "leaving the reward returns to the hub")
+	_check(_flow.pending_reward_credits() == 0, "the payout is not offered twice")
+
+	_finish()
