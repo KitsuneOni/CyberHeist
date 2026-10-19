@@ -132,10 +132,54 @@ reward to pay: winning it still ends the contract on the victory screen, but
 the contract reward is 0. A player never plays it, because the hub asks for a
 contract first (below).
 
+### The computer desktop (story #25)
+
+Between contracts the player is at their own computer
+(`scenes/computer_desktop.tscn`) rather than the map. A run is between
+contracts while `FlowCoordinator.is_between_contracts()` is true: at the hub,
+no card reward waiting, not inside a dark web shop visit, and
+`needs_contract_choice()`. That covers **New contract** on the main menu and
+**Take another contract** on the victory screen, which both land on the
+desktop. Being caught keeps the contract, so it still returns to the map.
+
+The desktop has three apps:
+
+- **contracts.exe** (`open_contracts()`) opens the hub, which shows the offer
+  picker. The picker offers **Back to desktop** (`return_to_desktop()`) until
+  an offer is accepted.
+- **darkweb.onion** (`open_dark_web_shop()`) opens the dark web shop for
+  permanent upgrades. Its Back, and leaving a shop entered from it, return to
+  the desktop.
+- **toolkit/** opens the deck viewer over the desktop.
+
+A terminal window sums up the offers waiting, the points to spend and the deck
+size, and an installed upgrades window lists the relics owned.
+
+All four calls are refused once a contract is accepted, so the dark web is no
+longer reached from the map partway through a contract. The run snapshot
+carries `needs_contract_choice`, so Continue on a run saved between contracts
+lands on the desktop too.
+
+```gdscript
+FlowCoordinator.is_between_contracts()
+# true while the desktop is where the run belongs
+
+FlowCoordinator.open_contracts()      # desktop -> offer picker
+FlowCoordinator.return_to_desktop()   # picker or dark web -> desktop
+# {"ok": true}, or {"ok": false, "error": "..."} once a contract is accepted
+```
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/computer_desktop_test.gd
+```
+
 ### Choosing a contract on the hub
 
 While `FlowCoordinator.needs_contract_choice()` is true, the contract hub shows
 the **offer picker** (`scenes/contract_offer_picker.tscn`) in place of the map.
+The player reaches it from contracts.exe on the computer desktop (above).
 That is a new run at the hub with offers on the table, none accepted yet and
 no encounter entered (`RunState::needs_contract_choice`), which covers both
 **New contract** on the main menu and **Take another contract** on the
@@ -349,8 +393,8 @@ to be beaten.
 **Take another contract** calls `FlowCoordinator.start_new_run()`, the same
 clean reset as after being caught: a fresh contract and offers, no zone
 progress or stats, noise and knowledge reset, the starter deck and no
-upgrades. The credit balance, reward included, carries over. The hub then
-opens on the offer picker, so the next contract is chosen there.
+upgrades. The credit balance, reward included, carries over. The computer
+desktop then opens, and the next contract is chosen from its contracts.exe.
 
 Run the headless check with a built extension:
 
