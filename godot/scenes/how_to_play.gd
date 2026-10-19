@@ -21,7 +21,7 @@ const BODY_COLOUR := Color(0.65, 0.85, 0.72, 1)
 const TOPICS: Array[Dictionary] = [
 	{
 		"heading": "ENERGY",
-		"body": "Each turn you draw 3 cards and get 3 energy. A card's cost is the energy it takes to play. Energy you don't spend is lost when you end your turn, and it refills at the start of the next one.",
+		"body": "Each turn you draw 5 cards and get 3 energy. A card's cost is the energy it takes to play. Energy you don't spend is lost when you end your turn, and it refills at the start of the next one.",
 	},
 	{
 		"heading": "NOISE",
