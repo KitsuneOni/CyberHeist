@@ -3,7 +3,9 @@
 # they reach GDScript through FlowCoordinator in the shape the end screen will
 # read, that credits and cards gained through the coordinator are counted, and
 # that a new run also clears what lives outside the Rust run state: the shared
-# noise meter, knowledge, the run's deck and the contract's upgrades.
+# noise meter, knowledge and the contract's upgrades. The run's deck is not
+# among them: it carries on into the next contract, and only a new save (New
+# contract on the main menu) goes back to the starter deck.
 #
 # Run: godot --headless --path godot -s res://tests/run_stats_test.gd
 extends SceneTree
@@ -223,6 +225,8 @@ func _run() -> void:
 	_check(_noise_meter.noise > 0, "the old run ends with noise on the meter")
 	_check(_flow.run_deck_size() > starter_deck_size, "the old run ends with a bigger deck")
 	var money_at_end: int = _player_state.money()
+	# The deck is not part of what a new run clears: it carries on.
+	var deck_before_new_run: int = _flow.run_deck_size()
 
 	# --- acceptance test 2: a new run starts clean -------------------------
 	var started: Dictionary = _flow.start_new_run()
@@ -234,7 +238,14 @@ func _run() -> void:
 		_knowledge_meter.knowledge == starting_knowledge,
 		"knowledge is back to its starting level"
 	)
-	_check(_flow.run_deck_size() == starter_deck_size, "the deck is the starter deck again")
+	_check(
+		_flow.run_deck_size() == deck_before_new_run,
+		"the deck carries over into the next contract (%d cards)" % deck_before_new_run
+	)
+	_check(
+		_flow.run_deck_size() > starter_deck_size,
+		"the carried-over deck still holds the cards gained"
+	)
 
 	var zones: Dictionary = _flow.zone_progress()
 	_check(int(zones.get("current_zone", -1)) == 0, "the new run starts in the first zone")
@@ -290,6 +301,21 @@ func _run() -> void:
 	_check(
 		_player_state.money() == money_at_hub,
 		"clearing upgrades leaves the credit balance alone"
+	)
+
+	# --- a new save starts from the starter deck ---------------------------
+	# Only New contract on the main menu starts a new save, so it is the one
+	# path that takes the deck back to the starter cards.
+	_check(
+		_flow.run_deck_size() > starter_deck_size,
+		"the deck is still bigger going into a new save"
+	)
+	var new_save: Dictionary = _flow.start_new_contract()
+	_check(new_save.get("ok", false), "a new save starts: %s" % new_save)
+	await _settle()
+	_check(
+		_flow.run_deck_size() == starter_deck_size,
+		"a new save starts from the starter deck again"
 	)
 
 	_finish()
