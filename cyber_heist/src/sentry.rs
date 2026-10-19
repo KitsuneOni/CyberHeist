@@ -19,6 +19,8 @@
 //! Plain Rust with no Godot types, so the rules stay unit testable per
 //! docs/rust-godot-setup.md. `sentry_node.rs` adapts this for scenes.
 
+use serde::{Deserialize, Serialize};
+
 /// Something an action does to the player beyond adding noise.
 ///
 /// An ability is what marks an encounter out as more than a louder version of
@@ -135,11 +137,59 @@ impl SentryAbility {
 /// construct on most nodes up to the boss closing a zone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecurityTier {
-    Standard,
+    /// Guards an ordinary combat node, as whichever type of security the
+    /// node fields.
+    Standard(SecurityType),
     /// Guards an elite node: tougher than standard security, with an ability
     /// of its own, and a better payout for beating it.
     Elite,
     Boss,
+}
+
+/// Which kind of security system guards an ordinary combat node (Trello card
+/// #40). Each type works through its own action sequence, so a deck that
+/// beats one does not automatically beat the next, and the map shows the type
+/// before the player commits to the node.
+///
+/// Elites and bosses have their own builds and ignore this.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityType {
+    /// The balanced patrol every combat fielded before types existed: a bit
+    /// of noise, a firewall and some malware. Also what an authored node with
+    /// no type of its own gets.
+    #[default]
+    Warden,
+    /// Shields itself most turns and has more integrity, but makes little
+    /// noise. Penetrating damage and corruption go straight through.
+    Firewall,
+    /// Loud on every turn but fragile, so the answer is to end it quickly.
+    Tracer,
+    /// Plants Injected Malware every other turn to clog the player's deck.
+    Antivirus,
+}
+
+impl SecurityType {
+    pub const ALL: [SecurityType; 4] = [
+        SecurityType::Warden,
+        SecurityType::Firewall,
+        SecurityType::Tracer,
+        SecurityType::Antivirus,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Warden => "warden",
+            Self::Firewall => "firewall",
+            Self::Tracer => "tracer",
+            Self::Antivirus => "antivirus",
+        }
+    }
+
+    /// The type named `name` by `as_str`, for reading it back from Godot.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == name)
+    }
 }
 
 /// What a hit that a firewall can stand in front of actually did: how much the
@@ -283,6 +333,77 @@ const ALERT_NOISE_BONUS: i32 = 1;
 /// BLACK MONOLITH's.
 const ALERT_FIREWALL_BLOCK: i32 = 10;
 
+/// A Firewall-type construct (AEGIS): two firewalls in a four-turn cycle and
+/// little noise. Penetrating damage and corruption ignore the firewalls.
+const AEGIS_SCRIPT: [(&str, i32, SentryAbility); 4] = [
+    (
+        "Firewall Up",
+        1,
+        SentryAbility::Firewall(STANDARD_FIREWALL_BLOCK),
+    ),
+    ("Port Scan", 1, SentryAbility::None),
+    (
+        "Packet Filter",
+        1,
+        SentryAbility::Firewall(STANDARD_FIREWALL_BLOCK),
+    ),
+    ("Lockdown Probe", 3, SentryAbility::None),
+];
+
+/// What AEGIS does instead of each `AEGIS_SCRIPT` action on alert.
+const AEGIS_ALERT_SCRIPT: [(&str, SentryAbility); AEGIS_SCRIPT.len()] = [
+    (
+        "Firewall Surge",
+        SentryAbility::Firewall(ALERT_FIREWALL_BLOCK),
+    ),
+    ("Deep Port Scan", SentryAbility::None),
+    ("Packet Wall", SentryAbility::Firewall(ALERT_FIREWALL_BLOCK)),
+    ("Lockdown Sweep", SentryAbility::None),
+];
+
+/// AEGIS hides behind its firewalls, so it has more integrity than WARDEN,
+/// still short of an elite.
+const AEGIS_HEALTH: i32 = 50;
+
+/// A Tracer-type construct: noise and nothing else, loud on every turn. No
+/// action is louder than WARDEN's loudest, so the zone's boss still clears
+/// them all; it is that there are no quiet turns in between.
+const TRACER_SCRIPT: [(&str, i32, SentryAbility); 4] = [
+    ("Ping Sweep", 2, SentryAbility::None),
+    ("Trace Route", 3, SentryAbility::None),
+    ("Triangulate", 3, SentryAbility::None),
+    ("Signal Lock", 2, SentryAbility::None),
+];
+
+/// What TRACER does instead of each `TRACER_SCRIPT` action on alert.
+const TRACER_ALERT_SCRIPT: [(&str, SentryAbility); TRACER_SCRIPT.len()] = [
+    ("Ping Flood", SentryAbility::None),
+    ("Hard Trace", SentryAbility::None),
+    ("Pinpoint", SentryAbility::None),
+    ("Signal Burst", SentryAbility::None),
+];
+
+/// TRACER trades integrity for noise: it goes down quickly if the player
+/// commits to attacking it.
+const TRACER_HEALTH: i32 = 30;
+
+/// An Antivirus-type construct (VIRUSCAN): Injected Malware every other turn
+/// and no firewall, so the threat is a clogged deck rather than the meter.
+const VIRUSCAN_SCRIPT: [(&str, i32, SentryAbility); 4] = [
+    ("Signature Scan", 1, SentryAbility::None),
+    ("Quarantine", 1, SentryAbility::InjectMalware(1)),
+    ("Heuristic Sweep", 2, SentryAbility::None),
+    ("Payload Seed", 1, SentryAbility::InjectMalware(1)),
+];
+
+/// What VIRUSCAN does instead of each `VIRUSCAN_SCRIPT` action on alert.
+const VIRUSCAN_ALERT_SCRIPT: [(&str, SentryAbility); VIRUSCAN_SCRIPT.len()] = [
+    ("Full System Scan", SentryAbility::None),
+    ("Mass Quarantine", SentryAbility::InjectMalware(2)),
+    ("Heuristic Storm", SentryAbility::None),
+    ("Payload Bloom", SentryAbility::InjectMalware(2)),
+];
+
 /// Bosses by zone. A contract longer than this list falls back to a numbered
 /// name, so adding zones cannot leave a boss nameless. Contract offers read its
 /// length so they never send the player deeper than the bosses written here.
@@ -381,20 +502,69 @@ impl Sentry {
     /// script scaled up, so a boss can be measured against the security the
     /// player has been dealing with in that zone rather than a fixed bar.
     pub fn standard_for_zone(zone: usize) -> Self {
+        Self::standard_of_type(zone, SecurityType::Warden)
+    }
+
+    /// The construct of type `kind` guarding an ordinary encounter in `zone`.
+    /// A Warden is exactly `standard_for_zone`.
+    pub fn standard_of_type(zone: usize, kind: SecurityType) -> Self {
+        match kind {
+            SecurityType::Warden => Self::scripted(
+                zone,
+                "WARDEN",
+                STANDARD_HEALTH,
+                &STANDARD_SCRIPT,
+                &ALERT_SCRIPT,
+            ),
+            SecurityType::Firewall => Self::scripted(
+                zone,
+                "AEGIS",
+                AEGIS_HEALTH,
+                &AEGIS_SCRIPT,
+                &AEGIS_ALERT_SCRIPT,
+            ),
+            SecurityType::Tracer => Self::scripted(
+                zone,
+                "TRACER",
+                TRACER_HEALTH,
+                &TRACER_SCRIPT,
+                &TRACER_ALERT_SCRIPT,
+            ),
+            SecurityType::Antivirus => Self::scripted(
+                zone,
+                "VIRUSCAN",
+                STANDARD_HEALTH,
+                &VIRUSCAN_SCRIPT,
+                &VIRUSCAN_ALERT_SCRIPT,
+            ),
+        }
+    }
+
+    /// An ordinary construct running `script`, with `alerts` as its alert
+    /// set slot for slot. Noise scales with the zone the same way for every
+    /// type, and every type resists detection like the zone it is in, so
+    /// what sets them apart is what they do rather than how deep they are.
+    fn scripted(
+        zone: usize,
+        prefix: &str,
+        health: i32,
+        script: &[(&str, i32, SentryAbility)],
+        alerts: &[(&str, SentryAbility)],
+    ) -> Self {
         let step = Self::zone_step(zone);
-        let script = STANDARD_SCRIPT
+        let actions = script
             .iter()
             .map(|(name, noise, ability)| SentryAction::with_ability(name, noise * step, *ability))
             .collect();
 
         let mut sentry =
-            Self::new(&format!("WARDEN-{}", 7 + 2 * zone), script).with_health(STANDARD_HEALTH);
+            Self::new(&format!("{prefix}-{}", 7 + 2 * zone), actions).with_health(health);
         sentry.detection_resistance = Self::standard_resistance(zone);
-        sentry.alert_script = STANDARD_SCRIPT
+        sentry.alert_script = script
             .iter()
-            .zip(ALERT_SCRIPT)
+            .zip(alerts)
             .map(|((_, noise, _), (name, ability))| {
-                SentryAction::with_ability(name, noise * step + ALERT_NOISE_BONUS, ability)
+                SentryAction::with_ability(name, noise * step + ALERT_NOISE_BONUS, *ability)
             })
             .collect();
         sentry
@@ -526,7 +696,7 @@ impl Sentry {
     /// The construct for an encounter, whichever kind it is.
     pub fn for_encounter(zone: usize, tier: SecurityTier) -> Self {
         match tier {
-            SecurityTier::Standard => Self::standard_for_zone(zone),
+            SecurityTier::Standard(kind) => Self::standard_of_type(zone, kind),
             SecurityTier::Elite => Self::elite_for_zone(zone),
             SecurityTier::Boss => Self::boss_for_zone(zone),
         }
@@ -1213,9 +1383,15 @@ mod tests {
     fn for_encounter_fields_the_construct_for_each_tier() {
         for zone in 0..3 {
             assert_eq!(
-                Sentry::for_encounter(zone, SecurityTier::Standard),
+                Sentry::for_encounter(zone, SecurityTier::Standard(SecurityType::Warden)),
                 Sentry::standard_for_zone(zone)
             );
+            for kind in SecurityType::ALL {
+                assert_eq!(
+                    Sentry::for_encounter(zone, SecurityTier::Standard(kind)),
+                    Sentry::standard_of_type(zone, kind)
+                );
+            }
             assert_eq!(
                 Sentry::for_encounter(zone, SecurityTier::Elite),
                 Sentry::elite_for_zone(zone)
@@ -1793,6 +1969,193 @@ mod tests {
             "clamped to max, not the full heal"
         );
         assert_eq!(sentry.health(), 10);
+    }
+
+    /// Every ordinary construct a zone can field, one per security type.
+    fn standard_types(zone: usize) -> Vec<Sentry> {
+        SecurityType::ALL
+            .into_iter()
+            .map(|kind| Sentry::standard_of_type(zone, kind))
+            .collect()
+    }
+
+    fn script_names(sentry: &Sentry) -> Vec<String> {
+        sentry
+            .script
+            .iter()
+            .map(|action| action.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_warden_type_is_the_standard_construct() {
+        for zone in 0..4 {
+            assert_eq!(
+                Sentry::standard_of_type(zone, SecurityType::Warden),
+                Sentry::standard_for_zone(zone)
+            );
+        }
+    }
+
+    /// Security types card scenario 1: two encounters in the same zone with
+    /// different types run different sequences of actions.
+    #[test]
+    fn each_security_type_has_its_own_sequence_of_actions() {
+        for zone in 0..4 {
+            let sentries = standard_types(zone);
+            for (index, first) in sentries.iter().enumerate() {
+                for second in sentries.iter().skip(index + 1) {
+                    assert_ne!(
+                        script_names(first),
+                        script_names(second),
+                        "zone {zone}: {} and {} run the same actions",
+                        first.name(),
+                        second.name()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn each_security_type_has_its_own_name() {
+        let names: Vec<String> = standard_types(0)
+            .iter()
+            .map(|sentry| sentry.name().to_string())
+            .collect();
+        assert_eq!(names, ["WARDEN-7", "AEGIS-7", "TRACER-7", "VIRUSCAN-7"]);
+        assert_eq!(
+            Sentry::standard_of_type(1, SecurityType::Tracer).name(),
+            "TRACER-9",
+            "numbered by zone like WARDEN"
+        );
+    }
+
+    /// The types are there to ask different things of the player's deck, so
+    /// each leans on something the others do not.
+    #[test]
+    fn each_security_type_leans_on_its_own_threat() {
+        let count = |sentry: &Sentry, test: fn(SentryAbility) -> bool| {
+            sentry
+                .script
+                .iter()
+                .filter(|action| test(action.ability))
+                .count()
+        };
+        let firewalls = |ability: SentryAbility| ability.firewall_raised() > 0;
+        let malware = |ability: SentryAbility| ability.malware_planted() > 0;
+        let total_noise = |sentry: &Sentry| -> i32 {
+            sentry.script.iter().map(|action| action.noise).sum::<i32>()
+                / sentry.script.len() as i32
+        };
+
+        for zone in 0..3 {
+            let warden = Sentry::standard_of_type(zone, SecurityType::Warden);
+            let aegis = Sentry::standard_of_type(zone, SecurityType::Firewall);
+            let tracer = Sentry::standard_of_type(zone, SecurityType::Tracer);
+            let viruscan = Sentry::standard_of_type(zone, SecurityType::Antivirus);
+
+            assert!(count(&aegis, firewalls) > count(&warden, firewalls));
+            assert!(aegis.max_health() > warden.max_health());
+            assert_eq!(count(&aegis, malware), 0);
+
+            assert!(total_noise(&tracer) > total_noise(&warden));
+            assert!(tracer.max_health() < warden.max_health());
+
+            assert!(count(&viruscan, malware) > count(&warden, malware));
+            assert_eq!(count(&viruscan, firewalls), 0);
+        }
+    }
+
+    /// A boss still out-shouts every kind of ordinary security in its zone,
+    /// alert actions included.
+    #[test]
+    fn every_boss_action_is_louder_than_every_security_type_in_its_zone() {
+        for zone in 0..4 {
+            let boss = Sentry::boss_for_zone(zone);
+            let quietest_boss = boss.script.iter().map(|action| action.noise).min().unwrap();
+            for sentry in standard_types(zone) {
+                for action in sentry.script.iter().chain(&sentry.alert_script) {
+                    assert!(
+                        action.noise < quietest_boss,
+                        "zone {zone}: {}'s {} ({}) is as loud as the boss ({quietest_boss})",
+                        sentry.name(),
+                        action.name,
+                        action.noise
+                    );
+                }
+            }
+        }
+    }
+
+    /// Boss signatures, boss action names and the elite's Reinforce stay
+    /// theirs: no security type borrows them.
+    #[test]
+    fn no_security_type_borrows_a_boss_or_elite_move() {
+        for zone in 0..4 {
+            let boss = Sentry::boss_for_zone(zone);
+            let signature = signature(&boss).ability;
+            let boss_names = script_names(&boss);
+            for sentry in standard_types(zone) {
+                for action in sentry.script.iter().chain(&sentry.alert_script) {
+                    assert_ne!(action.ability, signature, "zone {zone}: {}", action.name);
+                    assert!(!action.ability.purges_corruption(), "{}", action.name);
+                    assert_eq!(action.ability.energy_drain(), 0, "{}", action.name);
+                    assert_eq!(action.ability.integrity_restored(), 0, "{}", action.name);
+                    assert!(
+                        action.ability.firewall_raised() < FIREWALL_BLOCK,
+                        "{}",
+                        action.name
+                    );
+                    assert!(!boss_names.contains(&action.name), "{}", action.name);
+                }
+            }
+        }
+    }
+
+    /// Every type reacts to noise the way WARDEN does: one louder alert action
+    /// per slot, so going loud costs the same against any of them.
+    #[test]
+    fn every_security_type_escalates_at_high_noise() {
+        for zone in 0..3 {
+            for sentry in standard_types(zone) {
+                assert_eq!(
+                    sentry.alert_script.len(),
+                    sentry.script.len(),
+                    "{}",
+                    sentry.name()
+                );
+                for (calm, alert) in sentry.script.iter().zip(&sentry.alert_script) {
+                    assert!(
+                        alert.noise > calm.noise,
+                        "{}: {} is not louder than {}",
+                        sentry.name(),
+                        alert.name,
+                        calm.name
+                    );
+                    assert_ne!(alert.name, calm.name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_security_type_resists_detection_like_its_zone() {
+        for zone in 0..4 {
+            let expected = Sentry::standard_for_zone(zone).detection_resistance();
+            for sentry in standard_types(zone) {
+                assert_eq!(sentry.detection_resistance(), expected, "{}", sentry.name());
+            }
+        }
+    }
+
+    #[test]
+    fn a_security_type_reads_back_from_its_name() {
+        for kind in SecurityType::ALL {
+            assert_eq!(SecurityType::from_name(kind.as_str()), Some(kind));
+        }
+        assert_eq!(SecurityType::from_name("nonsense"), None);
+        assert_eq!(SecurityType::default(), SecurityType::Warden);
     }
 }
 
