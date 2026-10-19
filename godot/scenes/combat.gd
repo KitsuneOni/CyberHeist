@@ -171,7 +171,6 @@ func _disable_shortcut_on_final_boss() -> void:
 	complete_encounter_button.disabled = true
 	complete_encounter_button.tooltip_text = FINAL_BOSS_SHORTCUT_HINT
 
-
 func _update_might_label() -> void:
 	var might: int = draw_phase.might()
 	might_label.text = "might %d" % might

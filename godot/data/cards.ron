@@ -330,7 +330,7 @@
     (
         id:"backdoor",
         name:"Backdoor'd",
-        description:"Remove all shield from enemy ",
+        description:"Remove all firewall from the enemy",
         cost: 2,
         noise_generated: 10,
         card_type: SocialEngineering,
@@ -342,7 +342,7 @@
         weak_side: Some((
             noise_threshold: 50,
             name: Some("Frontdoor"),
-            description:"Remove half of the enemy shield",
+            description:"Remove half of the enemy firewall",
             keywords: [StripFirewall(50)],
         )),
     ),
@@ -381,7 +381,7 @@
         keywords: [Knowledge(1), KnowledgeIfCorrupted(1)],
         upgrade: Some((
             description: Some("Increase knowledge stage by 2, or 3 if the enemy is corrupted"),
-            keywords: Some([Knowledge(2), KnowledgeIfCorrupted(3)]),
+            keywords: Some([Knowledge(2), KnowledgeIfCorrupted(1)]),
             cost: Some(1),
         )),
     ),

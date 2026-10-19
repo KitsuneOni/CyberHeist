@@ -461,6 +461,19 @@ mod tests {
         rng: StdRng,
     }
 
+    fn authored(id: &str) -> CardData {
+        parse_cards(include_str!("../../godot/data/cards.ron"))
+            .remove(id)
+            .expect("authored card exists")
+    }
+
+    /// A card shaped like Strike (cost 1, no noise) carrying exactly `keywords`.
+    fn strike_with(keywords: Vec<Keyword>) -> CardData {
+        let mut card = authored("strike");
+        card.keywords = keywords;
+        card
+    }
+
     impl Combat {
         fn with_card(id: &str, noise: i32) -> Self {
             let mut cards = parse_cards(include_str!("../../godot/data/cards.ron"));
@@ -478,7 +491,6 @@ mod tests {
                 rng: StdRng::seed_from_u64(4),
             }
         }
-
         /// The same, with one of security's junk cards from
         /// cursed_cards.ron in hand instead.
         fn with_cursed_card(id: &str, noise: i32) -> Self {
@@ -529,6 +541,244 @@ mod tests {
         assert_eq!(combat.noise.add(action.noise), 1);
         assert_eq!(combat.noise.noise(), 90);
         assert!(!combat.noise.is_at_cap());
+    }
+
+    // --- Might ---------------------------------------------------------
+
+    #[test]
+    fn might_adds_to_every_damage_and_penetrating_hit() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.effects.add_might(2);
+        combat.hand = vec![strike_with(vec![
+            Keyword::Damage(3),
+            Keyword::Damage(4),
+            Keyword::Penetrating(5),
+        ])];
+
+        let played = combat.play(0).unwrap();
+
+        // Each of the three hits gains 2: 5 + 6 + 7.
+        assert_eq!(played.damage_dealt, 18);
+        assert_eq!(combat.sentry.health(), combat.sentry.max_health() - 18);
+    }
+
+    #[test]
+    fn might_does_not_make_a_card_with_no_damage_deal_any() {
+        for id in ["vpn", "shield", "background_check"] {
+            let mut combat = Combat::with_card(id, 0);
+            combat.effects.add_might(5);
+            assert_eq!(combat.play(0).unwrap().damage_dealt, 0, "{id}");
+        }
+
+        let mut combat = Combat::with_card("strike", 0);
+        combat.effects.add_might(5);
+        combat.hand = vec![strike_with(vec![Keyword::Damage(0)])];
+        assert_eq!(
+            combat.play(0).unwrap().damage_dealt,
+            0,
+            "an authored zero stays zero"
+        );
+    }
+
+    #[test]
+    fn might_a_card_grants_applies_from_the_next_hit_on() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.hand = vec![
+            strike_with(vec![Keyword::Damage(6), Keyword::Might(2)]),
+            strike_with(vec![Keyword::Damage(6)]),
+        ];
+
+        let first = combat.play(0).unwrap();
+        assert_eq!(
+            first.damage_dealt, 6,
+            "the card that grants Might does not boost itself"
+        );
+        assert_eq!(first.might_gained, 2);
+        assert_eq!(combat.effects.might(), 2);
+
+        let second = combat.play(0).unwrap();
+        assert_eq!(second.damage_dealt, 8);
+        assert_eq!(second.might_gained, 0);
+    }
+
+    #[test]
+    fn might_stacks_when_it_is_granted_again() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.hand = vec![
+            strike_with(vec![Keyword::Might(2)]),
+            strike_with(vec![Keyword::Might(2)]),
+            strike_with(vec![Keyword::Damage(6)]),
+        ];
+
+        assert_eq!(combat.play(0).unwrap().might_gained, 2);
+        assert_eq!(combat.play(0).unwrap().might_gained, 2);
+        assert_eq!(combat.effects.might(), 4);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 10);
+    }
+
+    #[test]
+    fn root_access_grants_its_authored_might() {
+        let mut combat = Combat::with_card("root_access", 0);
+
+        let played = combat.play(0).unwrap();
+
+        assert_eq!(played.might_gained, 2);
+        assert_eq!(played.damage_dealt, 0);
+        assert_eq!(combat.effects.might(), 2);
+    }
+
+    // --- Strip Firewall --------------------------------------------------
+
+    #[test]
+    fn backdoor_strips_the_whole_firewall_and_frontdoor_half_of_it() {
+        let mut backdoor = Combat::with_card("backdoor", 0);
+        backdoor.sentry.raise_firewall(9);
+        let played = backdoor.play(0).unwrap();
+        assert_eq!(played.firewall_stripped, 9);
+        assert_eq!(backdoor.sentry.firewall(), 0);
+
+        // At 50 noise the card shows as Frontdoor, which takes half.
+        let mut frontdoor = Combat::with_card("backdoor", 50);
+        frontdoor.sentry.raise_firewall(9);
+        let played = frontdoor.play(0).unwrap();
+        assert_eq!(played.firewall_stripped, 5);
+        assert_eq!(frontdoor.sentry.firewall(), 4);
+    }
+
+    // --- Knowledge if corrupted -------------------------------------------
+
+    #[test]
+    fn spyware_grants_extra_knowledge_only_against_a_corrupted_target() {
+        let mut calm = Combat::with_card("spyware", 0);
+        assert_eq!(calm.play(0).unwrap().knowledge_change, 1);
+
+        let mut corrupted = Combat::with_card("spyware", 0);
+        corrupted.sentry.add_corruption(3);
+        let played = corrupted.play(0).unwrap();
+        assert_eq!(played.knowledge_change, 2);
+        assert_eq!(corrupted.knowledge.level(), 3);
+    }
+
+    #[test]
+    fn a_cards_own_corruption_does_not_satisfy_its_own_condition() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.knowledge = Knowledge::new(10);
+        combat.hand = vec![strike_with(vec![
+            Keyword::Corrupting(4),
+            Keyword::Knowledge(1),
+            Keyword::KnowledgeIfCorrupted(1),
+        ])];
+
+        let played = combat.play(0).unwrap();
+
+        assert_eq!(played.corruption_added, 4);
+        assert_eq!(
+            played.knowledge_change, 1,
+            "the target was clean when it was played"
+        );
+    }
+
+    /// The upgrade's description says "2, or 3 if the enemy is corrupted".
+    #[test]
+    fn upgraded_spyware_grants_what_its_description_says() {
+        let upgraded = || {
+            authored("spyware")
+                .upgraded()
+                .expect("spyware has an upgrade")
+        };
+
+        let mut calm = Combat::with_card("strike", 0);
+        calm.knowledge = Knowledge::new(10);
+        calm.hand = vec![upgraded()];
+        assert_eq!(calm.play(0).unwrap().knowledge_change, 2);
+
+        let mut corrupted = Combat::with_card("strike", 0);
+        corrupted.knowledge = Knowledge::new(10);
+        corrupted.sentry.add_corruption(3);
+        corrupted.hand = vec![upgraded()];
+        assert_eq!(corrupted.play(0).unwrap().knowledge_change, 3);
+    }
+
+    // --- Corrupting discount ---------------------------------------------
+
+    #[test]
+    fn the_corrupting_discount_only_applies_to_cards_that_apply_corruption() {
+        let mut effects = PlayerEffects::default();
+        effects.add_corrupting_discount(1);
+        let hand = vec![
+            authored("worm"),
+            strike_with(vec![Keyword::Damage(6)]),
+            strike_with(vec![Keyword::Corrupting(-5)]),
+        ];
+
+        assert_eq!(
+            current_cost(&hand, 0, 0, &effects),
+            0,
+            "Worm applies corruption: 1 - 1"
+        );
+        assert_eq!(
+            current_cost(&hand, 1, 0, &effects),
+            1,
+            "a plain attack is unchanged"
+        );
+        assert_eq!(
+            current_cost(&hand, 2, 0, &effects),
+            1,
+            "cleansing is not applying"
+        );
+    }
+
+    #[test]
+    fn the_corrupting_discount_never_takes_a_cost_below_zero() {
+        let mut effects = PlayerEffects::default();
+        effects.add_corrupting_discount(5);
+        let hand = vec![authored("worm"), authored("social_engineering")];
+
+        assert_eq!(current_cost(&hand, 0, 0, &effects), 0);
+        assert_eq!(
+            current_cost(&hand, 1, 0, &effects),
+            0,
+            "already free stays free"
+        );
+        assert_eq!(
+            current_cost(&hand, 9, 0, &effects),
+            0,
+            "no such card costs nothing"
+        );
+    }
+
+    /// What the card face shows and what a play takes must be the same
+    /// number, tax and discount included.
+    #[test]
+    fn current_cost_matches_what_play_card_charges() {
+        let short_circuit = parse_cards(include_str!("../../godot/data/cursed_cards.ron"))
+            .remove("short_circuit")
+            .expect("authored cursed card exists");
+
+        for discount in 0..=3 {
+            let mut combat = Combat::with_card("worm", 0);
+            combat.effects.add_corrupting_discount(discount);
+            combat.hand.push(short_circuit.clone());
+            combat.energy = 10;
+
+            let shown = current_cost(&combat.hand, 0, combat.noise.noise(), &combat.effects);
+            assert_eq!(shown, (2 - discount).max(0), "1 cost + 1 tax - {discount}");
+
+            combat.play(0).unwrap();
+            assert_eq!(combat.energy, 10 - shown, "discount {discount}");
+        }
+    }
+
+    #[test]
+    fn gaming_chair_grants_a_stacking_corrupting_discount() {
+        let mut combat = Combat::with_card("gaming_chair", 0);
+        combat.energy = 10;
+        let second = combat.hand[0].clone();
+        combat.hand.push(second);
+
+        assert_eq!(combat.play(0).unwrap().corrupting_discount_gained, 1);
+        assert_eq!(combat.play(0).unwrap().corrupting_discount_gained, 1);
+        assert_eq!(combat.effects.corrupting_discount(), 2);
     }
 
     /// Varied security card E4b scenario 4: Malware costs 1 energy, does
