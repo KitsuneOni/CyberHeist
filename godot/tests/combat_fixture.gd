@@ -3,7 +3,9 @@ extends RefCounted
 # Encounter types whose node fields first-zone standard security (WARDEN-7),
 # which is what the fixture's callers are written against. An elite or boss
 # node loads its own construct (BASTION, a zone boss), with a different script,
-# integrity and resistance, so it is never a stand-in.
+# integrity and resistance, so it is never a stand-in. Nor is a combat of
+# another security type (story #40), so only a Warden combat counts; nodes
+# with no security of their own mount a Warden.
 const STANDARD_SECURITY_TYPES := ["combat", "event", "shop", "safehouse"]
 
 # Generated contracts are random, so column one does not always offer a combat.
@@ -82,9 +84,12 @@ static func roll_new_contract(flow: Node) -> Dictionary:
 	return flow.get_node("RunState").start_new_run()
 
 
+# A combat fielding a Warden, the type the fixture's callers are written
+# against. Combats of the other types (story #40) run different scripts, so
+# they are passed over like elites.
 static func _offered_combat(flow: Node) -> Dictionary:
 	for candidate: Dictionary in flow.selectable_encounters():
-		if candidate.type == "combat":
+		if candidate.type == "combat" and _fields_a_warden(candidate):
 			return candidate
 	return {}
 
@@ -96,9 +101,15 @@ static func _standard_security_option(flow: Node) -> Dictionary:
 	if not combat.is_empty():
 		return combat
 	for candidate: Dictionary in flow.selectable_encounters():
-		if candidate.type in STANDARD_SECURITY_TYPES:
+		if candidate.type in STANDARD_SECURITY_TYPES and _fields_a_warden(candidate):
 			return candidate
 	return {}
+
+
+# Whether entering `candidate` faces a Warden: a combat of that type, or a node
+# with no security of its own, onto which combat content mounts a Warden.
+static func _fields_a_warden(candidate: Dictionary) -> bool:
+	return str(candidate.get("security", "")) in ["", "warden"]
 
 
 static func _failure(error: String) -> Dictionary:

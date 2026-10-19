@@ -581,6 +581,74 @@ offer picker, and the completed node. Finally it enters the next encounter and
 draws the whole deck to find every card it bought, by id, since at the noise
 Scrub Logs left some cards show their weak-side names.
 
+## Types of security system (story #40)
+
+Every ordinary combat node fields one of four **types** of security, so the
+same deck and the same plan do not beat every fight. Elites and bosses keep
+their own builds (see the elite and boss sections) and have no type.
+
+| Type | Construct | Integrity | What it does | What beats it |
+| --- | --- | --- | --- | --- |
+| Warden | WARDEN-7 | 40 | The balanced patrol from before types existed: steady noise, a Firewall Up and an Inject Malware | Anything |
+| Firewall | AEGIS-7 | 50 | A firewall every other turn, little noise | Penetrating damage and corruption |
+| Tracer | TRACER-7 | 30 | Noise on every turn, nothing else | Burst damage, noise reduction |
+| Antivirus | VIRUSCAN-7 | 40 | Injected Malware every other turn, no firewall | Drawing through junk, ending it quickly |
+
+The scripts are in `cyber_heist/src/sentry.rs` (`Sentry::standard_of_type`).
+Every type scales with the zone the same way WARDEN does (noise × zone,
+numbered 7, 9, 11…), resists detection like its zone, and has an alert set
+that takes over at `ALERT_NOISE`, one louder action per slot. No type is ever
+as loud as the zone's boss, and none borrows a boss signature (Purge, energy
+drain, BLACK MONOLITH's firewall) or the elite's Reinforce; Rust tests hold all
+of these.
+
+**Choosing types.** `ContractMap::generate` gives each combat node its type
+after rolling the encounter types (`assign_security_types`), so a seed lays out
+the same nodes as before and only then draws types. A combat never shares a
+type with a combat leading straight into it, so two fights in a row on a route
+always differ, and combats side by side in a column differ too. The type is
+stored on the node (`EncounterNode::security`) and saved with the map, so a
+continued run fields the same constructs; an authored combat with no type
+fields a Warden. A save putting a type on anything but a combat is refused, and
+the save format moved to version 5.
+
+**Showing it.** Selecting a node carries its type into the active encounter,
+and `SentryNode` builds `SecurityTier::Standard(type)` from it. On the map, a
+combat node has a lettered badge under it (`W`, `F`, `T`, `A`), its tooltip
+names the type and says how to beat it, and the key has a Security line. The
+combat screen explains the same thing when the construct's name is hovered.
+
+```gdscript
+FlowCoordinator.map_progress()[i]
+# {..., "type": "combat", "security": "tracer", "security_name": "Tracer",
+#  "security_marker": "T", "security_description": "Loud on every turn..."}
+# Non-combat nodes have "" in all four.
+
+FlowCoordinator.map_key()["security_types"]
+# [{"type": "warden", "marker": "W", "name": "Warden", "description": ...}, ...]
+
+$SentryNode.security_type()
+# {"type": "tracer", "name": "Tracer", "description": ...}, or {} on an
+# elite or boss
+```
+
+The headless tests written against WARDEN-7 go through `combat_fixture.gd`,
+which now only picks a combat fielding a Warden (or a node with no security of
+its own, which mounts one).
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/security_types_test.gd
+```
+
+It checks every combat node on a new contract's map has a badge, a name and a
+tooltip naming its type, that no badge is also an encounter marker and only
+combats have one, and that the key explains them. It then rolls runs until the
+first zone has a combat leading straight to another, enters both from the map,
+and checks each fields the construct its type names, the combat screen explains
+the type, and the two run different action sequences over four turns.
+
 ## Safehouse nodes (story #112)
 
 A safehouse node (`[H]` on the map) is somewhere to pause between fights. The
