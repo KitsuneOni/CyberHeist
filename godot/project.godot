@@ -23,6 +23,7 @@ FlowCoordinator="*res://autoload/flow_coordinator.tscn"
 NoiseMeterGlobal="*res://autoload/NoiseMeter.tscn"
 KnowledgeMeterGlobal="*uid://dhouwtqtiq0ne"
 AudioDirector="*res://autoload/audio_director.tscn"
+DisplaySettings="*res://autoload/display_settings.gd"
 
 [display]
 
