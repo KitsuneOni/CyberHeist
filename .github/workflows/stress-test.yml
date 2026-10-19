@@ -185,6 +185,11 @@ jobs:
       - name: Run headless deck viewer test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/deck_viewer_test.gd
 
+      # Number keys play the card in that place in the hand and E ends the
+      # turn, through the same path as the mouse.
+      - name: Run headless keyboard shortcuts test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/keyboard_shortcuts_test.gd
+
       # Escape pauses on the map and in combat, settings open over the paused
       # run, and Save and Quit lands on the main menu with Continue resuming.
       - name: Run headless pause menu test
