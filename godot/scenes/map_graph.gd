@@ -14,6 +14,9 @@ const TARGET_HALF := 18.0
 # is legible from the shape of the map alone.
 const BOSS_HALF := 24.0
 const LINE_WIDTH := 2.0
+# The badge under a combat node naming its type of security (story #40).
+const SECURITY_BADGE_HALF := Vector2(9.0, 8.0)
+const SECURITY_BADGE_GAP := 6.0
 
 # A long contract is scrolled sideways rather than squeezed, so the graph
 # claims a fixed width per column and lets the viewport move over it.
@@ -171,6 +174,8 @@ func _draw() -> void:
 		if bool(node.get("is_current", false)):
 			draw_arc(centre, NODE_RADIUS + 5.0, 0.0, TAU, 32, colour, 1.5)
 
+		_draw_security_badge(node, centre, colour, font)
+
 		var marker := str(node.get("type_marker", "")).strip_edges()
 		if marker.begins_with("[") and marker.ends_with("]"):
 			marker = marker.substr(1, marker.length() - 2)
@@ -186,6 +191,33 @@ func _draw() -> void:
 				font_size,
 				text_colour
 			)
+
+
+# A small boxed letter under a combat node saying which type of security it
+# fields, so routes can be planned around them before entering (story #40).
+# Drawn under the node rather than in it, so it never reads as the node's own
+# encounter marker.
+func _draw_security_badge(node: Dictionary, centre: Vector2, colour: Color, font: Font) -> void:
+	var badge := str(node.get("security_marker", ""))
+	if badge.is_empty():
+		return
+	var badge_centre := centre + Vector2(0.0, NODE_RADIUS + SECURITY_BADGE_GAP + SECURITY_BADGE_HALF.y)
+	var box := Rect2(badge_centre - SECURITY_BADGE_HALF, SECURITY_BADGE_HALF * 2.0)
+	draw_rect(box, FILL_DIM, true)
+	draw_rect(box, colour, false, 1.0)
+	if font == null:
+		return
+	var badge_font_size := 11
+	var text_size := font.get_string_size(badge, HORIZONTAL_ALIGNMENT_LEFT, -1, badge_font_size)
+	draw_string(
+		font,
+		badge_centre + Vector2(-text_size.x * 0.5, text_size.y * 0.32),
+		badge,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		badge_font_size,
+		colour
+	)
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -219,6 +251,10 @@ func _update_tooltip(node: Dictionary) -> void:
 		"%s — %s" % [str(node.get("type_name", "?")), str(node.get("status", ""))],
 		str(node.get("description", "")),
 	]
+	# Which type of security a combat fields, and how to beat it (story #40).
+	var security_name := str(node.get("security_name", ""))
+	if not security_name.is_empty():
+		lines.append("Security: %s — %s" % [security_name, str(node.get("security_description", ""))])
 	if str(node.get("status", "")) == "sealed":
 		lines.append("Sealed until the boss of zone %d is beaten." % int(node.get("zone", 0)))
 	if _is_selectable(node):

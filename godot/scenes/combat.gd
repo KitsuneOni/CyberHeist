@@ -152,6 +152,7 @@ func _ready() -> void:
 	add_child(card_tooltip)
 	shown_phase = sentry.phase()
 	_disable_shortcut_on_final_boss()
+	_explain_security_type()
 	_draw_hand()
 	_add_deck_viewer()
 	%EndTurnButton.text = END_TURN_LABEL
@@ -900,6 +901,17 @@ func _update_knowledge_label() -> void:
 			KnowledgeMeterGlobal.max_knowledge,
 		]
 	)
+
+
+# Hovering the construct's name says which type of security it is and how to
+# beat it, the same words the map showed before the player chose the node
+# (story #40). Elites and bosses have their own builds, so they say nothing.
+func _explain_security_type() -> void:
+	var security: Dictionary = sentry.security_type()
+	if security.is_empty():
+		return
+	enemy_name.tooltip_text = "%s: %s" % [security.get("name", ""), security.get("description", "")]
+	enemy_name.mouse_filter = Control.MOUSE_FILTER_PASS
 
 
 func _refresh_status_labels() -> void:
