@@ -636,6 +636,45 @@ files so it never overwrites a developer's own.
 The sounds are synthesised by `tools/generate_audio.py` (Python and numpy),
 so there is no third-party audio to license; see `godot/assets/CREDITS.md`.
 
+## Display options (story #46)
+
+Below the volumes, the settings screen has four display options. Each row's
+button cycles through its choices: pressing it moves to the next one, and
+left/right step either way while it is selected. A change applies at once and
+is saved straight away, since there is no slider drag to wait for.
+
+| Option | Choices | Default |
+| --- | --- | --- |
+| Display mode | Windowed, Fullscreen | Windowed |
+| Window size | 1280 x 720, 1600 x 900, 1920 x 1080 | 1280 x 720 |
+| VSync | On, Off | On |
+| CRT effect | On, Off | On |
+
+The window size is greyed out while fullscreen, which uses the screen's own
+size. A windowed size change re-centres the window on its screen.
+
+The `DisplaySettings` autoload (`autoload/display_settings.gd`) owns the
+options. It keeps them in the `[display]` section of `user://settings.cfg`,
+next to AudioDirector's `[audio]` section. Each one only writes its own
+section, so saving one keeps the other. The options are applied at launch.
+A missing value, a value of the wrong type or an out-of-range size falls back
+to its default. An unreadable file is never overwritten by a display save
+(AudioDirector copies it aside the next time it saves).
+
+The CRT effect is the `CrtOverlay` ColorRect that most screens draw on top.
+`DisplaySettings` shows or hides each one as it enters the tree, and every one
+already showing when the option changes, so screens don't have to read the
+option themselves. A new screen with an overlay only needs to name it
+`CrtOverlay`.
+
+Headless there is no window, so the options are stored, saved and loaded as
+usual but nothing is asked of the window. The test checks what is chosen,
+shown and saved, using a scratch settings file:
+
+```sh
+godot --headless --path godot -s res://tests/display_settings_test.gd
+```
+
 ## Saving and continuing (story #10)
 
 The game saves itself; there is no save button. One JSON file,
