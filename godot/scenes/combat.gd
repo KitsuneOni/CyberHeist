@@ -29,6 +29,8 @@ extends Control
 @onready var corruption_chip: Control = %CorruptionChip
 @onready var corruption_label: Label = %CorruptionLabel
 @onready var complete_encounter_button: Button = %CompleteEncounterButton
+@onready var might_chip: Control = %MightChip
+@onready var might_label: Label = %MightLabel
 
 const CardRarity := preload("res://scenes/card_rarity.gd")
 const CardTooltip := preload("res://scenes/card_tooltip.gd")
@@ -230,7 +232,11 @@ func _disable_shortcut_on_final_boss() -> void:
 	complete_encounter_button.disabled = true
 	complete_encounter_button.tooltip_text = FINAL_BOSS_SHORTCUT_HINT
 
-
+func _update_might_label() -> void:
+	var might: int = draw_phase.might()
+	might_label.text = "might %d" % might
+	might_chip.visible = might > 0
+	
 func _on_end_turn_button_pressed() -> void:
 	if not _can_act():
 		return
@@ -715,7 +721,9 @@ func _on_play_button_pressed() -> void:
 		var corruption_added: int = result.get("corruption_added", 0)
 		var corruption_boost_added: int = result.get("corruption_boost_added", 0)
 		var energy_tax_paid: int = result.get("energy_tax_paid", 0)
-
+		var firewall_stripped: int = result.get("firewall_stripped", 0)
+		var might_gained: int = result.get("might_gained", 0)
+		var corrupting_discount_gained: int = result.get("corrupting_discount_gained", 0)
 		var message: String = (
 			"%s played. Noise change: %+d."
 			% [
@@ -741,6 +749,12 @@ func _on_play_button_pressed() -> void:
 			message += " (+%d energy tax)" % energy_tax_paid
 		if corruption_boost_added > 0:
 			message += " Corruption Boost +%d (this turn)." % corruption_boost_added
+		if firewall_stripped > 0:
+			message += " Firewall stripped: %d." % firewall_stripped
+		if might_gained > 0:
+			message += " Might +%d (this combat)." % might_gained
+		if corrupting_discount_gained > 0:
+			message += " Corrupting cards cost %d less (this combat)." % corrupting_discount_gained
 		# Exhausted cards, such as security's Injected Malware, are gone for
 		# the rest of the fight rather than waiting in the discard pile.
 		if result.get("exhausted", false):
@@ -775,6 +789,10 @@ func _show_card_played(
 ) -> void:
 	var damage_dealt: int = result.get("damage_dealt", 0)
 	var damage_blocked: int = result.get("damage_blocked", 0)
+	var firewall_stripped: int = result.get("firewall_stripped", 0)
+	if firewall_stripped > 0:
+		fx.flash(enemy_icon, CYAN)
+		fx.float_text("-%d firewall" % firewall_stripped, enemy_icon, CYAN)
 	var shield_added: int = result.get("shield_added", 0)
 	var noise_change: int = result.get("noise_change", 0)
 	var corruption_added: int = result.get("corruption_added", 0)
@@ -886,6 +904,7 @@ func _refresh_status_labels() -> void:
 	_update_shield_label()
 	_update_knowledge_label()
 	_update_corruption_label()
+	_update_might_label()
 
 
 # Refreshed alongside everything else, so spending or earning shows up the

@@ -90,6 +90,11 @@ pub fn keyword_label(keyword: &Keyword) -> String {
         Keyword::EnergyTax(amount) => format!("Energy Tax {amount}"),
         Keyword::Exhaust => "Exhaust".to_string(),
         Keyword::Flip => "Flip".to_string(),
+        Keyword::Might(amount) => format!("Might {amount}"),
+        Keyword::StripFirewall(percent) if *percent >= 100 => "Strip Firewall".to_string(),
+        Keyword::StripFirewall(percent) => format!("Strip {percent}% Firewall"),
+        Keyword::KnowledgeIfCorrupted(amount) => format!("Knowledge +{amount} if corrupted"),
+        Keyword::CorruptingDiscount(amount) => format!("Corrupting Discount {amount}"),
     }
 }
 
@@ -141,6 +146,21 @@ pub fn keyword_explanation(keyword: &Keyword) -> String {
         Keyword::ResolveAtEndOfTurn => {
             "Playing this card spends its cost and does nothing else - otherwise all card effects will fire at end of turn.".to_string()
         }
+        Keyword::Might(amount) => format!(
+            "Gain {amount} Might for the rest of this combat. Each point adds 1 to every Damage and Penetrating hit you deal, and it stacks if you play it again."
+        ),
+        Keyword::StripFirewall(percent) if *percent >= 100 => {
+            "Removes all of the target's firewall.".to_string()
+        }
+        Keyword::StripFirewall(percent) => format!(
+            "Removes {percent}% of the target's firewall, rounded up."
+        ),
+        Keyword::KnowledgeIfCorrupted(amount) => format!(
+            "If the target is corrupted when this is played, gain {amount} extra Knowledge."
+        ),
+        Keyword::CorruptingDiscount(amount) => format!(
+            "For the rest of this combat, every card that applies Corrupting costs {amount} less energy, to a minimum of 0. It stacks if played again."
+        ),
     }
 }
 
@@ -165,6 +185,40 @@ pub fn describe(card: &CardData, current_noise: i32) -> CardDetail {
     }
 }
 
+/// Like `describe`, but with the player's current Might worked into the
+/// damage numbers, so a card reads what it will actually deal.
+pub fn describe_with_might(card: &CardData, current_noise: i32, might: i32) -> CardDetail {
+    let mut detail = describe(card, current_noise);
+    if might <= 0 {
+        return detail;
+    }
+
+    // The detail's keywords are built from the active keywords in order, so
+    // the two line up one for one.
+    let keywords = card.active_keywords(current_noise);
+    let mut total_damage = 0_i32;
+    for (shown, keyword) in detail.keywords.iter_mut().zip(&keywords) {
+        let (boosted, total) = match keyword {
+            Keyword::Damage(amount) if *amount > 0 => {
+                let total = amount.saturating_add(might);
+                (Keyword::Damage(total), total)
+            }
+            Keyword::Penetrating(amount) if *amount > 0 => {
+                let total = amount.saturating_add(might);
+                (Keyword::Penetrating(total), total)
+            }
+            _ => continue,
+        };
+        total_damage = total_damage.saturating_add(total);
+        shown.label = format!("{} (Might +{might})", keyword_label(&boosted));
+        shown.explanation = keyword_explanation(&boosted);
+    }
+    if total_damage > 0 {
+        detail.description = format!("{} With Might: {total_damage} damage.", detail.description);
+    }
+    detail
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +235,15 @@ mod tests {
             Keyword::Intangible(1),
             Keyword::Knowledge(2),
             Keyword::Draw(2),
+            Keyword::MaxEnergyBoost(1),
+            Keyword::CorruptingBoost(5),
+            Keyword::ResolveAtEndOfTurn,
+            Keyword::EnergyTax(1),
+            Keyword::Might(2),
+            Keyword::StripFirewall(100),
+            Keyword::StripFirewall(50),
+            Keyword::KnowledgeIfCorrupted(1),
+            Keyword::CorruptingDiscount(1),
             Keyword::Exhaust,
             Keyword::Flip,
         ]
@@ -290,6 +353,79 @@ mod tests {
 
         assert!(detail.keywords.is_empty());
         assert!(!detail.description.trim().is_empty());
+    }
+
+    #[test]
+    fn describe_with_no_might_is_just_describe() {
+        let card = test_card("Deal 6 damage.", vec![Keyword::Damage(6)]);
+
+        assert_eq!(describe_with_might(&card, 0, 0), describe(&card, 0));
+    }
+
+    #[test]
+    fn describe_with_might_shows_boosted_hits_in_the_label_and_explanation() {
+        let card = test_card(
+            "Deal 6 damage.",
+            vec![Keyword::Damage(6), Keyword::Penetrating(5)],
+        );
+
+        let detail = describe_with_might(&card, 0, 2);
+
+        assert_eq!(detail.keywords[0].label, "Damage 8 (Might +2)");
+        assert_eq!(
+            detail.keywords[0].explanation,
+            keyword_explanation(&Keyword::Damage(8))
+        );
+        assert_eq!(detail.keywords[1].label, "Penetrating 7 (Might +2)");
+        assert_eq!(
+            detail.keywords[1].explanation,
+            keyword_explanation(&Keyword::Penetrating(7))
+        );
+    }
+
+    #[test]
+    fn describe_with_might_adds_the_total_to_the_description() {
+        let one_hit = test_card("Deal 6 damage.", vec![Keyword::Damage(6)]);
+        assert_eq!(
+            describe_with_might(&one_hit, 0, 2).description,
+            "Deal 6 damage. With Might: 8 damage."
+        );
+
+        let two_hits = test_card(
+            "Hit twice.",
+            vec![Keyword::Damage(3), Keyword::Penetrating(4)],
+        );
+        assert_eq!(
+            describe_with_might(&two_hits, 0, 1).description,
+            "Hit twice. With Might: 9 damage."
+        );
+    }
+
+    #[test]
+    fn describe_with_might_leaves_cards_without_damage_alone() {
+        let card = test_card("Gain shield.", vec![Keyword::Block(4), Keyword::Damage(0)]);
+
+        assert_eq!(describe_with_might(&card, 0, 3), describe(&card, 0));
+    }
+
+    #[test]
+    fn describe_with_might_follows_the_side_of_the_card_that_is_showing() {
+        use crate::card_data::WeakSide;
+
+        let mut card = test_card("Deal 10 damage.", vec![Keyword::Damage(10)]);
+        card.weak_side = Some(WeakSide {
+            noise_threshold: 50,
+            name: None,
+            description: "Deal 4 damage.".to_string(),
+            keywords: vec![Keyword::Damage(4)],
+        });
+
+        let strong = describe_with_might(&card, 0, 2);
+        assert_eq!(strong.keywords[0].label, "Damage 12 (Might +2)");
+
+        let weak = describe_with_might(&card, 50, 2);
+        assert_eq!(weak.keywords[0].label, "Damage 6 (Might +2)");
+        assert_eq!(weak.description, "Deal 4 damage. With Might: 6 damage.");
     }
 
     /// The cards players will actually see must all describe completely, so a

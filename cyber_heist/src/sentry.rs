@@ -682,6 +682,16 @@ impl Sentry {
         self.firewall
     }
 
+    /// Removes `percent` of the firewall standing, rounded up, and returns how
+    /// much went. 100 or more takes all of it.
+    pub fn strip_firewall(&mut self, percent: i32) -> i32 {
+        let percent = i64::from(percent.clamp(0, 100));
+        let removed = ((i64::from(self.firewall) * percent + 99) / 100) as i32;
+        let removed = removed.clamp(0, self.firewall);
+        self.firewall -= removed;
+        removed
+    }
+
     /// Takes the firewall down at the start of the construct's turn, so it
     /// only ever covers the player turn after it went up. Returns what was
     /// still standing.
@@ -1067,6 +1077,63 @@ mod tests {
                 "zone {zone}: resistance has to leave recovery worth something"
             );
         }
+    }
+
+    #[test]
+    fn stripping_all_of_a_firewall_removes_it_and_reports_how_much() {
+        let mut sentry = Sentry::warden_7();
+        sentry.raise_firewall(12);
+
+        assert_eq!(sentry.strip_firewall(100), 12);
+        assert_eq!(sentry.firewall(), 0);
+    }
+
+    #[test]
+    fn stripping_half_a_firewall_rounds_up() {
+        let mut even = Sentry::warden_7();
+        even.raise_firewall(8);
+        assert_eq!(even.strip_firewall(50), 4);
+        assert_eq!(even.firewall(), 4);
+
+        let mut odd = Sentry::warden_7();
+        odd.raise_firewall(9);
+        assert_eq!(
+            odd.strip_firewall(50),
+            5,
+            "9 halves to 4.5, which rounds up"
+        );
+        assert_eq!(odd.firewall(), 4);
+
+        let mut one = Sentry::warden_7();
+        one.raise_firewall(1);
+        assert_eq!(one.strip_firewall(50), 1, "half of 1 still takes the 1");
+        assert_eq!(one.firewall(), 0);
+    }
+
+    #[test]
+    fn stripping_with_no_firewall_up_removes_nothing() {
+        let mut sentry = Sentry::warden_7();
+
+        assert_eq!(sentry.strip_firewall(100), 0);
+        assert_eq!(sentry.strip_firewall(50), 0);
+        assert_eq!(sentry.firewall(), 0);
+    }
+
+    #[test]
+    fn a_strip_percentage_outside_zero_to_a_hundred_is_clamped() {
+        let mut sentry = Sentry::warden_7();
+        sentry.raise_firewall(10);
+
+        assert_eq!(sentry.strip_firewall(-20), 0, "negative removes nothing");
+        assert_eq!(sentry.strip_firewall(0), 0);
+        assert_eq!(sentry.firewall(), 10);
+
+        assert_eq!(
+            sentry.strip_firewall(250),
+            10,
+            "over 100 removes all, no more"
+        );
+        assert_eq!(sentry.firewall(), 0);
     }
 
     /// Card scenario 1: at least one ability the player will not have met in

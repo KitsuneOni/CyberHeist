@@ -2,6 +2,7 @@ use rand::Rng;
 
 use crate::card_data::{CardData, CardType, Keyword};
 use crate::deck::Deck;
+use crate::effects::PlayerEffects;
 use crate::knowledge::Knowledge;
 use crate::noise_meter::NoiseLevel;
 use crate::sentry::Sentry;
@@ -33,6 +34,12 @@ pub struct PlayedCard {
     /// True when the card exhausted: it left the encounter instead of going
     /// to the discard pile, so it will not come round again this fight.
     pub exhausted: bool,
+    /// Firewall this play removed from the construct.
+    pub firewall_stripped: i32,
+    /// Stacks of Might this play granted.
+    pub might_gained: i32,
+    /// Corrupting discount this play granted.
+    pub corrupting_discount_gained: i32,
 }
 
 #[derive(Default)]
@@ -45,25 +52,61 @@ struct KeywordEffects {
     max_energy_gained: i32,
     corruption_added: i32,
     corruption_boost_added: i32,
+    firewall_stripped: i32,
+    might_gained: i32,
+    corrupting_discount_gained: i32,
 }
 
-/// Plain damage, which a firewall can absorb.
-fn total_damage(keywords: &[Keyword]) -> i32 {
+/// Plain damage, which a firewall can absorb. Might adds to each hit that
+/// deals any damage.
+fn total_damage(keywords: &[Keyword], might: i32) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Damage(amount) => *amount,
+            Keyword::Damage(amount) if *amount > 0 => amount.saturating_add(might),
             _ => 0,
         })
         .sum()
 }
 
-/// Penetrating damage, which goes straight through a firewall.
-fn total_penetrating(keywords: &[Keyword]) -> i32 {
+/// Penetrating damage, which goes straight through a firewall. Might adds
+/// to each hit the same way.
+fn total_penetrating(keywords: &[Keyword], might: i32) -> i32 {
     keywords
         .iter()
         .map(|keyword| match keyword {
-            Keyword::Penetrating(amount) => *amount,
+            Keyword::Penetrating(amount) if *amount > 0 => amount.saturating_add(might),
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_might(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::Might(amount) => *amount,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn total_strip_firewall(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::StripFirewall(percent) => *percent,
+            _ => 0,
+        })
+        .sum::<i32>()
+        .min(100)
+}
+
+fn total_knowledge_if_corrupted(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::KnowledgeIfCorrupted(amount) => *amount,
             _ => 0,
         })
         .sum()
@@ -147,6 +190,44 @@ pub fn hand_energy_tax(hand: &[CardData], exclude_index: usize, current_noise: i
         .sum()
 }
 
+fn total_corrupting_discount(keywords: &[Keyword]) -> i32 {
+    keywords
+        .iter()
+        .map(|keyword| match keyword {
+            Keyword::CorruptingDiscount(amount) => *amount as i32,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// The discount that applies to this card: the full amount for a card that
+/// applies corruption, nothing for any other card.
+fn corrupting_discount_for(card: &CardData, current_noise: i32, discount: i32) -> i32 {
+    let applies_corruption = card
+        .active_keywords(current_noise)
+        .iter()
+        .any(|keyword| matches!(keyword, Keyword::Corrupting(amount) if *amount > 0));
+    if applies_corruption { discount } else { 0 }
+}
+
+/// What the card at `index` costs to play right now: its own cost plus any
+/// tax from other cards in hand, less the Corrupting discount, never below
+/// zero. Shared by playing and by the prices shown on the cards, so the two
+/// cannot disagree.
+pub fn current_cost(
+    hand: &[CardData],
+    index: usize,
+    current_noise: i32,
+    effects: &PlayerEffects,
+) -> i32 {
+    let Some(card) = hand.get(index) else {
+        return 0;
+    };
+    let tax = hand_energy_tax(hand, index, current_noise);
+    let discount = corrupting_discount_for(card, current_noise, effects.corrupting_discount());
+    (i32::from(card.cost) + tax - discount).max(0)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_keywords(
     active_keywords: &[Keyword],
@@ -157,12 +238,32 @@ fn resolve_keywords(
     noise: &mut NoiseLevel,
     sentry: &mut Sentry,
     knowledge: &mut Knowledge,
+    player_effects: &mut PlayerEffects,
     rng: &mut impl Rng,
 ) -> KeywordEffects {
+    // Read before anything below changes the target, so a card's own
+    // corruption can never satisfy its own condition.
+    let was_corrupted = sentry.corruption() > 0;
+
     let shield_added = noise.add_shield(total_shield(active_keywords));
-    let blockable = sentry.take_blockable_damage(total_damage(active_keywords));
-    let damage_dealt = blockable.dealt + sentry.take_damage(total_penetrating(active_keywords));
-    let knowledge_change = knowledge.add(total_knowledge(active_keywords));
+    let firewall_stripped = sentry.strip_firewall(total_strip_firewall(active_keywords));
+
+    // Might as it stood when the card was played: Might this card grants
+    // applies from the next hit on.
+    let might = player_effects.might();
+    let blockable = sentry.take_blockable_damage(total_damage(active_keywords, might));
+    let damage_dealt =
+        blockable.dealt + sentry.take_damage(total_penetrating(active_keywords, might));
+    let might_gained = player_effects.add_might(total_might(active_keywords));
+    let corrupting_discount_gained =
+        player_effects.add_corrupting_discount(total_corrupting_discount(active_keywords));
+
+    let mut knowledge_gain = total_knowledge(active_keywords);
+    if was_corrupted {
+        knowledge_gain += total_knowledge_if_corrupted(active_keywords);
+    }
+    let knowledge_change = knowledge.add(knowledge_gain);
+
     let corruption_added = sentry.add_corruption(total_corrupting(active_keywords));
     let corruption_boost_added =
         sentry.add_corruption_boost(total_corrupting_boost(active_keywords));
@@ -185,6 +286,9 @@ fn resolve_keywords(
         max_energy_gained,
         corruption_added,
         corruption_boost_added,
+        firewall_stripped,
+        might_gained,
+        corrupting_discount_gained,
     }
 }
 
@@ -197,6 +301,7 @@ pub fn play_card(
     noise: &mut NoiseLevel,
     sentry: &mut Sentry,
     knowledge: &mut Knowledge,
+    player_effects: &mut PlayerEffects,
     rng: &mut impl Rng,
     index: i32,
 ) -> Result<PlayedCard, PlayError> {
@@ -204,11 +309,11 @@ pub fn play_card(
         return Err(PlayError::Detected);
     }
     let index = usize::try_from(index).map_err(|_| PlayError::InvalidIndex)?;
-    let card = hand.get(index).ok_or(PlayError::InvalidIndex)?;
+    hand.get(index).ok_or(PlayError::InvalidIndex)?;
 
     let pre_play_noise = noise.noise();
     let tax = hand_energy_tax(hand, index, pre_play_noise);
-    let cost = i32::from(card.cost) + tax;
+    let cost = current_cost(hand, index, pre_play_noise, player_effects);
     if cost > *energy {
         return Err(PlayError::NotEnoughEnergy);
     }
@@ -218,10 +323,11 @@ pub fn play_card(
 
     let active_keywords = card.active_keywords(pre_play_noise);
 
-    let (effects, noise_change) = if active_keywords.contains(&Keyword::ResolveAtEndOfTurn) {
+    let (keyword_effects, noise_change) = if active_keywords.contains(&Keyword::ResolveAtEndOfTurn)
+    {
         (KeywordEffects::default(), 0)
     } else {
-        let effects = resolve_keywords(
+        let keyword_effects = resolve_keywords(
             &active_keywords,
             hand,
             deck,
@@ -230,26 +336,30 @@ pub fn play_card(
             noise,
             sentry,
             knowledge,
+            player_effects,
             rng,
         );
         let noise_change = noise.add(i32::from(card.noise_generated));
-        (effects, noise_change)
+        (keyword_effects, noise_change)
     };
 
     let played = PlayedCard {
         name: card.display_name(pre_play_noise),
         card_type: card.card_type,
         noise_change,
-        damage_dealt: effects.damage_dealt,
-        damage_blocked: effects.damage_blocked,
-        shield_added: effects.shield_added,
-        cards_drawn: effects.cards_drawn,
-        knowledge_change: effects.knowledge_change,
-        max_energy_gained: effects.max_energy_gained,
-        corruption_added: effects.corruption_added,
-        corruption_boost_added: effects.corruption_boost_added,
+        damage_dealt: keyword_effects.damage_dealt,
+        damage_blocked: keyword_effects.damage_blocked,
+        shield_added: keyword_effects.shield_added,
+        cards_drawn: keyword_effects.cards_drawn,
+        knowledge_change: keyword_effects.knowledge_change,
+        max_energy_gained: keyword_effects.max_energy_gained,
+        corruption_added: keyword_effects.corruption_added,
+        corruption_boost_added: keyword_effects.corruption_boost_added,
         energy_tax_paid: tax,
         exhausted: active_keywords.contains(&Keyword::Exhaust),
+        firewall_stripped: keyword_effects.firewall_stripped,
+        might_gained: keyword_effects.might_gained,
+        corrupting_discount_gained: keyword_effects.corrupting_discount_gained,
     };
     if !played.exhausted {
         deck.discard(vec![card]);
@@ -275,6 +385,7 @@ pub fn resolve_end_of_turn_effects(
     noise: &mut NoiseLevel,
     sentry: &mut Sentry,
     knowledge: &mut Knowledge,
+    player_effects: &mut PlayerEffects,
     rng: &mut impl Rng,
 ) -> Vec<PlayedCard> {
     let snapshot_noise = noise.noise();
@@ -295,7 +406,7 @@ pub fn resolve_end_of_turn_effects(
         let current_noise = noise.noise();
         let active_keywords = card.active_keywords(current_noise);
 
-        let effects = resolve_keywords(
+        let keyword_effects = resolve_keywords(
             &active_keywords,
             hand,
             deck,
@@ -304,6 +415,7 @@ pub fn resolve_end_of_turn_effects(
             noise,
             sentry,
             knowledge,
+            player_effects,
             rng,
         );
         let noise_change = noise.add(i32::from(card.noise_generated));
@@ -312,16 +424,19 @@ pub fn resolve_end_of_turn_effects(
             name: card.display_name(current_noise),
             card_type: card.card_type,
             noise_change,
-            damage_dealt: effects.damage_dealt,
-            damage_blocked: effects.damage_blocked,
-            shield_added: effects.shield_added,
-            cards_drawn: effects.cards_drawn,
-            knowledge_change: effects.knowledge_change,
-            max_energy_gained: effects.max_energy_gained,
-            corruption_added: effects.corruption_added,
-            corruption_boost_added: effects.corruption_boost_added,
+            damage_dealt: keyword_effects.damage_dealt,
+            damage_blocked: keyword_effects.damage_blocked,
+            shield_added: keyword_effects.shield_added,
+            cards_drawn: keyword_effects.cards_drawn,
+            knowledge_change: keyword_effects.knowledge_change,
+            max_energy_gained: keyword_effects.max_energy_gained,
+            corruption_added: keyword_effects.corruption_added,
+            corruption_boost_added: keyword_effects.corruption_boost_added,
             energy_tax_paid: 0,
             exhausted: false,
+            firewall_stripped: keyword_effects.firewall_stripped,
+            might_gained: keyword_effects.might_gained,
+            corrupting_discount_gained: keyword_effects.corrupting_discount_gained,
         });
         deck.discard(vec![card]);
     }
@@ -342,7 +457,21 @@ mod tests {
         sentry: Sentry,
         noise: NoiseLevel,
         knowledge: Knowledge,
+        effects: PlayerEffects,
         rng: StdRng,
+    }
+
+    fn authored(id: &str) -> CardData {
+        parse_cards(include_str!("../../godot/data/cards.ron"))
+            .remove(id)
+            .expect("authored card exists")
+    }
+
+    /// A card shaped like Strike (cost 1, no noise) carrying exactly `keywords`.
+    fn strike_with(keywords: Vec<Keyword>) -> CardData {
+        let mut card = authored("strike");
+        card.keywords = keywords;
+        card
     }
 
     impl Combat {
@@ -358,10 +487,10 @@ mod tests {
                 sentry: Sentry::warden_7(),
                 noise: level,
                 knowledge: Knowledge::new(3),
+                effects: PlayerEffects::default(),
                 rng: StdRng::seed_from_u64(4),
             }
         }
-
         /// The same, with one of security's junk cards from
         /// cursed_cards.ron in hand instead.
         fn with_cursed_card(id: &str, noise: i32) -> Self {
@@ -380,6 +509,7 @@ mod tests {
                 &mut self.noise,
                 &mut self.sentry,
                 &mut self.knowledge,
+                &mut self.effects,
                 &mut self.rng,
                 index,
             )
@@ -411,6 +541,244 @@ mod tests {
         assert_eq!(combat.noise.add(action.noise), 1);
         assert_eq!(combat.noise.noise(), 90);
         assert!(!combat.noise.is_at_cap());
+    }
+
+    // --- Might ---------------------------------------------------------
+
+    #[test]
+    fn might_adds_to_every_damage_and_penetrating_hit() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.effects.add_might(2);
+        combat.hand = vec![strike_with(vec![
+            Keyword::Damage(3),
+            Keyword::Damage(4),
+            Keyword::Penetrating(5),
+        ])];
+
+        let played = combat.play(0).unwrap();
+
+        // Each of the three hits gains 2: 5 + 6 + 7.
+        assert_eq!(played.damage_dealt, 18);
+        assert_eq!(combat.sentry.health(), combat.sentry.max_health() - 18);
+    }
+
+    #[test]
+    fn might_does_not_make_a_card_with_no_damage_deal_any() {
+        for id in ["vpn", "shield", "background_check"] {
+            let mut combat = Combat::with_card(id, 0);
+            combat.effects.add_might(5);
+            assert_eq!(combat.play(0).unwrap().damage_dealt, 0, "{id}");
+        }
+
+        let mut combat = Combat::with_card("strike", 0);
+        combat.effects.add_might(5);
+        combat.hand = vec![strike_with(vec![Keyword::Damage(0)])];
+        assert_eq!(
+            combat.play(0).unwrap().damage_dealt,
+            0,
+            "an authored zero stays zero"
+        );
+    }
+
+    #[test]
+    fn might_a_card_grants_applies_from_the_next_hit_on() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.hand = vec![
+            strike_with(vec![Keyword::Damage(6), Keyword::Might(2)]),
+            strike_with(vec![Keyword::Damage(6)]),
+        ];
+
+        let first = combat.play(0).unwrap();
+        assert_eq!(
+            first.damage_dealt, 6,
+            "the card that grants Might does not boost itself"
+        );
+        assert_eq!(first.might_gained, 2);
+        assert_eq!(combat.effects.might(), 2);
+
+        let second = combat.play(0).unwrap();
+        assert_eq!(second.damage_dealt, 8);
+        assert_eq!(second.might_gained, 0);
+    }
+
+    #[test]
+    fn might_stacks_when_it_is_granted_again() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.hand = vec![
+            strike_with(vec![Keyword::Might(2)]),
+            strike_with(vec![Keyword::Might(2)]),
+            strike_with(vec![Keyword::Damage(6)]),
+        ];
+
+        assert_eq!(combat.play(0).unwrap().might_gained, 2);
+        assert_eq!(combat.play(0).unwrap().might_gained, 2);
+        assert_eq!(combat.effects.might(), 4);
+        assert_eq!(combat.play(0).unwrap().damage_dealt, 10);
+    }
+
+    #[test]
+    fn root_access_grants_its_authored_might() {
+        let mut combat = Combat::with_card("root_access", 0);
+
+        let played = combat.play(0).unwrap();
+
+        assert_eq!(played.might_gained, 2);
+        assert_eq!(played.damage_dealt, 0);
+        assert_eq!(combat.effects.might(), 2);
+    }
+
+    // --- Strip Firewall --------------------------------------------------
+
+    #[test]
+    fn backdoor_strips_the_whole_firewall_and_frontdoor_half_of_it() {
+        let mut backdoor = Combat::with_card("backdoor", 0);
+        backdoor.sentry.raise_firewall(9);
+        let played = backdoor.play(0).unwrap();
+        assert_eq!(played.firewall_stripped, 9);
+        assert_eq!(backdoor.sentry.firewall(), 0);
+
+        // At 50 noise the card shows as Frontdoor, which takes half.
+        let mut frontdoor = Combat::with_card("backdoor", 50);
+        frontdoor.sentry.raise_firewall(9);
+        let played = frontdoor.play(0).unwrap();
+        assert_eq!(played.firewall_stripped, 5);
+        assert_eq!(frontdoor.sentry.firewall(), 4);
+    }
+
+    // --- Knowledge if corrupted -------------------------------------------
+
+    #[test]
+    fn spyware_grants_extra_knowledge_only_against_a_corrupted_target() {
+        let mut calm = Combat::with_card("spyware", 0);
+        assert_eq!(calm.play(0).unwrap().knowledge_change, 1);
+
+        let mut corrupted = Combat::with_card("spyware", 0);
+        corrupted.sentry.add_corruption(3);
+        let played = corrupted.play(0).unwrap();
+        assert_eq!(played.knowledge_change, 2);
+        assert_eq!(corrupted.knowledge.level(), 3);
+    }
+
+    #[test]
+    fn a_cards_own_corruption_does_not_satisfy_its_own_condition() {
+        let mut combat = Combat::with_card("strike", 0);
+        combat.knowledge = Knowledge::new(10);
+        combat.hand = vec![strike_with(vec![
+            Keyword::Corrupting(4),
+            Keyword::Knowledge(1),
+            Keyword::KnowledgeIfCorrupted(1),
+        ])];
+
+        let played = combat.play(0).unwrap();
+
+        assert_eq!(played.corruption_added, 4);
+        assert_eq!(
+            played.knowledge_change, 1,
+            "the target was clean when it was played"
+        );
+    }
+
+    /// The upgrade's description says "2, or 3 if the enemy is corrupted".
+    #[test]
+    fn upgraded_spyware_grants_what_its_description_says() {
+        let upgraded = || {
+            authored("spyware")
+                .upgraded()
+                .expect("spyware has an upgrade")
+        };
+
+        let mut calm = Combat::with_card("strike", 0);
+        calm.knowledge = Knowledge::new(10);
+        calm.hand = vec![upgraded()];
+        assert_eq!(calm.play(0).unwrap().knowledge_change, 2);
+
+        let mut corrupted = Combat::with_card("strike", 0);
+        corrupted.knowledge = Knowledge::new(10);
+        corrupted.sentry.add_corruption(3);
+        corrupted.hand = vec![upgraded()];
+        assert_eq!(corrupted.play(0).unwrap().knowledge_change, 3);
+    }
+
+    // --- Corrupting discount ---------------------------------------------
+
+    #[test]
+    fn the_corrupting_discount_only_applies_to_cards_that_apply_corruption() {
+        let mut effects = PlayerEffects::default();
+        effects.add_corrupting_discount(1);
+        let hand = vec![
+            authored("worm"),
+            strike_with(vec![Keyword::Damage(6)]),
+            strike_with(vec![Keyword::Corrupting(-5)]),
+        ];
+
+        assert_eq!(
+            current_cost(&hand, 0, 0, &effects),
+            0,
+            "Worm applies corruption: 1 - 1"
+        );
+        assert_eq!(
+            current_cost(&hand, 1, 0, &effects),
+            1,
+            "a plain attack is unchanged"
+        );
+        assert_eq!(
+            current_cost(&hand, 2, 0, &effects),
+            1,
+            "cleansing is not applying"
+        );
+    }
+
+    #[test]
+    fn the_corrupting_discount_never_takes_a_cost_below_zero() {
+        let mut effects = PlayerEffects::default();
+        effects.add_corrupting_discount(5);
+        let hand = vec![authored("worm"), authored("social_engineering")];
+
+        assert_eq!(current_cost(&hand, 0, 0, &effects), 0);
+        assert_eq!(
+            current_cost(&hand, 1, 0, &effects),
+            0,
+            "already free stays free"
+        );
+        assert_eq!(
+            current_cost(&hand, 9, 0, &effects),
+            0,
+            "no such card costs nothing"
+        );
+    }
+
+    /// What the card face shows and what a play takes must be the same
+    /// number, tax and discount included.
+    #[test]
+    fn current_cost_matches_what_play_card_charges() {
+        let short_circuit = parse_cards(include_str!("../../godot/data/cursed_cards.ron"))
+            .remove("short_circuit")
+            .expect("authored cursed card exists");
+
+        for discount in 0..=3 {
+            let mut combat = Combat::with_card("worm", 0);
+            combat.effects.add_corrupting_discount(discount);
+            combat.hand.push(short_circuit.clone());
+            combat.energy = 10;
+
+            let shown = current_cost(&combat.hand, 0, combat.noise.noise(), &combat.effects);
+            assert_eq!(shown, (2 - discount).max(0), "1 cost + 1 tax - {discount}");
+
+            combat.play(0).unwrap();
+            assert_eq!(combat.energy, 10 - shown, "discount {discount}");
+        }
+    }
+
+    #[test]
+    fn gaming_chair_grants_a_stacking_corrupting_discount() {
+        let mut combat = Combat::with_card("gaming_chair", 0);
+        combat.energy = 10;
+        let second = combat.hand[0].clone();
+        combat.hand.push(second);
+
+        assert_eq!(combat.play(0).unwrap().corrupting_discount_gained, 1);
+        assert_eq!(combat.play(0).unwrap().corrupting_discount_gained, 1);
+        assert_eq!(combat.effects.corrupting_discount(), 2);
     }
 
     /// Varied security card E4b scenario 4: Malware costs 1 energy, does

@@ -243,10 +243,11 @@ func _run() -> void:
 
 	var rare_offered := false
 	for card: Dictionary in reward.offered:
-		if str(card.get("rarity", "")) == "Rare":
+		var rarity := str(card.get("rarity", ""))
+		if rarity == "Rare" or rarity == "Legendary":
 			rare_offered = true
 	_check(reward.offered.size() == 3, "the elite reward offers a full hand of choices")
-	_check(rare_offered, "and at least one of them is a rare card")
+	_check(rare_offered, "and at least one of them is a Rare or better")
 	_check(
 		reward.credits_label.text.contains("+%d credits" % earned),
 		"the reward screen shows the payout (got '%s')" % reward.credits_label.text

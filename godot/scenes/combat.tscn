@@ -327,6 +327,19 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 14
 text = "knowledge 0 / 0"
 
+[node name="MightChip" type="PanelContainer" parent="Content/Column/Arena/PlayerColumn/PlayerChips"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_chip")
+
+[node name="MightLabel" type="Label" parent="Content/Column/Arena/PlayerColumn/PlayerChips/MightChip"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "might 0"
+
 [node name="EnemyColumn" type="VBoxContainer" parent="Content/Column/Arena"]
 layout_mode = 2
 size_flags_horizontal = 3

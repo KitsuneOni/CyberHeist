@@ -7,6 +7,7 @@ mod card_text;
 mod contract_map;
 mod contract_offer;
 mod deck;
+mod effects;
 mod encounter_reward;
 mod encounter_text;
 mod events;
@@ -32,6 +33,7 @@ use audio_mix::SoundCue;
 use card_data::CardData;
 use card_database::CardDatabase;
 use deck::Deck;
+use effects::PlayerEffects;
 use godot::builtin::{VarDictionary, dict};
 use godot::prelude::*;
 use knowledge::KnowledgeMeter;
@@ -211,6 +213,10 @@ impl PlayerState {
 /// run currently owns — not from `starter_deck.ron` directly, so a card
 /// gained mid-run (e.g. via `RunDeckNode::add_card`) is actually available at
 /// the next encounter instead of being silently discarded.
+///
+/// Also holds this combat's persistent player effects (see `effects.rs`).
+/// The node is rebuilt for every combat screen, so they never carry into the
+/// next encounter.
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct DrawPhase {
@@ -234,6 +240,7 @@ struct DrawPhase {
     noise_meter: Option<Gd<NoiseMeter>>,
     sentry_node: Option<Gd<SentryNode>>,
     knowledge_meter: Option<Gd<KnowledgeMeter>>,
+    effects: PlayerEffects,
     base: Base<Node>,
 }
 
@@ -251,6 +258,7 @@ impl INode for DrawPhase {
             noise_meter: None,
             sentry_node: None,
             knowledge_meter: None,
+            effects: PlayerEffects::default(),
             base,
         }
     }
@@ -324,9 +332,10 @@ impl DrawPhase {
     }
 
     /// Resolves one paid play against the shared noise meter, the sentry's
-    /// health, run-persistent knowledge, and this encounter's deck/hand for
-    /// card draw. The model owns validation, energy, discard, and every
-    /// signed/clamped effect as one transaction.
+    /// health, run-persistent knowledge, this combat's persistent effects,
+    /// and this encounter's deck/hand for card draw. The model owns
+    /// validation, energy, discard, and every signed/clamped effect as one
+    /// transaction.
     #[func]
     fn play_card(&mut self, index: i32) -> VarDictionary {
         let mut meter = self.noise_meter().clone();
@@ -347,6 +356,7 @@ impl DrawPhase {
             meter.bind_mut().level_mut(),
             sentry_node.bind_mut().sentry_mut(),
             knowledge_meter.bind_mut().level_mut(),
+            &mut self.effects,
             &mut rng,
             index,
         );
@@ -369,6 +379,9 @@ impl DrawPhase {
                     "corruption_boost_added" => played.corruption_boost_added,
                     "energy_tax_paid" => played.energy_tax_paid,
                     "exhausted" => played.exhausted,
+                    "firewall_stripped" => played.firewall_stripped,
+                    "might_gained" => played.might_gained,
+                    "corrupting_discount_gained" => played.corrupting_discount_gained,
                 }
             }
             Err(error) => {
@@ -412,21 +425,20 @@ impl DrawPhase {
         };
 
         let noise = self.current_noise();
-        let mut detail = card_detail_dictionary(&card_text::describe(card, noise));
+        let mut detail = card_detail_dictionary(&card_text::describe_with_might(
+            card,
+            noise,
+            self.effects.might(),
+        ));
         detail.set("ok", true);
         detail
     }
 
     #[func]
     fn hand_costs(&self) -> PackedInt32Array {
-        let nosie = self.current_noise();
-        self.hand
-            .iter()
-            .enumerate()
-            .map(|(index, card)| {
-                let tax = card_play::hand_energy_tax(&self.hand, index, nosie);
-                card.cost as i32 + tax
-            })
+        let noise = self.current_noise();
+        (0..self.hand.len())
+            .map(|index| card_play::current_cost(&self.hand, index, noise, &self.effects))
             .collect()
     }
 
@@ -462,6 +474,7 @@ impl DrawPhase {
                 meter.bind_mut().level_mut(),
                 sentry_node.bind_mut().sentry_mut(),
                 knowledge_meter.bind_mut().level_mut(),
+                &mut self.effects,
                 &mut rng,
             );
         }
@@ -516,18 +529,20 @@ impl DrawPhase {
         else {
             return;
         };
-        let (extra_energy, extra_draw) = {
+        let (extra_energy, extra_draw, starting_might) = {
             let progression_node = progression_node.bind();
             let progression = progression_node.progression();
             (
                 progression.bonus_max_energy(),
                 progression.bonus_cards_drawn(),
+                progression.starting_might(),
             )
         };
 
         self.max_energy += extra_energy;
         self.energy = self.max_energy;
         self.hand_size += extra_draw;
+        self.effects.add_might(starting_might);
         self.apply_starting_corrupting_boost();
     }
 
@@ -560,6 +575,12 @@ impl DrawPhase {
             .iter()
             .map(|id| GString::from(id.as_str()))
             .collect()
+    }
+
+    /// Stacks of Might for this combat.
+    #[func]
+    fn might(&self) -> i32 {
+        self.effects.might()
     }
 }
 
@@ -617,9 +638,7 @@ impl DrawPhase {
             return;
         }
 
-        let card_db = self
-            .base()
-            .get_node_as::<CardDatabase>("/root/CardDatabaseGlobal");
+        let card_db = self.base().get_node_as::<CardDatabase>(CARD_DATABASE_PATH);
         let Some(malware) = card_db.bind().get(sentry::MALWARE_CARD_ID).cloned() else {
             godot_error!(
                 "Inject Malware has no card to plant: '{}' is missing from cursed_cards.ron",

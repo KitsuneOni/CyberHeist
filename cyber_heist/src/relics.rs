@@ -11,6 +11,7 @@ const EXTRA_ENERGY: i32 = 1;
 const EXTRA_CARDS_DRAWN: i32 = 1;
 const STARTING_CORRUPTING_BOOST: i32 = 1;
 const CARDS_UPGRADED_AT_RUN_START: usize = 5;
+const STARTING_MIGHT: i32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Relic {
@@ -64,13 +65,16 @@ impl Relic {
             Relic::DeckUpgrade => format!(
                 "When a run begins, {CARDS_UPGRADED_AT_RUN_START} random cards in your deck are upgraded."
             ),
-            Relic::Might => "Gain 1 Might. Not available yet.".to_string(),
+            Relic::Might => format!("Gain {STARTING_MIGHT} Might at the start of each combat."),
         }
     }
 
-    /// Whether the relic can be bought yet.
+    /// Whether the relic can be bought yet. Every relic is buyable now, so
+    /// this always returns true. It stays, with `RelicError::NotAvailable`
+    /// and the "coming soon" row in the dark web shop, so the next
+    /// placeholder relic only has to return false here.
     pub fn is_available(self) -> bool {
-        !matches!(self, Relic::Might)
+        true
     }
 }
 
@@ -194,6 +198,14 @@ impl Progression {
         }
     }
 
+    pub fn starting_might(&self) -> i32 {
+        if self.owns(Relic::Might) {
+            STARTING_MIGHT
+        } else {
+            0
+        }
+    }
+
     pub fn cards_upgraded_at_run_start(&self) -> usize {
         if self.owns(Relic::DeckUpgrade) {
             CARDS_UPGRADED_AT_RUN_START
@@ -252,7 +264,6 @@ mod tests {
             progression.buy(Relic::ExtraDraw),
             Err(RelicError::AlreadyOwned)
         );
-        assert_eq!(progression.buy(Relic::Might), Err(RelicError::NotAvailable));
         assert_eq!(
             with_points(0).buy(Relic::DeckUpgrade),
             Err(RelicError::NotEnoughPoints)
@@ -327,5 +338,40 @@ mod tests {
             assert_eq!(Relic::from_id(relic.id()), Some(relic));
         }
         assert_eq!(Relic::from_id("nope"), None);
+    }
+
+    #[test]
+    fn might_can_be_bought_now_that_it_has_an_effect() {
+        let mut progression = Progression::default();
+        progression.award_run_completion(0);
+
+        assert!(Relic::Might.is_available());
+        assert!(progression.can_buy(Relic::Might));
+        assert_eq!(progression.buy(Relic::Might), Ok(()));
+        assert_eq!(progression.points(), 0);
+        assert!(progression.owns(Relic::Might));
+        assert_eq!(
+            progression.buy(Relic::Might),
+            Err(RelicError::AlreadyOwned),
+            "it can only be bought once"
+        );
+    }
+
+    #[test]
+    fn starting_might_is_granted_only_with_the_relic() {
+        let mut progression = Progression::default();
+        assert_eq!(progression.starting_might(), 0);
+
+        progression.award_run_completion(0);
+        progression.award_run_completion(0);
+        progression.buy(Relic::ExtraEnergy).unwrap();
+        assert_eq!(
+            progression.starting_might(),
+            0,
+            "another relic does not grant Might"
+        );
+
+        progression.buy(Relic::Might).unwrap();
+        assert_eq!(progression.starting_might(), STARTING_MIGHT);
     }
 }
