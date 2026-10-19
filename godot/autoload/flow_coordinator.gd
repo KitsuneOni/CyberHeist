@@ -57,6 +57,10 @@ var _save_load_error := ""
 # Points the last finished run earned, for the victory screen to show.
 var _run_points_earned := 0
 
+# Cards the last won contract unlocked, [{id, name, rarity}], for the victory
+# screen to list. Empty until a contract is won.
+var _run_cards_unlocked: Array = []
+
 
 # Where the headless tests live. A test drives the game from its own
 # SceneTree script in here.
@@ -70,10 +74,12 @@ func _ready() -> void:
 	# so a custom MainLoop the game itself might use one day keeps saving.
 	if _is_running_a_test():
 		return
-	use_save_file(DEFAULT_SAVE_PATH)
+	# Permanent progress first: reading the save checks a saved card reward
+	# against the cards that progress has unlocked.
 	var progression_result: Dictionary = _progression.use_file(PROGRESSION_FILE_PATH)
 	if not progression_result.get("ok", false):
 		push_warning("Permanent progress could not be read, so it starts empty: %s" % progression_result.get("error", "unknown error"))
+	use_save_file(DEFAULT_SAVE_PATH)
 
 
 func _is_running_a_test() -> bool:
@@ -104,9 +110,14 @@ func bind_screen_host(host: Node) -> void:
 # Leaves the main menu for the contract map. Each launch rolls a fresh contract
 # in RunStateNode, so the run behind the menu is already a new one. It replaces
 # any saved run straight away; the credit balance read from the save stays.
+#
+# This starts a new save, so the relics, points and unlocked cards go with the
+# old one, and the deck starts again from the starter cards. Only carrying on
+# a save (Continue, or the next contract after a win) keeps them.
 func start_new_contract() -> Dictionary:
 	_save_game.discard_saved_run()
 	_progression.reset()
+	_run_deck.reset_to_starter()
 	var result := _show_current_run_screen()
 	if result.get("ok", false):
 		save_progress()
@@ -492,6 +503,7 @@ func complete_active_encounter() -> Dictionary:
 	change_credits(_pending_reward["credits"])
 	_pay_contract_reward()
 	_award_run_points(completion)
+	_unlock_cards_for_win(completion)
 	if next_scene == HUB_SCENE_PATH:
 		# Nothing is waiting to be chosen after an event or a shop, so a save
 		# made at the hub does not resume on a card reward.
@@ -503,7 +515,7 @@ func complete_active_encounter() -> Dictionary:
 
 # The screen to show once the encounter described by `completion` (from
 # active_encounter_completion) completes. Winning the contract ends the run, so
-# there is no card reward for a deck about to be reset.
+# there is no card reward: the victory screen comes straight after the boss.
 func _scene_after_completing(completion: Dictionary) -> String:
 	if completion.get("wins_contract", false):
 		return VICTORY_SCENE_PATH
@@ -545,7 +557,8 @@ func card_reward_offer_size() -> int:
 
 # Cards on offer after clearing an encounter. Each is a dictionary of
 # {id, name, type, rarity, cost_text, noise_text, description}.
-# An elite or boss offer always includes at least one Rare.
+# An elite or boss offer always includes the best card the unlocked pool has,
+# a Rare once any are unlocked.
 #
 # The offer for a pending reward is rolled once and kept with it, so asking
 # again, or continuing a run saved on the reward screen, offers the same cards
@@ -716,9 +729,12 @@ func run_snapshot() -> Dictionary:
 	return _run_state.snapshot()
 
 
-# Throws the current run away and starts a new one at the hub: a fresh
+# Throws the current run away and starts the next one at the hub: a fresh
 # contract and offers, no zone progress or stats, noise at 0, knowledge back to
-# its starting level, the starter deck and no contract upgrades. Returns
+# its starting level and no contract upgrades. The deck is kept: the cards
+# gained and bought, and the upgrades made to them, carry on into the next
+# contract, which is what makes a save a campaign. Only a new save (New
+# contract on the main menu) goes back to the starter deck. Returns
 # {ok: true}, or {ok: false, error} with nothing changed.
 #
 # Allowed from the hub, the caught screen and the victory screen, where a run
@@ -738,9 +754,9 @@ func start_new_run() -> Dictionary:
 
 	# The reward screen sits at the hub phase, so a new run can start from it.
 	# Its payout belongs to the old run and must not reach the next one.
-	_reset_run_extras()
+	_reset_run_extras(true)
 	_replace_screen(prepared["screen"])
-	# The new run replaces the old one's save.
+	# The new run replaces the old one's save, with the deck it carries.
 	save_progress()
 	return transition
 
@@ -783,14 +799,18 @@ func _replace_screen(screen: Node) -> void:
 
 
 # Everything a run keeps outside RunStateNode, put back to how a new run
-# starts: the deck, the shared meters, the coordinator's screen results and
-# the card upgrades. Credits carry over, as they always do.
-func _reset_run_extras() -> void:
-	_run_deck.reset_to_starter()
+# starts: the shared meters, the coordinator's screen results and the card
+# upgrades. The deck goes back to the starter cards unless `keep_deck` is set,
+# which is how the next contract after a win carries it on. Credits carry
+# over, as they always do.
+func _reset_run_extras(keep_deck := false) -> void:
+	if not keep_deck:
+		_run_deck.reset_to_starter()
 	_reset_run_meters()
 	_pending_reward = {}
 	_run_points_earned = 0
 	_caught_penalty = {}
+	_run_cards_unlocked = []
 	var player_state: Node = get_node("/root/PlayerStateGlobal")
 	player_state.clear_upgrades()
 
@@ -856,7 +876,10 @@ func _failure(error: String) -> Dictionary:
 	}
 
 
-
+# Winning the contract finishes the run and earns permanent progression points,
+# worked out from the credits in hand once the contract payout has landed. It
+# runs only after the transition has succeeded, and that transition cannot
+# repeat, so a run pays out once.
 func _award_run_points(completion: Dictionary) -> void:
 	if not completion.get("wins_contract", false):
 		return
@@ -864,21 +887,44 @@ func _award_run_points(completion: Dictionary) -> void:
 	_run_points_earned = _progression.award_run_completion(player_state.money())
 
 
+# Winning the contract unlocks new cards for the reward pool and the shops.
+# Runs only after the transition has succeeded, and that transition cannot
+# repeat, so a win unlocks once.
+func _unlock_cards_for_win(completion: Dictionary) -> void:
+	if not completion.get("wins_contract", false):
+		return
+	_run_cards_unlocked = _progression.unlock_cards_for_win()
+
+
+# Cards the last won contract unlocked, for the end screen. Empty when nothing
+# was left to unlock, and after Continue reopens a saved victory screen.
+func run_cards_unlocked() -> Array:
+	return _run_cards_unlocked.duplicate()
+
+
+# Applies the relics that change the deck when a contract begins.
 func _apply_run_start_relics() -> void:
 	var count: int = _progression.cards_to_upgrade_at_run_start()
 	if count > 0:
 		_run_deck.upgrade_random_cards(count)
 
 
+# Points the last finished run earned. 0 until a run is won, and after
+# Continue reopens a saved victory screen.
 func run_points_earned() -> int:
 	return _run_points_earned
 
 
+# Points banked and not yet spent on relics.
 func progression_points() -> int:
 	return _progression.points()
 
+
+# Every relic with whether it is owned, available and affordable.
 func relic_listing() -> Array:
 	return _progression.relic_listing()
 
+
+# Buys a relic with a point. {ok: true, id, points} or {ok: false, error}.
 func buy_relic(relic_id: String) -> Dictionary:
 	return _progression.buy_relic(relic_id)

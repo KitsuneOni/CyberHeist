@@ -24,6 +24,7 @@ use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
 use crate::card_text;
 use crate::noise_meter::NoiseMeter;
+use crate::progression_node::{PROGRESSION_PATH, ProgressionNode};
 use crate::run_deck_node::RunDeckNode;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode};
 use crate::shop::{self, SCRUB_LOGS_NOISE_REDUCTION, SCRUB_LOGS_PRICE};
@@ -56,11 +57,18 @@ impl INode for ShopNode {
             return;
         };
 
-        let pool: Vec<(String, Rarity)> = db
+        let all: Vec<(String, Rarity)> = db
             .bind()
             .all()
             .map(|card| (card.id.clone(), card.rarity))
             .collect();
+        let pool = match self
+            .base()
+            .try_get_node_as::<ProgressionNode>(PROGRESSION_PATH)
+        {
+            Some(node) => node.bind().progression().open_pool(all),
+            None => all,
+        };
         if let Err(error) = run_state.bind_mut().open_shop_visit(&pool) {
             godot_error!("ShopNode: {error}");
         }
