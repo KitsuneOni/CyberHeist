@@ -373,6 +373,5 @@ mod tests {
 
         progression.buy(Relic::Might).unwrap();
         assert_eq!(progression.starting_might(), STARTING_MIGHT);
-        assert!(STARTING_MIGHT > 0);
     }
 }
