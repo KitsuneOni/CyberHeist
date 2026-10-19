@@ -212,7 +212,7 @@ func _capture_state() -> Dictionary:
 		for card: Dictionary in screen.offered:
 			offered_ids.append(card.get("id", ""))
 		state["reward_offer"] = offered_ids
-		state["reward_status"] = screen.status_label.text
+		state["reward_status"] = screen.credits_label.text
 	return state
 
 
@@ -504,6 +504,7 @@ func _play_two_encounters() -> bool:
 		if _screen_name() == "CardReward":
 			_check(_saved_phase() == "hub", "a fight's completion is saved before its card is chosen")
 			_screen()._on_card_chosen(0)
+			_screen()._on_continue_pressed()
 			await _settle()
 
 		var saved_run: Dictionary = _saved().get("run", {})
@@ -741,6 +742,7 @@ func _play_to_the_final_boss() -> bool:
 		await _settle()
 		if _screen_name() == "CardReward":
 			_screen()._on_card_chosen(0)
+			_screen()._on_continue_pressed()
 			await _settle()
 	_check(false, "the final boss is reached within the contract's route")
 	return false

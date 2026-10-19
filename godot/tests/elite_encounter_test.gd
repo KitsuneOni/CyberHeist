@@ -248,12 +248,12 @@ func _run() -> void:
 	_check(reward.offered.size() == 3, "the elite reward offers a full hand of choices")
 	_check(rare_offered, "and at least one of them is a rare card")
 	_check(
-		reward.status_label.text.contains("+%d credits" % earned),
-		"the reward screen shows the payout (got '%s')" % reward.status_label.text
+		reward.credits_label.text.contains("+%d credits" % earned),
+		"the reward screen shows the payout (got '%s')" % reward.credits_label.text
 	)
 	_check(_noise_meter.get_resistance_percent() == 0, "elite resistance does not outlive the fight")
 
-	reward._on_skip_pressed()
+	reward._on_continue_pressed()
 	_check(_screen().name == "ContractHub", "leaving the reward returns to the hub")
 	_check(_flow.pending_reward_credits() == 0, "the payout is not offered twice")
 

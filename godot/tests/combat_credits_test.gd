@@ -260,8 +260,8 @@ func _run() -> void:
 	_check(reward != null and reward.name == "CardReward", "winning offers a card reward")
 	if reward != null and reward.name == "CardReward":
 		_check(
-			reward.status_label.text.contains("+%d credits" % STANDARD_COMBAT_CREDITS),
-			"the reward screen shows the payout (got '%s')" % reward.status_label.text
+			reward.credits_label.text.contains("+%d credits" % STANDARD_COMBAT_CREDITS),
+			"the reward screen shows the payout (got '%s')" % reward.credits_label.text
 		)
 
 	await _check_fixture_retries_a_failed_first_encounter()

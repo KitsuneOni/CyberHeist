@@ -64,16 +64,43 @@ alignment = 1
 [node name="RewardTitle" type="Label" parent="Page/RewardPanel/Margin/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.35, 1, 0.82, 1)
-theme_override_font_sizes/font_size = 30
-text = "Encounter cleared"
+theme_override_font_sizes/font_size = 34
+text = "SYSTEM BREACHED"
 horizontal_alignment = 1
 
 [node name="RewardSubtitle" type="Label" parent="Page/RewardPanel/Margin/Content"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.75, 0.82, 0.86, 1)
 theme_override_font_sizes/font_size = 16
-text = "Take one card for the rest of this run."
+text = "The security system is down. Here is what you took."
 horizontal_alignment = 1
+
+[node name="CreditsLabel" type="Label" parent="Page/RewardPanel/Margin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.82, 0.4, 1)
+theme_override_font_sizes/font_size = 30
+text = "+0 credits"
+horizontal_alignment = 1
+
+[node name="BalanceLabel" type="Label" parent="Page/RewardPanel/Margin/Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.75, 0.82, 0.86, 1)
+theme_override_font_sizes/font_size = 16
+text = "Balance: 0 credits"
+horizontal_alignment = 1
+
+[node name="Divider" type="HSeparator" parent="Page/RewardPanel/Margin/Content"]
+layout_mode = 2
+
+[node name="OfferHeading" type="Label" parent="Page/RewardPanel/Margin/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.75, 0.82, 0.86, 1)
+theme_override_font_sizes/font_size = 16
+text = "Pick a card to add to your deck for the rest of this run, or continue without one."
+horizontal_alignment = 1
+autowrap_mode = 3
 
 [node name="OfferContainer" type="VBoxContainer" parent="Page/RewardPanel/Margin/Content"]
 layout_mode = 2
@@ -87,16 +114,18 @@ theme_override_font_sizes/font_size = 15
 text = "Deck: 0 cards"
 horizontal_alignment = 1
 
-[node name="SkipButton" type="Button" parent="Page/RewardPanel/Margin/Content"]
-custom_minimum_size = Vector2(260, 42)
+[node name="ContinueButton" type="Button" parent="Page/RewardPanel/Margin/Content"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 44)
 layout_mode = 2
 size_flags_horizontal = 4
-text = "Skip"
+text = "Continue without a card"
 
 [node name="StatusLabel" type="Label" parent="Page/RewardPanel/Margin/Content"]
 custom_minimum_size = Vector2(0, 24)
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 0.72, 0.36, 1)
 horizontal_alignment = 1
+autowrap_mode = 3
 
-[connection signal="pressed" from="Page/RewardPanel/Margin/Content/SkipButton" to="." method="_on_skip_pressed"]
+[connection signal="pressed" from="Page/RewardPanel/Margin/Content/ContinueButton" to="." method="_on_continue_pressed"]
