@@ -219,6 +219,11 @@ func _run() -> void:
 	_check(_flow.run_snapshot().phase == "encounter_active", "the elite fight is still on")
 
 	# --- scenario 2: beating it pays better ---------------------------------
+	# Rares start locked, so the reward could not hold one in a fresh test.
+	# Every locked card is Rare or better, so unlocking some means the elite's
+	# guaranteed card is a Rare or a Legendary.
+	_flow._progression.unlock_cards_for_win()
+
 	var credits_before: int = _player.money()
 	var stats_before := int(_flow.run_summary().get("credits_earned", -1))
 	sentry.take_damage(sentry.health())
@@ -243,10 +248,11 @@ func _run() -> void:
 
 	var rare_offered := false
 	for card: Dictionary in reward.offered:
-		if str(card.get("rarity", "")) == "Rare":
+		var rarity := str(card.get("rarity", ""))
+		if rarity == "Rare" or rarity == "Legendary":
 			rare_offered = true
 	_check(reward.offered.size() == 3, "the elite reward offers a full hand of choices")
-	_check(rare_offered, "and at least one of them is a rare card")
+	_check(rare_offered, "and at least one of them is a Rare or better")
 	_check(
 		reward.status_label.text.contains("+%d credits" % earned),
 		"the reward screen shows the payout (got '%s')" % reward.status_label.text
