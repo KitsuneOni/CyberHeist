@@ -636,6 +636,26 @@ files so it never overwrites a developer's own.
 The sounds are synthesised by `tools/generate_audio.py` (Python and numpy),
 so there is no third-party audio to license; see `godot/assets/CREDITS.md`.
 
+## Keyboard shortcuts in combat (story #118)
+
+During a fight, the number keys **1** to **9** (top row or keypad) play the
+card in that place in the hand, counting from the left. **E** ends the turn.
+Each card shows its number in the bottom-right corner, and End Turn reads
+`END TURN [E]`. The hand is rebuilt after every play, so the numbers always
+run from 1.
+
+The combat screen handles them in `_unhandled_key_input`. A number selects
+that card and presses Play (`play_card_at`), and E presses End Turn. The
+shortcuts share every rule and animation with the mouse, so an unaffordable
+card is refused with the usual message and a number past the end of the hand
+says so. Top-row digits are matched by physical key, so they work on layouts
+that need Shift for digits. Held keys don't repeat. Keys are ignored while the
+deck viewer is open, and the pause menu stops them by pausing the tree.
+
+```sh
+godot --headless --path godot -s res://tests/keyboard_shortcuts_test.gd
+```
+
 ## Saving and continuing (story #10)
 
 The game saves itself; there is no save button. One JSON file,
