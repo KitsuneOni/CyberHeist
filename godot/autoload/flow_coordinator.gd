@@ -11,6 +11,7 @@ const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
 const VICTORY_SCENE_PATH := "res://scenes/victory_screen.tscn"
 const DARK_WEB_SHOP_SCENE_PATH := "res://scenes/dark_web_shop.tscn"
+const DESKTOP_SCENE_PATH := "res://scenes/computer_desktop.tscn"
 const PROGRESSION_FILE_PATH := "user://cyberheist_progression.ron"
 const SHOP_REMOVE_SCENE_PATH := "res://scenes/shop_remove.tscn"
 const ENCOUNTER_SCENES := {
@@ -92,7 +93,7 @@ func bind_screen_host(host: Node) -> void:
 	_screen_host = host
 
 	# Every launch opens on the main menu. The run is already rolled behind it,
-	# so New contract only has to show the map.
+	# so New contract only has to show the desktop.
 	var prepared := _prepare_screen(MAIN_MENU_SCENE_PATH)
 	if not prepared.get("ok", false):
 		push_error(prepared.get("error", "Could not load the main menu."))
@@ -101,8 +102,9 @@ func bind_screen_host(host: Node) -> void:
 	_replace_screen(prepared["screen"])
 
 
-# Leaves the main menu for the contract map. Each launch rolls a fresh contract
-# in RunStateNode, so the run behind the menu is already a new one. It replaces
+# Leaves the main menu for the computer desktop, where the contract offers
+# wait. Each launch rolls a fresh contract in RunStateNode, so the run behind
+# the menu is already a new one. It replaces
 # any saved run straight away; the credit balance read from the save stays.
 func start_new_contract() -> Dictionary:
 	_save_game.discard_saved_run()
@@ -265,21 +267,54 @@ func save_and_quit_to_menu() -> Dictionary:
 	return {"ok": true, "saved_now": saved_now}
 
 
-func open_dark_web_shop() -> Dictionary:
-	if run_snapshot().get("phase", "") != "hub" or not _pending_reward.is_empty():
-		return _failure("The dark web shop can only be opened between encounters.")
-	return _show_screen(DARK_WEB_SHOP_SCENE_PATH)
+# Whether the run is between contracts: at the hub with no contract accepted
+# yet, which is a new run from the main menu or after a won contract. That is
+# when the computer desktop is shown, and the only time its apps can be opened
+# (story #25).
+func is_between_contracts() -> bool:
+	return (
+		run_snapshot().get("phase", "") == "hub"
+		and _pending_reward.is_empty()
+		and not is_in_dark_web_visit()
+		and needs_contract_choice()
+	)
 
-func close_dark_web_shop() -> Dictionary:
+
+# Opens the contract offers from the computer desktop. The hub shows its offer
+# picker while no contract is accepted, so this is the only way into a run.
+func open_contracts() -> Dictionary:
+	if not is_between_contracts():
+		return _failure("Contracts are opened from the desktop between contracts.")
 	return _show_screen(HUB_SCENE_PATH)
 
+
+# Goes back to the computer desktop from the offer picker or the dark web
+# shop. Refused once a contract is accepted, since the run is then committed
+# to the map.
+func return_to_desktop() -> Dictionary:
+	if not is_between_contracts():
+		return _failure("The desktop is only available between contracts.")
+	return _show_screen(DESKTOP_SCENE_PATH)
+
+
+# Opens the dark web shop from the computer desktop. Permanent upgrades are
+# bought between contracts, never partway through one.
+func open_dark_web_shop() -> Dictionary:
+	if not is_between_contracts():
+		return _failure("The dark web shop can only be opened between contracts.")
+	return _show_screen(DARK_WEB_SHOP_SCENE_PATH)
+
+
+func close_dark_web_shop() -> Dictionary:
+	return return_to_desktop()
+
 # Enters the normal shop from the dark web screen. Costs every point held, so
-# it needs at least one, and is refused outside the hub phase or while a card
-# reward waits. The shop screen opens its stock as it appears, so the run is
+# it needs at least one, and is refused outside the desktop's time between
+# contracts. The shop screen opens its stock as it appears, so the run is
 # marked first. Saved on entry, so quitting inside the shop resumes it.
 func enter_shop_from_dark_web() -> Dictionary:
-	if run_snapshot().get("phase", "") != "hub" or not _pending_reward.is_empty():
-		return _failure("The shop can only be entered between encounters.")
+	if not is_between_contracts():
+		return _failure("The shop can only be entered between contracts.")
 
 	var prepared := _prepare_screen(SHOP_SCENE_PATH)
 	if not prepared.get("ok", false):
@@ -300,8 +335,9 @@ func enter_shop_from_dark_web() -> Dictionary:
 	save_progress()
 	return {"ok": true}
 
+# Leaves a shop entered from the dark web for the desktop it was reached from.
 func leave_shop_to_contracts() -> Dictionary:
-	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	var prepared := _prepare_screen(DESKTOP_SCENE_PATH)
 	if not prepared.get("ok", false):
 		return prepared
 
@@ -331,8 +367,9 @@ func _is_showing(path: String) -> bool:
 	return _screen_host.get_child(0).scene_file_path == path
 
 
-# Shows whichever screen the run's current phase belongs on: the map, the
-# active encounter, the caught screen or the victory screen.
+# Shows whichever screen the run's current phase belongs on: the desktop
+# between contracts, the map, the active encounter, the caught screen or the
+# victory screen.
 func _show_current_run_screen() -> Dictionary:
 	var destination := _destination_for_snapshot(run_snapshot(), not _pending_reward.is_empty())
 	if not destination.get("ok", false):
@@ -716,7 +753,8 @@ func run_snapshot() -> Dictionary:
 	return _run_state.snapshot()
 
 
-# Throws the current run away and starts a new one at the hub: a fresh
+# Throws the current run away and starts a new one at the hub, shown on the
+# computer desktop so the player can shop before picking the next job: a fresh
 # contract and offers, no zone progress or stats, noise at 0, knowledge back to
 # its starting level, the starter deck and no contract upgrades. Returns
 # {ok: true}, or {ok: false, error} with nothing changed.
@@ -727,7 +765,7 @@ func run_snapshot() -> Dictionary:
 # balance, not the run's, so they carry over (a contract reward included);
 # upgrades are earned "for this contract", so they do not.
 func start_new_run() -> Dictionary:
-	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	var prepared := _prepare_screen(DESKTOP_SCENE_PATH)
 	if not prepared.get("ok", false):
 		return prepared
 
@@ -830,6 +868,10 @@ func _destination_for_snapshot(snapshot: Dictionary, card_reward_waiting: bool) 
 			# before choosing one resumes on it.
 			if card_reward_waiting:
 				return {"ok": true, "path": CARD_REWARD_SCENE_PATH}
+			# No contract accepted yet: the run is between contracts, which
+			# is spent on the computer desktop (story #25).
+			if snapshot.get("needs_contract_choice", false):
+				return {"ok": true, "path": DESKTOP_SCENE_PATH}
 			return {"ok": true, "path": HUB_SCENE_PATH}
 		"encounter_active":
 			var active_encounter = snapshot.get("active_encounter")

@@ -12,6 +12,7 @@ const WATCHDOG_SECONDS := 60.0
 const SAVE_PATH := "user://pause_menu_test.json"
 const MAIN_MENU := "res://scenes/main_menu.tscn"
 const HUB := "res://scenes/contract_hub.tscn"
+const DESKTOP := "res://scenes/computer_desktop.tscn"
 const SETTINGS := "res://scenes/settings_menu.tscn"
 
 var _flow: Node
@@ -142,8 +143,18 @@ func _run() -> void:
 	_check(not _pause.is_open() and not paused, "Escape on the main menu does not pause")
 
 	_flow.start_new_contract()
-	if _flow.needs_contract_choice():
-		_flow.accept_contract_offer(0)
+	await process_frame
+	_check(_showing(DESKTOP), "a new contract opens the computer desktop")
+	print("Pause and resume on the desktop")
+	_check_pauses("the desktop")
+	_check(not _pause.note_label.visible, "no restart warning on the desktop, a safe point")
+	_pause.resume_button.pressed.emit()
+	_check(_showing(DESKTOP), "resuming leaves the desktop on screen")
+	_flow.open_contracts()
+	await process_frame
+	var hub := _screen()
+	if hub != null and hub.has_method("is_choosing_contract") and hub.is_choosing_contract():
+		hub.offer_picker.accept_button.pressed.emit()
 	await process_frame
 	_check(_showing(HUB), "a new contract opens the map")
 
