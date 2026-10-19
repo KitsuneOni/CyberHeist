@@ -155,7 +155,9 @@ func _run() -> void:
 	_check_listing_matches_deck()
 
 	print("On the map")
-	_check(_flow.start_new_contract().get("ok", false), "a new contract opens the map")
+	_check(_flow.start_new_contract().get("ok", false), "a new contract opens the desktop")
+	await process_frame
+	_check(_flow.open_contracts().get("ok", false), "contracts.exe opens the hub")
 	await process_frame
 	await process_frame
 	var hub := _screen()

@@ -103,7 +103,22 @@ func _accept_a_multi_zone_offer() -> Dictionary:
 
 		_flow.start_new_run()
 		await _settle()
+		await _open_contracts_from_desktop()
 	return {}
+
+
+# A run between contracts opens on the computer desktop (story #25). Presses
+# its contracts.exe, as a player would, to reach the hub's offer picker.
+# True once the hub is on screen.
+func _open_contracts_from_desktop() -> bool:
+	var desktop := _screen()
+	if desktop == null or desktop.name != "ComputerDesktop":
+		push_error("expected the computer desktop, got %s" % desktop)
+		return false
+	desktop.get_node("%ContractsApp").pressed.emit()
+	await _settle()
+	var hub := _screen()
+	return hub != null and hub.name == "ContractHub"
 
 
 # Cycles the hub's offer picker to the offer with `index` and presses Accept,
@@ -357,6 +372,7 @@ func _run() -> void:
 	await _settle()
 	_flow.start_new_contract()
 	await _settle()
+	_check(await _open_contracts_from_desktop(), "a new contract opens on the desktop")
 
 	# --- set up: choose a contract with more than one zone -----------------
 	_check_offer_picker(_screen(), "a new contract")
@@ -517,8 +533,11 @@ func _run() -> void:
 	# --- #89 scenario 2: take another contract from the victory screen -----
 	victory.new_contract_button.pressed.emit()
 	await _settle()
+	_check(
+		await _open_contracts_from_desktop(),
+		"Take another contract shows the desktop, whose contracts.exe opens the hub"
+	)
 	var hub := _screen()
-	_check(hub != null and hub.name == "ContractHub", "Take another contract shows the hub")
 	_check(_phase() == "hub", "the new run starts at the hub")
 	_check_offer_picker(hub, "the hub after a won contract")
 	_check(
