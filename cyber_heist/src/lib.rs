@@ -21,6 +21,8 @@ mod run_deck_node;
 mod run_state;
 mod run_state_node;
 mod run_stats;
+mod safehouse;
+mod safehouse_node;
 mod save_game;
 mod save_game_node;
 mod sentry;

@@ -76,7 +76,7 @@ const MAX_SHOPS_IN_A_ROW := 4
 # Credits to walk into the shop with, enough for any card on sale.
 const SHOP_CREDITS := 200
 # The save layout this build writes (SAVE_VERSION in save_game.rs).
-const SAVE_VERSION := 3
+const SAVE_VERSION := 4
 # Where a save that will not load is copied before it can be replaced.
 const UNREADABLE_COPY_PATH := SAVE_PATH + ".unreadable"
 # How long the resumed victory screen may take to count its balance up.
@@ -497,7 +497,7 @@ func _play_two_encounters() -> bool:
 	_player.add_upgrade("Lucky Charm")
 	for step in 2:
 		var hub := _screen()
-		var chosen := _first_selectable(["combat", "elite", "event", "shop"])
+		var chosen := _first_selectable(["combat", "elite", "event", "shop", "safehouse"])
 		if hub == null or hub.name != "ContractHub" or chosen.is_empty():
 			_check(false, "encounter %d can be chosen on the map" % (step + 1))
 			return false
@@ -742,7 +742,7 @@ func _check_victory_resume() -> void:
 func _play_to_the_final_boss() -> bool:
 	var route_length := int(_flow.contract_progress().get("total", 0))
 	for _step in route_length:
-		var next := _first_selectable(["boss", "combat", "elite", "event", "shop"])
+		var next := _first_selectable(["boss", "combat", "elite", "event", "shop", "safehouse"])
 		if next.is_empty():
 			break
 		_flow.select_encounter(int(next.id))

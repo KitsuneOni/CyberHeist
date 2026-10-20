@@ -37,7 +37,7 @@ const TOPICS: Array[Dictionary] = [
 	},
 	{
 		"heading": "THE MAP",
-		"body": "A contract is a route of nodes across one or more zones. Pick a highlighted node to breach it; the branches you don't take are locked. [C] combat, [!] elite, [E] event, [$] shop, [#] boss.",
+		"body": "A contract is a route of nodes across one or more zones. Pick a highlighted node to breach it; the branches you don't take are locked. [C] combat, [!] elite, [E] event, [$] shop, [H] safehouse, [#] boss.",
 	},
 	{
 		"heading": "WINNING",

@@ -50,6 +50,11 @@ pub fn encounter_type_text(encounter_type: EncounterType) -> EncounterTypeText {
             name: "Shop",
             description: "Spend credits on new hardware between jobs.",
         },
+        EncounterType::Safehouse => EncounterTypeText {
+            marker: "[H]",
+            name: "Safehouse",
+            description: "Lie low to cut your noise, or upgrade a card. One or the other, not both.",
+        },
         EncounterType::Elite => EncounterTypeText {
             marker: "[!]",
             name: "Elite",
@@ -64,12 +69,13 @@ pub fn encounter_type_text(encounter_type: EncounterType) -> EncounterTypeText {
 }
 
 /// Every encounter type, for building the map key.
-pub fn all_encounter_types() -> [EncounterType; 6] {
+pub fn all_encounter_types() -> [EncounterType; 7] {
     [
         EncounterType::Entry,
         EncounterType::Combat,
         EncounterType::Event,
         EncounterType::Shop,
+        EncounterType::Safehouse,
         EncounterType::Elite,
         EncounterType::Boss,
     ]
@@ -238,10 +244,11 @@ mod tests {
                 | EncounterType::Combat
                 | EncounterType::Event
                 | EncounterType::Shop
+                | EncounterType::Safehouse
                 | EncounterType::Elite
                 | EncounterType::Boss => {}
             }
         }
-        assert_eq!(all_encounter_types().len(), 6);
+        assert_eq!(all_encounter_types().len(), 7);
     }
 }

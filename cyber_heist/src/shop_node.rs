@@ -20,7 +20,7 @@ use godot::builtin::VarDictionary;
 use godot::prelude::*;
 use std::collections::HashMap;
 
-use crate::card_data::Rarity;
+use crate::card_data::{CardData, Rarity};
 use crate::card_database::CardDatabase;
 use crate::card_text;
 use crate::noise_meter::NoiseMeter;
@@ -314,32 +314,15 @@ impl ShopNode {
         let db = db.bind();
         let credits = self.credits();
 
-        // One entry per distinct card, in the order each first appears.
-        let owned = run_deck.bind().owned_card_ids();
-        let mut order: Vec<String> = Vec::new();
-        let mut counts: HashMap<String, i64> = HashMap::new();
-        for id in owned {
-            let count = counts.entry(id.clone()).or_insert(0);
-            if *count == 0 {
-                order.push(id);
-            }
-            *count += 1;
-        }
-
-        for id in order {
-            let Some(upgraded_id) = db.upgraded_id_of(&id) else {
-                continue;
-            };
-            let (Some(card), Some(upgraded)) = (db.get(&id), db.get(&upgraded_id)) else {
-                continue;
-            };
+        for (id, count, card, upgraded) in upgradable_entries(run_deck.bind().owned_card_ids(), &db)
+        {
             let price = shop::upgrade_price_for(card.rarity);
             // Shown on their strong sides, the same as stock and rewards.
             let before = card_detail_dictionary(&card_text::describe(card, 0));
             let after = card_detail_dictionary(&card_text::describe(upgraded, 0));
             cards.push(&vdict! {
                 "id" => id.as_str(),
-                "count" => counts[&id],
+                "count" => count,
                 "price" => price,
                 "affordable" => credits >= price,
                 "card" => &before,
@@ -540,4 +523,33 @@ impl ShopNode {
             None => 0,
         }
     }
+}
+
+/// Every distinct card in `owned` that has an upgrade, in the order each first
+/// appears: `(id, copies, card, upgraded card)`. Shared by the shop's paid
+/// upgrade and the safehouse's free one, so both offer the same cards.
+pub(crate) fn upgradable_entries(
+    owned: Vec<String>,
+    db: &CardDatabase,
+) -> Vec<(String, i64, &CardData, &CardData)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for id in owned {
+        let count = counts.entry(id.clone()).or_insert(0);
+        if *count == 0 {
+            order.push(id);
+        }
+        *count += 1;
+    }
+
+    order
+        .into_iter()
+        .filter_map(|id| {
+            let upgraded_id = db.upgraded_id_of(&id)?;
+            let card = db.get(&id)?;
+            let upgraded = db.get(&upgraded_id)?;
+            let count = counts[&id];
+            Some((id, count, card, upgraded))
+        })
+        .collect()
 }

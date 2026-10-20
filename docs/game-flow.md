@@ -42,9 +42,11 @@ success. `FlowCoordinator.run_snapshot()` returns:
 }
 ```
 
-Supported lifecycle encounter types are `combat`, `event`, `shop`, `elite`
-and `boss`. Combat, elite and boss share the combat gameplay scene, while
-events and shops each have their own (see [the dark web shop](#the-dark-web-shop-story-38)).
+Supported lifecycle encounter types are `combat`, `event`, `shop`,
+`safehouse`, `elite` and `boss`. Combat, elite and boss share the combat
+gameplay scene, while events, shops and safehouses each have their own (see
+[the dark web shop](#the-dark-web-shop-story-38) and
+[safehouse nodes](#safehouse-nodes-story-112)).
 
 ## Contract route selection
 
@@ -578,6 +580,72 @@ one of the rerolled cards. Then it presses Leave and checks the map, not the
 offer picker, and the completed node. Finally it enters the next encounter and
 draws the whole deck to find every card it bought, by id, since at the noise
 Scrub Logs left some cards show their weak-side names.
+
+## Safehouse nodes (story #112)
+
+A safehouse node (`[H]` on the map) is somewhere to pause between fights. The
+player gets **one** of two things there, never both:
+
+| Option | Effect |
+| --- | --- |
+| Lie Low | Noise −30 (`LIE_LOW_NOISE_REDUCTION`), clamped at zero |
+| Upgrade | One copy of a chosen card becomes its upgraded version, free |
+
+Both are free: what a safehouse costs is the slot on the route that could have
+been a fight paying credits, or a shop. About one ordinary node in ten is a
+safehouse, the same as elites (`ContractMap::assign_encounter_types`). A
+safehouse never leads straight into another: one that would is a combat
+instead, so no route can rest twice in a row and skip a fight.
+
+The rules are plain Rust in `cyber_heist/src/safehouse.rs`. Entering a
+safehouse node opens a `SafehouseVisit` on the run (`RunState::select_encounter`),
+and completing or leaving the encounter drops it, like a shop visit. Using
+either option records the choice on the visit, after which both are refused
+with `already_used`, so rebuilding the screen cannot offer the safehouse twice.
+Lie Low is also refused (`nothing_to_lie_low`) when it would take no noise
+off, so the safehouse is never spent on nothing; its button is disabled then.
+The upgrade reuses the shop's list of upgradable cards
+(`shop_node::upgradable_entries`) but charges nothing, and the upgraded card is
+in the run's deck for the rest of the run, exactly as a shop upgrade is.
+
+`SafehouseNode` (`safehouse_node.rs`) sits on `scenes/safehouse.tscn` as the
+bridge. **Move on** calls `FlowCoordinator.complete_active_encounter()`, which
+goes straight back to the map: a safehouse pays no encounter credits, earns no
+card reward and is not a fight, so it is not counted as a win. Like an event,
+a safehouse is not a safe point, so quitting inside one resumes on the map
+before it.
+
+```gdscript
+$SafehouseNode.status()
+# {"in_safehouse": true, "choice": "", "can_lie_low": true, "can_upgrade": true,
+#  "reduction": 30, "noise_removed": 30, "noise": 60, "max_noise": 100}
+
+$SafehouseNode.lie_low()
+# {"ok": true, "noise_removed": 30, "noise": 30},
+# or {"ok": false, "error": "already_used"} with nothing changed
+
+$SafehouseNode.upgradable_cards()
+# [{"id": "strike", "count": 4, "card": {...}, "upgraded": {...}}, ...]
+
+$SafehouseNode.upgrade_card("strike")
+# {"ok": true, "from_id": "strike", "to_id": "strike+"}
+```
+
+Adding safehouses to generated contracts changes the map an offer's seed lays
+out, so the save format moved to version 4 and older saves start fresh.
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/safehouse_test.gd
+```
+
+It rolls runs until the first zone offers a safehouse, enters it from the map
+at 60 noise, lies low and checks noise is 30, both options are then refused
+(including a forced second Lie Low), and Move on completes the node. On a
+second run it upgrades a card instead and checks the deck holds the upgraded
+copy at the same size, Lie Low is refused, noise is untouched, and the upgrade
+is still in the deck back on the map.
 
 ## Sound and music (story #111)
 

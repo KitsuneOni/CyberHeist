@@ -4,7 +4,7 @@ extends RefCounted
 # which is what the fixture's callers are written against. An elite or boss
 # node loads its own construct (BASTION, a zone boss), with a different script,
 # integrity and resistance, so it is never a stand-in.
-const STANDARD_SECURITY_TYPES := ["combat", "event", "shop"]
+const STANDARD_SECURITY_TYPES := ["combat", "event", "shop", "safehouse"]
 
 # Generated contracts are random, so column one does not always offer a combat.
 # A run of this many contracts without one would mean combats had stopped being
@@ -23,9 +23,9 @@ const MAX_CONTRACTS := 60
 #
 # Once an encounter has been entered the run is never replaced, even if the
 # player was caught in it and so completed nothing. A real combat is
-# preferred; failing that, combat content is mounted on an event or shop node,
-# whose completion then pays and routes like that node type rather than a
-# combat. If the column only offers elites or the boss, this fails, and a
+# preferred; failing that, combat content is mounted on an event, shop or
+# safehouse node, whose completion then pays and routes like that node type
+# rather than a combat. If the column only offers elites or the boss, this fails, and a
 # caller that is happy to move to a fresh contract does so with
 # roll_new_contract.
 #
@@ -89,8 +89,8 @@ static func _offered_combat(flow: Node) -> Dictionary:
 	return {}
 
 
-# A real combat if one is offered, otherwise the first event or shop, or an
-# empty dictionary when only elites or the boss are on offer.
+# A real combat if one is offered, otherwise the first event, shop or
+# safehouse, or an empty dictionary when only elites or the boss are on offer.
 static func _standard_security_option(flow: Node) -> Dictionary:
 	var combat := _offered_combat(flow)
 	if not combat.is_empty():

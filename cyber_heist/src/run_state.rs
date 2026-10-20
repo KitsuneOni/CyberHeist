@@ -18,6 +18,7 @@ use crate::events::{EventDefinition, event_catalogue, random_event};
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_stats::RunStats;
+use crate::safehouse::{LayLow, SafehouseError, SafehouseUpgrade, SafehouseVisit};
 use crate::shop::{
     self, Purchase, RemovedCard, Reroll, ScrubbedLogs, ShopError, ShopVisit, Upgrade,
 };
@@ -134,6 +135,12 @@ pub struct RunState {
     /// Defaults to false so saves from before it existed still load.
     #[serde(default)]
     dark_web_visit: bool,
+    /// The safehouse the run is in, opened on entering a safehouse node and
+    /// dropped when that encounter ends, so it can be used once and only
+    /// once. Always `None` outside a safehouse encounter. Defaults to `None`
+    /// so saves from before safehouses existed still load.
+    #[serde(default)]
+    safehouse_visit: Option<SafehouseVisit>,
 }
 
 impl Default for RunState {
@@ -150,6 +157,7 @@ impl Default for RunState {
             seen_events: Vec::new(),
             shop_visit: None,
             dark_web_visit: false,
+            safehouse_visit: None,
         }
     }
 }
@@ -187,6 +195,7 @@ impl RunState {
             seen_events: Vec::new(),
             shop_visit: None,
             dark_web_visit: false,
+            safehouse_visit: None,
         }
     }
 
@@ -346,6 +355,8 @@ impl RunState {
         self.contract_started = true;
         self.shop_visit = None;
         self.dark_web_visit = false;
+        self.safehouse_visit =
+            (selection.encounter_type == EncounterType::Safehouse).then(SafehouseVisit::new);
         self.active_encounter = Some(ActiveEncounter {
             id: selection.node_id.to_string(),
             encounter_type: selection.encounter_type,
@@ -375,6 +386,7 @@ impl RunState {
                 .record_encounter_completed(completed.encounter_type());
         }
         self.shop_visit = None;
+        self.safehouse_visit = None;
         if wins_contract {
             self.phase = ContractPhase::ContractWon;
             self.contract_reward = Some(self.reward_for_winning());
@@ -469,6 +481,14 @@ impl RunState {
                 .active_encounter
                 .as_ref()
                 .is_some_and(|encounter| encounter.encounter_type() == EncounterType::Shop)
+    }
+
+    fn is_in_safehouse_encounter(&self) -> bool {
+        self.phase == ContractPhase::EncounterActive
+            && self
+                .active_encounter
+                .as_ref()
+                .is_some_and(|encounter| encounter.encounter_type() == EncounterType::Safehouse)
     }
 
     /// Whether the player entered the current shop from the dark web screen.
@@ -603,6 +623,46 @@ impl RunState {
         Ok(upgrade)
     }
 
+    /// The safehouse the run is in, while it is in one.
+    pub fn safehouse_visit(&self) -> Option<&SafehouseVisit> {
+        self.safehouse_visit.as_ref()
+    }
+
+    /// Lies low in the safehouse the run is in, taking up to
+    /// `LIE_LOW_NOISE_REDUCTION` off `noise` and using up the safehouse (see
+    /// [`SafehouseVisit::lie_low`]). Refused with
+    /// [`SafehouseError::NotInSafehouse`] outside one; a refusal changes
+    /// nothing.
+    pub fn lie_low_in_safehouse(
+        &mut self,
+        noise: &mut NoiseLevel,
+    ) -> Result<LayLow, SafehouseError> {
+        self.open_safehouse_mut()?.lie_low(noise)
+    }
+
+    /// Upgrades one copy of `card_id` in `deck` to `upgraded_id` for free,
+    /// using up the safehouse the run is in (see
+    /// [`SafehouseVisit::upgrade`]). Refused, with nothing changed, as
+    /// `lie_low_in_safehouse` is.
+    pub fn upgrade_in_safehouse(
+        &mut self,
+        deck: &mut RunDeck,
+        card_id: &str,
+        upgraded_id: Option<&str>,
+    ) -> Result<SafehouseUpgrade, SafehouseError> {
+        self.open_safehouse_mut()?
+            .upgrade(deck, card_id, upgraded_id)
+    }
+
+    fn open_safehouse_mut(&mut self) -> Result<&mut SafehouseVisit, SafehouseError> {
+        if self.phase != ContractPhase::EncounterActive {
+            return Err(SafehouseError::NotInSafehouse);
+        }
+        self.safehouse_visit
+            .as_mut()
+            .ok_or(SafehouseError::NotInSafehouse)
+    }
+
     /// The shop visit to act on, or [`ShopError::NotInShop`] unless the run
     /// is in a shop encounter whose visit has been opened.
     fn open_visit_mut(&mut self) -> Result<&mut ShopVisit, ShopError> {
@@ -615,6 +675,8 @@ impl RunState {
     pub fn report_caught(&mut self) -> Result<(), RunStateError> {
         self.require_phase("report caught", ContractPhase::EncounterActive)?;
         self.phase = ContractPhase::Caught;
+        // Being caught ends the stay, so the safehouse is not left open.
+        self.safehouse_visit = None;
         Ok(())
     }
 
@@ -626,6 +688,7 @@ impl RunState {
         self.phase = ContractPhase::Hub;
         self.active_encounter = None;
         self.shop_visit = None;
+        self.safehouse_visit = None;
         Ok(())
     }
 
@@ -651,7 +714,8 @@ impl RunState {
     /// save cannot shorten the contract or change what its nodes are. A
     /// generated run cannot get under way without accepting an offer, so one
     /// that has started on none is refused. A shop's stock is only kept while
-    /// the run is in that shop, and every event the run has seen must exist.
+    /// the run is in that shop, a safehouse visit only while it is in that
+    /// safehouse, and every event the run has seen must exist.
     pub fn validate_restored(&self) -> Result<(), RunStateError> {
         self.contract_map
             .validate_restored()
@@ -666,6 +730,11 @@ impl RunState {
         if self.shop_visit.is_some() && !self.is_in_shop() {
             return Err(RunStateError::InconsistentRun(
                 "a shop's stock is kept for a run not in a shop",
+            ));
+        }
+        if self.safehouse_visit.is_some() && !self.is_in_safehouse_encounter() {
+            return Err(RunStateError::InconsistentRun(
+                "a safehouse visit is kept for a run not in a safehouse",
             ));
         }
 
@@ -922,6 +991,118 @@ mod tests {
             choices,
             vec![(2, EncounterType::Event), (3, EncounterType::Shop)]
         );
+    }
+
+    /// A run standing in a safehouse: entry, then the safehouse, then a
+    /// combat after it.
+    fn in_a_safehouse() -> RunState {
+        let mut state = RunState::new();
+        state.contract_map = ContractMap::new(
+            [
+                EncounterNode::new(0, EncounterType::Entry, vec![1]),
+                EncounterNode::new(1, EncounterType::Safehouse, vec![2]),
+                EncounterNode::new(2, EncounterType::Combat, vec![]),
+            ],
+            0,
+        )
+        .unwrap();
+        state.select_encounter(1).unwrap();
+        state
+    }
+
+    fn noise_at(level: i32) -> NoiseLevel {
+        let mut noise = NoiseLevel::new(crate::noise_meter::MAX_NOISE);
+        noise.add(level);
+        noise
+    }
+
+    #[test]
+    fn entering_a_safehouse_opens_an_unused_visit() {
+        let state = in_a_safehouse();
+
+        let visit = state.safehouse_visit().expect("a visit is open");
+        assert_eq!(visit.choice(), None);
+    }
+
+    /// Safehouse acceptance scenario 1, through the run: noise 60 drops to
+    /// 30, and the node is completed.
+    #[test]
+    fn lying_low_in_a_safehouse_drops_noise_by_30_and_the_node_completes() {
+        let mut state = in_a_safehouse();
+        let mut noise = noise_at(60);
+
+        state.lie_low_in_safehouse(&mut noise).unwrap();
+        state.complete_encounter().unwrap();
+
+        assert_eq!(noise.noise(), 30);
+        assert_eq!(state.phase(), ContractPhase::Hub);
+        assert_eq!(state.contract_map.last_completed_node(), Some(1));
+        assert_eq!(
+            state.safehouse_visit(),
+            None,
+            "the visit ends with the node"
+        );
+        assert_eq!(state.summary().stats.combats_won(), 0, "not a fight");
+    }
+
+    /// Safehouse acceptance scenario 2, through the run: upgrading a card
+    /// changes the run's deck and rules out lying low at the same safehouse.
+    #[test]
+    fn upgrading_in_a_safehouse_rules_out_lying_low_there() {
+        let mut state = in_a_safehouse();
+        let mut deck = RunDeck::from_card_ids(vec!["strike".to_string()]);
+        let mut noise = noise_at(60);
+
+        state
+            .upgrade_in_safehouse(&mut deck, "strike", Some("strike_plus"))
+            .unwrap();
+
+        assert_eq!(deck.card_ids(), ["strike_plus".to_string()]);
+        assert_eq!(
+            state.lie_low_in_safehouse(&mut noise),
+            Err(SafehouseError::AlreadyUsed)
+        );
+        assert_eq!(noise.noise(), 60);
+    }
+
+    #[test]
+    fn being_caught_in_a_safehouse_closes_it_and_the_run_still_restores() {
+        let mut state = in_a_safehouse();
+
+        state.report_caught().unwrap();
+
+        assert_eq!(state.safehouse_visit(), None);
+        assert_eq!(state.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn safehouse_actions_are_refused_outside_a_safehouse() {
+        let mut state = active_combat();
+        let mut deck = RunDeck::from_card_ids(vec!["strike".to_string()]);
+        let mut noise = noise_at(60);
+
+        assert_eq!(state.safehouse_visit(), None);
+        assert_eq!(
+            state.lie_low_in_safehouse(&mut noise),
+            Err(SafehouseError::NotInSafehouse)
+        );
+        assert_eq!(
+            state.upgrade_in_safehouse(&mut deck, "strike", Some("strike_plus")),
+            Err(SafehouseError::NotInSafehouse)
+        );
+        assert_eq!(noise.noise(), 60);
+        assert_eq!(deck.count_of("strike"), 1);
+    }
+
+    #[test]
+    fn a_restored_run_keeping_a_safehouse_visit_outside_one_is_refused() {
+        let mut state = RunState::new();
+        state.safehouse_visit = Some(SafehouseVisit::new());
+
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
     }
 
     #[test]

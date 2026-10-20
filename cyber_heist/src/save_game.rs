@@ -44,7 +44,11 @@ use crate::run_state::{ContractPhase, RunState};
 ///
 /// Version 3 keeps a shop's stock in the run state (`shop_visit`), where the
 /// shop itself now keeps it, rather than beside the run.
-pub const SAVE_VERSION: u32 = 3;
+///
+/// Version 4 adds safehouse nodes to generated contracts, so an offer's seed
+/// lays out a different map than it did before and an older save's map would
+/// no longer match the contract it claims to be on.
+pub const SAVE_VERSION: u32 = 4;
 
 /// Everything written to the save file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
