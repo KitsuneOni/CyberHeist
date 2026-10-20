@@ -138,7 +138,10 @@ func _run() -> void:
 	_check(booted != null and booted.name == "MainMenu", "the game opens on the main menu")
 	_check(_flow.start_new_contract().get("ok", false), "New contract leaves the main menu")
 	await process_frame
-	_check(_screen().name == "ContractHub", "the run opens on the contract hub")
+	_check(_screen().name == "ComputerDesktop", "the run opens on the computer desktop")
+	_check(_flow.open_contracts().get("ok", false), "contracts.exe opens the hub")
+	await process_frame
+	_check(_screen().name == "ContractHub", "the run reaches the contract hub")
 
 	# --- enter combat ---
 	var selected: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
@@ -174,7 +177,7 @@ func _run() -> void:
 	# --- the opening state, before a turn is taken ---
 	_check(combat.noise_label.text == "Noise: 0 / 100", "the meter starts empty (got '%s')" % combat.noise_label.text)
 	_check_intent(combat, 0, false)
-	_check(combat.draw_phase.hand_names().size() == 3, "intent is shown with a playable hand")
+	_check(combat.draw_phase.hand_names().size() == 5, "intent is shown with a playable hand")
 
 	# Use a real near-cap shared value so the turns cover differing actions,
 	# queue wrap and the final authored +2 clamped to an actual +1. It is past
@@ -222,7 +225,7 @@ func _run() -> void:
 			_check(
 				combat.draw_phase.turn_number == previous_turn + 1
 				and combat.draw_phase.energy == 3
-				and combat.draw_phase.hand_names().size() == 3,
+				and combat.draw_phase.hand_names().size() == 5,
 				"the next player turn has a fresh hand and energy with the new intent"
 			)
 			var expected := "Noise: %d / 100" % EXPECTED_NOISE[i]

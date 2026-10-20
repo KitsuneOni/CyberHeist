@@ -145,6 +145,12 @@ func _accept_shown_offer(hub: Node) -> bool:
 # Encounters on the way are completed without being played. Returns the shop's
 # node id, or -1 if this run's first zone had none.
 func _walk_to_first_zone_shop() -> int:
+	# A new run opens on the computer desktop (story #25); contracts.exe is
+	# the way to the offer picker.
+	var desktop := _screen()
+	if desktop != null and desktop.name == "ComputerDesktop":
+		desktop.contracts_app.pressed.emit()
+		await _settle()
 	var first_hub := _screen()
 	if first_hub == null or first_hub.name != "ContractHub":
 		return -1

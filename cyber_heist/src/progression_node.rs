@@ -3,10 +3,8 @@ use godot::classes::FileAccess;
 use godot::classes::file_access::ModeFlags;
 use godot::prelude::*;
 
-use crate::card_database::CardDatabase;
-use crate::card_text;
-use crate::relics::{CARDS_UNLOCKED_PER_WIN, Progression, RELIC_PRICE, Relic};
-use crate::{CARD_DATABASE_PATH, failure};
+use crate::failure;
+use crate::relics::{Progression, RELIC_PRICE, Relic};
 
 pub(crate) const PROGRESSION_PATH: &str = "/root/FlowCoordinator/Progression";
 
@@ -88,52 +86,6 @@ impl ProgressionNode {
     #[func]
     fn points(&self) -> i64 {
         i64::from(self.progression.points())
-    }
-
-    #[func]
-    fn unlock_cards_for_win(&mut self) -> Array<VarDictionary> {
-        let mut unlocked: Array<VarDictionary> = Array::new();
-        let Some(db) = self
-            .base()
-            .try_get_node_as::<CardDatabase>(CARD_DATABASE_PATH)
-        else {
-            godot_error!("Progression: no CardDatabaseGlobal, so nothing can be unlocked.");
-            return unlocked;
-        };
-        let db = db.bind();
-
-        let pool: Vec<_> = db
-            .all()
-            .map(|card| (card.id.clone(), card.rarity))
-            .collect();
-        let ids =
-            self.progression
-                .unlock_random_cards(&pool, CARDS_UNLOCKED_PER_WIN, &mut rand::rng());
-        if ids.is_empty() {
-            return unlocked;
-        }
-        self.save();
-
-        for id in ids {
-            let Some(card) = db.get(&id) else {
-                continue;
-            };
-            unlocked.push(&vdict! {
-                "id" => id.as_str(),
-                "name" => card.name.as_str(),
-                "rarity" => card_text::rarity_name(card.rarity),
-            });
-        }
-        unlocked
-    }
-
-    #[func]
-    fn unlocked_card_ids(&self) -> PackedStringArray {
-        self.progression
-            .unlocked_cards()
-            .iter()
-            .map(|id| GString::from(id.as_str()))
-            .collect()
     }
 
     #[func]

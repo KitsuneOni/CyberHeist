@@ -132,10 +132,54 @@ reward to pay: winning it still ends the contract on the victory screen, but
 the contract reward is 0. A player never plays it, because the hub asks for a
 contract first (below).
 
+### The computer desktop (story #25)
+
+Between contracts the player is at their own computer
+(`scenes/computer_desktop.tscn`) rather than the map. A run is between
+contracts while `FlowCoordinator.is_between_contracts()` is true: at the hub,
+no card reward waiting, not inside a dark web shop visit, and
+`needs_contract_choice()`. That covers **New contract** on the main menu and
+**Take another contract** on the victory screen, which both land on the
+desktop. Being caught keeps the contract, so it still returns to the map.
+
+The desktop has three apps:
+
+- **contracts.exe** (`open_contracts()`) opens the hub, which shows the offer
+  picker. The picker offers **Back to desktop** (`return_to_desktop()`) until
+  an offer is accepted.
+- **darkweb.onion** (`open_dark_web_shop()`) opens the dark web shop for
+  permanent upgrades. Its Back, and leaving a shop entered from it, return to
+  the desktop.
+- **toolkit/** opens the deck viewer over the desktop.
+
+A terminal window sums up the offers waiting, the points to spend and the deck
+size, and an installed upgrades window lists the relics owned.
+
+All four calls are refused once a contract is accepted, so the dark web is no
+longer reached from the map partway through a contract. The run snapshot
+carries `needs_contract_choice`, so Continue on a run saved between contracts
+lands on the desktop too.
+
+```gdscript
+FlowCoordinator.is_between_contracts()
+# true while the desktop is where the run belongs
+
+FlowCoordinator.open_contracts()      # desktop -> offer picker
+FlowCoordinator.return_to_desktop()   # picker or dark web -> desktop
+# {"ok": true}, or {"ok": false, "error": "..."} once a contract is accepted
+```
+
+Run the headless check with a built extension:
+
+```sh
+godot --headless --path godot -s res://tests/computer_desktop_test.gd
+```
+
 ### Choosing a contract on the hub
 
 While `FlowCoordinator.needs_contract_choice()` is true, the contract hub shows
 the **offer picker** (`scenes/contract_offer_picker.tscn`) in place of the map.
+The player reaches it from contracts.exe on the computer desktop (above).
 That is a new run at the hub with offers on the table, none accepted yet and
 no encounter entered (`RunState::needs_contract_choice`), which covers both
 **New contract** on the main menu and **Take another contract** on the
@@ -349,8 +393,8 @@ to be beaten.
 **Take another contract** calls `FlowCoordinator.start_new_run()`, the same
 clean reset as after being caught: a fresh contract and offers, no zone
 progress or stats, noise and knowledge reset, the starter deck and no
-upgrades. The credit balance, reward included, carries over. The hub then
-opens on the offer picker, so the next contract is chosen there.
+upgrades. The credit balance, reward included, carries over. The computer
+desktop then opens, and the next contract is chosen from its contracts.exe.
 
 Run the headless check with a built extension:
 
@@ -635,6 +679,83 @@ files so it never overwrites a developer's own.
 
 The sounds are synthesised by `tools/generate_audio.py` (Python and numpy),
 so there is no third-party audio to license; see `godot/assets/CREDITS.md`.
+
+## Display options (story #46)
+
+Below the volumes, the settings screen has four display options. Each row's
+button cycles through its choices: pressing it moves to the next one, and
+left/right step either way while it is selected. A change applies at once and
+is saved straight away, since there is no slider drag to wait for.
+
+| Option | Choices | Default |
+| --- | --- | --- |
+| Display mode | Windowed, Fullscreen | Windowed |
+| Window size | 1280 x 720, 1600 x 900, 1920 x 1080 | 1280 x 720 |
+| VSync | On, Off | On |
+| CRT effect | On, Off | On |
+
+The window size is greyed out while fullscreen, which uses the screen's own
+size. A windowed size change re-centres the window on its screen.
+
+The `DisplaySettings` autoload (`autoload/display_settings.gd`) owns the
+options. It keeps them in the `[display]` section of `user://settings.cfg`,
+next to AudioDirector's `[audio]` section. Each one only writes its own
+section, so saving one keeps the other. The options are applied at launch.
+A missing value, a value of the wrong type or an out-of-range size falls back
+to its default. An unreadable file is never overwritten by a display save
+(AudioDirector copies it aside the next time it saves).
+
+The CRT effect is the `CrtOverlay` ColorRect that most screens draw on top.
+`DisplaySettings` shows or hides each one as it enters the tree, and every one
+already showing when the option changes, so screens don't have to read the
+option themselves. A new screen with an overlay only needs to name it
+`CrtOverlay`.
+
+Headless there is no window, so the options are stored, saved and loaded as
+usual but nothing is asked of the window. The test checks what is chosen,
+shown and saved, using a scratch settings file:
+
+```sh
+godot --headless --path godot -s res://tests/display_settings_test.gd
+```
+
+## How to play (story #113)
+
+The main menu's **How to play** entry, between Continue run and Settings, opens
+`scenes/how_to_play.tscn`. It is a single screen of short explanations
+(energy, noise, detection, intents, the map and winning) that stands in for a
+full tutorial. Like settings it is outside any run: `FlowCoordinator.open_how_to_play()`
+is refused from anywhere but the main menu, `close_how_to_play()` returns
+there, and the pause menu does not open over it.
+
+The text is the `TOPICS` constant in `scenes/how_to_play.gd`, laid out in two
+columns in code, so it can be reworded without touching the scene. Keep it in
+step with the rules when a number it quotes changes (5 cards and 3 energy a
+turn, detection at 100, alert at 60).
+
+```sh
+godot --headless --path godot -s res://tests/how_to_play_test.gd
+```
+
+## Keyboard shortcuts in combat (story #118)
+
+During a fight, the number keys **1** to **9** (top row or keypad) play the
+card in that place in the hand, counting from the left. **E** ends the turn.
+Each card shows its number in the bottom-right corner, and End Turn reads
+`END TURN [E]`. The hand is rebuilt after every play, so the numbers always
+run from 1.
+
+The combat screen handles them in `_unhandled_key_input`. A number selects
+that card and presses Play (`play_card_at`), and E presses End Turn. The
+shortcuts share every rule and animation with the mouse, so an unaffordable
+card is refused with the usual message and a number past the end of the hand
+says so. Top-row digits are matched by physical key, so they work on layouts
+that need Shift for digits. Held keys don't repeat. Keys are ignored while the
+deck viewer is open, and the pause menu stops them by pausing the tree.
+
+```sh
+godot --headless --path godot -s res://tests/keyboard_shortcuts_test.gd
+```
 
 ## Saving and continuing (story #10)
 

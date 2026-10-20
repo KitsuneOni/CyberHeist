@@ -265,8 +265,8 @@ func _run() -> void:
 	_check(snapshot.get("active_encounter") == null, "the new run has no active encounter")
 	var screen := _screen()
 	_check(
-		screen != null and screen.name == "ContractHub",
-		"starting a new run shows the hub"
+		screen != null and screen.name == "ComputerDesktop",
+		"starting a new run shows the computer desktop"
 	)
 	_check(
 		not _flow.accepted_contract_offer().get("ok", true),

@@ -212,7 +212,7 @@ func _capture_state() -> Dictionary:
 		for card: Dictionary in screen.offered:
 			offered_ids.append(card.get("id", ""))
 		state["reward_offer"] = offered_ids
-		state["reward_status"] = screen.status_label.text
+		state["reward_status"] = screen.credits_label.text
 	return state
 
 
@@ -401,8 +401,18 @@ func _start_and_accept_a_contract() -> bool:
 	menu.new_contract_button.pressed.emit()
 	await _settle()
 
+	var desktop := _screen()
+	_check(
+		desktop != null and desktop.name == "ComputerDesktop",
+		"New contract opens the computer desktop"
+	)
+	if desktop == null or desktop.name != "ComputerDesktop":
+		return false
+	desktop.contracts_app.pressed.emit()
+	await _settle()
+
 	var hub := _screen()
-	_check(hub != null and hub.name == "ContractHub", "New contract opens the contract hub")
+	_check(hub != null and hub.name == "ContractHub", "contracts.exe opens the contract hub")
 	var fresh := _saved()
 	_check(
 		int(fresh.get("version", -1)) == SAVE_VERSION and _saved_phase() == "hub",
@@ -504,6 +514,7 @@ func _play_two_encounters() -> bool:
 		if _screen_name() == "CardReward":
 			_check(_saved_phase() == "hub", "a fight's completion is saved before its card is chosen")
 			_screen()._on_card_chosen(0)
+			_screen()._on_continue_pressed()
 			await _settle()
 
 		var saved_run: Dictionary = _saved().get("run", {})
@@ -676,6 +687,8 @@ func _check_card_reward_resume() -> void:
 func _check_victory_resume() -> void:
 	_flow.start_new_run()
 	await _settle()
+	_check(_flow.open_contracts().get("ok", false), "contracts.exe opens on a new run")
+	await _settle()
 	var hub := _screen()
 	if hub == null or hub.name != "ContractHub" or not _choose_offer_on_picker(hub, 0):
 		_check(false, "the shortest contract is accepted on the picker")
@@ -741,6 +754,7 @@ func _play_to_the_final_boss() -> bool:
 		await _settle()
 		if _screen_name() == "CardReward":
 			_screen()._on_card_chosen(0)
+			_screen()._on_continue_pressed()
 			await _settle()
 	_check(false, "the final boss is reached within the contract's route")
 	return false
@@ -893,10 +907,10 @@ func _check_resumed_victory(expected_money: int) -> void:
 
 	victory.new_contract_button.pressed.emit()
 	await _settle()
-	var hub := _screen()
+	var desktop := _screen()
 	_check(
-		hub != null and hub.name == "ContractHub" and hub.is_choosing_contract(),
-		"Take another contract after continuing asks for a new contract"
+		desktop != null and desktop.name == "ComputerDesktop" and _flow.needs_contract_choice(),
+		"Take another contract after continuing goes to the desktop to pick a new contract"
 	)
 	var saved_state: Dictionary = _saved().get("run", {}).get("run_state", {})
 	_check(

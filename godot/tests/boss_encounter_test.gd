@@ -129,7 +129,10 @@ func _run() -> void:
 	_check(booted != null and booted.name == "MainMenu", "the game opens on the main menu")
 	_check(_flow.start_new_contract().get("ok", false), "New contract leaves the main menu")
 	await process_frame
-	_check(_screen().name == "ContractHub", "the run opens on the contract hub")
+	_check(_screen().name == "ComputerDesktop", "the run opens on the computer desktop")
+	_check(_flow.open_contracts().get("ok", false), "contracts.exe opens the hub")
+	await process_frame
+	_check(_screen().name == "ContractHub", "the run reaches the contract hub")
 
 	# --- the contract is laid out in zones, each closed off by one boss -----
 	var zones: Dictionary = _flow.zone_progress()
@@ -301,7 +304,7 @@ func _run() -> void:
 		"boss resistance is cleared on the reward screen"
 	)
 	var deck_size: int = _flow.run_deck_size()
-	reward._on_skip_pressed()
+	reward._on_continue_pressed()
 	_check(_screen().name == "ContractHub", "skipping the boss reward returns to the hub")
 	_check(_flow.run_deck_size() == deck_size, "skipping a boss reward leaves the deck unchanged")
 

@@ -4,12 +4,12 @@
 #   Scenario: The game opens on the main menu
 #     Given I launch the game
 #     Then I see the main menu rather than the contract map
-#     And I can choose New contract, Continue run, Settings or Quit
+#     And I can choose New contract, Continue run, How to play, Settings or Quit
 #
 #   Scenario: Start a new run
 #     Given I am on the main menu
 #     When I choose New contract
-#     Then the contract map opens on a fresh run
+#     Then the computer desktop opens on a fresh run (story #25)
 #
 #   Scenario: Continue is unavailable without a save
 #     Given there is no saved run
@@ -105,7 +105,7 @@ func _run() -> void:
 	# --- keyboard navigation ---
 	_check(new_contract.has_focus(), "New contract is selected when the menu opens")
 	_check(
-		new_contract.find_valid_focus_neighbor(SIDE_BOTTOM) == settings_button,
+		new_contract.find_valid_focus_neighbor(SIDE_BOTTOM) == menu.how_to_play_button,
 		"moving down from New contract skips the unavailable Continue run"
 	)
 
@@ -140,8 +140,16 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 
+	var desktop := _screen()
+	_check(
+		desktop != null and desktop.name == "ComputerDesktop",
+		"New contract opens the computer desktop"
+	)
+	if desktop != null and desktop.name == "ComputerDesktop":
+		desktop.get_node("%ContractsApp").pressed.emit()
+		await process_frame
 	var hub := _screen()
-	_check(hub != null and hub.name == "ContractHub", "New contract opens the contract map")
+	_check(hub != null and hub.name == "ContractHub", "contracts.exe opens the contract hub")
 	_check(_flow.run_snapshot().phase == "hub", "the new run starts with no encounter active")
 	_check(
 		not _flow.selectable_encounters().is_empty(),

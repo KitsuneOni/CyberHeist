@@ -33,17 +33,6 @@ pub fn offer_from_pool(pool: &[String], count: usize, rng: &mut impl Rng) -> Vec
     candidates
 }
 
-/// The rarity an offer can really guarantee: `wanted`, or the best rarity the
-/// pool holds when it has nothing that good. With every Rare still locked, an
-/// elite's "at least a Rare" becomes "the best card that is open". `None` for
-/// an empty pool.
-pub fn attainable_guarantee(pool: &[(String, Rarity)], wanted: Rarity) -> Option<Rarity> {
-    pool.iter()
-        .map(|(_, rarity)| *rarity)
-        .max()
-        .map(|best| best.min(wanted))
-}
-
 /// Like [`offer_from_pool`], but when `guaranteed` is set the offer includes
 /// at least one card of that rarity or better.
 ///
@@ -265,55 +254,5 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(11);
         assert!(offer_with_guarantee(&mixed_pool(), 0, Some(Rarity::Rare), &mut rng).is_empty());
         assert!(offer_with_guarantee(&[], 3, Some(Rarity::Rare), &mut rng).is_empty());
-    }
-
-    #[test]
-    fn a_guarantee_asks_for_the_best_rarity_the_pool_can_give() {
-        let with_rare = rated(&[("a", Rarity::Common), ("r", Rarity::Rare)]);
-        assert_eq!(
-            attainable_guarantee(&with_rare, Rarity::Rare),
-            Some(Rarity::Rare)
-        );
-
-        let legendary_only = rated(&[("a", Rarity::Common), ("l", Rarity::Legendary)]);
-        assert_eq!(
-            attainable_guarantee(&legendary_only, Rarity::Rare),
-            Some(Rarity::Rare),
-            "never asks for more than was wanted"
-        );
-
-        let best_uncommon = rated(&[("a", Rarity::Common), ("u", Rarity::Uncommon)]);
-        assert_eq!(
-            attainable_guarantee(&best_uncommon, Rarity::Rare),
-            Some(Rarity::Uncommon)
-        );
-
-        let commons = rated(&[("a", Rarity::Common)]);
-        assert_eq!(
-            attainable_guarantee(&commons, Rarity::Rare),
-            Some(Rarity::Common)
-        );
-
-        assert_eq!(attainable_guarantee(&[], Rarity::Rare), None);
-    }
-
-    #[test]
-    fn with_every_rare_locked_an_elite_offer_still_includes_the_best_open_card() {
-        let pool = rated(&[
-            ("a", Rarity::Common),
-            ("b", Rarity::Common),
-            ("c", Rarity::Common),
-            ("d", Rarity::Common),
-            ("u", Rarity::Uncommon),
-        ]);
-        let guarantee = attainable_guarantee(&pool, Rarity::Rare);
-
-        for seed in 0..100 {
-            let mut rng = StdRng::seed_from_u64(seed);
-            let offer = offer_with_guarantee(&pool, 3, guarantee, &mut rng);
-
-            assert_eq!(offer.len(), 3, "seed {seed}");
-            assert!(offer.contains(&"u".to_string()), "seed {seed}: {offer:?}");
-        }
     }
 }

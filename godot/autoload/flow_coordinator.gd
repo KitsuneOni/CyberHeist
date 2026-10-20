@@ -2,6 +2,7 @@ extends Node
 
 const MAIN_MENU_SCENE_PATH := "res://scenes/main_menu.tscn"
 const SETTINGS_SCENE_PATH := "res://scenes/settings_menu.tscn"
+const HOW_TO_PLAY_SCENE_PATH := "res://scenes/how_to_play.tscn"
 const HUB_SCENE_PATH := "res://scenes/contract_hub.tscn"
 const COMBAT_SCENE_PATH := "res://scenes/combat.tscn"
 const EVENT_SCENE_PATH := "res://scenes/event_encounter.tscn"
@@ -11,6 +12,7 @@ const CAUGHT_SCENE_PATH := "res://scenes/caught_screen.tscn"
 const CARD_REWARD_SCENE_PATH := "res://scenes/card_reward.tscn"
 const VICTORY_SCENE_PATH := "res://scenes/victory_screen.tscn"
 const DARK_WEB_SHOP_SCENE_PATH := "res://scenes/dark_web_shop.tscn"
+const DESKTOP_SCENE_PATH := "res://scenes/computer_desktop.tscn"
 const PROGRESSION_FILE_PATH := "user://cyberheist_progression.ron"
 const SHOP_REMOVE_SCENE_PATH := "res://scenes/shop_remove.tscn"
 const ENCOUNTER_SCENES := {
@@ -57,10 +59,6 @@ var _save_load_error := ""
 # Points the last finished run earned, for the victory screen to show.
 var _run_points_earned := 0
 
-# Cards the last won contract unlocked, [{id, name, rarity}], for the victory
-# screen to list. Empty until a contract is won.
-var _run_cards_unlocked: Array = []
-
 
 # Where the headless tests live. A test drives the game from its own
 # SceneTree script in here.
@@ -74,12 +72,10 @@ func _ready() -> void:
 	# so a custom MainLoop the game itself might use one day keeps saving.
 	if _is_running_a_test():
 		return
-	# Permanent progress first: reading the save checks a saved card reward
-	# against the cards that progress has unlocked.
+	use_save_file(DEFAULT_SAVE_PATH)
 	var progression_result: Dictionary = _progression.use_file(PROGRESSION_FILE_PATH)
 	if not progression_result.get("ok", false):
 		push_warning("Permanent progress could not be read, so it starts empty: %s" % progression_result.get("error", "unknown error"))
-	use_save_file(DEFAULT_SAVE_PATH)
 
 
 func _is_running_a_test() -> bool:
@@ -98,7 +94,7 @@ func bind_screen_host(host: Node) -> void:
 	_screen_host = host
 
 	# Every launch opens on the main menu. The run is already rolled behind it,
-	# so New contract only has to show the map.
+	# so New contract only has to show the desktop.
 	var prepared := _prepare_screen(MAIN_MENU_SCENE_PATH)
 	if not prepared.get("ok", false):
 		push_error(prepared.get("error", "Could not load the main menu."))
@@ -107,17 +103,13 @@ func bind_screen_host(host: Node) -> void:
 	_replace_screen(prepared["screen"])
 
 
-# Leaves the main menu for the contract map. Each launch rolls a fresh contract
-# in RunStateNode, so the run behind the menu is already a new one. It replaces
+# Leaves the main menu for the computer desktop, where the contract offers
+# wait. Each launch rolls a fresh contract in RunStateNode, so the run behind
+# the menu is already a new one. It replaces
 # any saved run straight away; the credit balance read from the save stays.
-#
-# This starts a new save, so the relics, points and unlocked cards go with the
-# old one, and the deck starts again from the starter cards. Only carrying on
-# a save (Continue, or the next contract after a win) keeps them.
 func start_new_contract() -> Dictionary:
 	_save_game.discard_saved_run()
 	_progression.reset()
-	_run_deck.reset_to_starter()
 	var result := _show_current_run_screen()
 	if result.get("ok", false):
 		save_progress()
@@ -224,14 +216,29 @@ func close_settings() -> Dictionary:
 	return _show_screen(MAIN_MENU_SCENE_PATH)
 
 
+# Opens the How to play screen from the main menu (story #113). Like settings
+# it is outside any run, so it changes no run state, and it is refused from
+# anywhere else because closing it always returns to the main menu.
+func open_how_to_play() -> Dictionary:
+	if not _is_showing(MAIN_MENU_SCENE_PATH):
+		return _failure("How to play can only be opened from the main menu.")
+	return _show_screen(HOW_TO_PLAY_SCENE_PATH)
+
+
+# Leaves How to play for the main menu, the only place it opens from.
+func close_how_to_play() -> Dictionary:
+	return _show_screen(MAIN_MENU_SCENE_PATH)
+
+
 # Whether the pause menu can open: on any screen of a run, but not on the main
-# menu or the settings screen, which are outside one.
+# menu, the settings screen or How to play, which are outside one.
 func can_pause() -> bool:
 	return (
 		_screen_host_is_ready()
 		and _screen_host.get_child_count() > 0
 		and not _is_showing(MAIN_MENU_SCENE_PATH)
 		and not _is_showing(SETTINGS_SCENE_PATH)
+		and not _is_showing(HOW_TO_PLAY_SCENE_PATH)
 	)
 
 
@@ -276,21 +283,54 @@ func save_and_quit_to_menu() -> Dictionary:
 	return {"ok": true, "saved_now": saved_now}
 
 
-func open_dark_web_shop() -> Dictionary:
-	if run_snapshot().get("phase", "") != "hub" or not _pending_reward.is_empty():
-		return _failure("The dark web shop can only be opened between encounters.")
-	return _show_screen(DARK_WEB_SHOP_SCENE_PATH)
+# Whether the run is between contracts: at the hub with no contract accepted
+# yet, which is a new run from the main menu or after a won contract. That is
+# when the computer desktop is shown, and the only time its apps can be opened
+# (story #25).
+func is_between_contracts() -> bool:
+	return (
+		run_snapshot().get("phase", "") == "hub"
+		and _pending_reward.is_empty()
+		and not is_in_dark_web_visit()
+		and needs_contract_choice()
+	)
 
-func close_dark_web_shop() -> Dictionary:
+
+# Opens the contract offers from the computer desktop. The hub shows its offer
+# picker while no contract is accepted, so this is the only way into a run.
+func open_contracts() -> Dictionary:
+	if not is_between_contracts():
+		return _failure("Contracts are opened from the desktop between contracts.")
 	return _show_screen(HUB_SCENE_PATH)
 
+
+# Goes back to the computer desktop from the offer picker or the dark web
+# shop. Refused once a contract is accepted, since the run is then committed
+# to the map.
+func return_to_desktop() -> Dictionary:
+	if not is_between_contracts():
+		return _failure("The desktop is only available between contracts.")
+	return _show_screen(DESKTOP_SCENE_PATH)
+
+
+# Opens the dark web shop from the computer desktop. Permanent upgrades are
+# bought between contracts, never partway through one.
+func open_dark_web_shop() -> Dictionary:
+	if not is_between_contracts():
+		return _failure("The dark web shop can only be opened between contracts.")
+	return _show_screen(DARK_WEB_SHOP_SCENE_PATH)
+
+
+func close_dark_web_shop() -> Dictionary:
+	return return_to_desktop()
+
 # Enters the normal shop from the dark web screen. Costs every point held, so
-# it needs at least one, and is refused outside the hub phase or while a card
-# reward waits. The shop screen opens its stock as it appears, so the run is
+# it needs at least one, and is refused outside the desktop's time between
+# contracts. The shop screen opens its stock as it appears, so the run is
 # marked first. Saved on entry, so quitting inside the shop resumes it.
 func enter_shop_from_dark_web() -> Dictionary:
-	if run_snapshot().get("phase", "") != "hub" or not _pending_reward.is_empty():
-		return _failure("The shop can only be entered between encounters.")
+	if not is_between_contracts():
+		return _failure("The shop can only be entered between contracts.")
 
 	var prepared := _prepare_screen(SHOP_SCENE_PATH)
 	if not prepared.get("ok", false):
@@ -311,8 +351,9 @@ func enter_shop_from_dark_web() -> Dictionary:
 	save_progress()
 	return {"ok": true}
 
+# Leaves a shop entered from the dark web for the desktop it was reached from.
 func leave_shop_to_contracts() -> Dictionary:
-	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	var prepared := _prepare_screen(DESKTOP_SCENE_PATH)
 	if not prepared.get("ok", false):
 		return prepared
 
@@ -342,8 +383,9 @@ func _is_showing(path: String) -> bool:
 	return _screen_host.get_child(0).scene_file_path == path
 
 
-# Shows whichever screen the run's current phase belongs on: the map, the
-# active encounter, the caught screen or the victory screen.
+# Shows whichever screen the run's current phase belongs on: the desktop
+# between contracts, the map, the active encounter, the caught screen or the
+# victory screen.
 func _show_current_run_screen() -> Dictionary:
 	var destination := _destination_for_snapshot(run_snapshot(), not _pending_reward.is_empty())
 	if not destination.get("ok", false):
@@ -503,7 +545,6 @@ func complete_active_encounter() -> Dictionary:
 	change_credits(_pending_reward["credits"])
 	_pay_contract_reward()
 	_award_run_points(completion)
-	_unlock_cards_for_win(completion)
 	if next_scene == HUB_SCENE_PATH:
 		# Nothing is waiting to be chosen after an event or a shop, so a save
 		# made at the hub does not resume on a card reward.
@@ -515,7 +556,7 @@ func complete_active_encounter() -> Dictionary:
 
 # The screen to show once the encounter described by `completion` (from
 # active_encounter_completion) completes. Winning the contract ends the run, so
-# there is no card reward: the victory screen comes straight after the boss.
+# there is no card reward for a deck about to be reset.
 func _scene_after_completing(completion: Dictionary) -> String:
 	if completion.get("wins_contract", false):
 		return VICTORY_SCENE_PATH
@@ -557,8 +598,7 @@ func card_reward_offer_size() -> int:
 
 # Cards on offer after clearing an encounter. Each is a dictionary of
 # {id, name, type, rarity, cost_text, noise_text, description}.
-# An elite or boss offer always includes the best card the unlocked pool has,
-# a Rare once any are unlocked.
+# An elite or boss offer always includes at least one Rare.
 #
 # The offer for a pending reward is rolled once and kept with it, so asking
 # again, or continuing a run saved on the reward screen, offers the same cards
@@ -729,12 +769,10 @@ func run_snapshot() -> Dictionary:
 	return _run_state.snapshot()
 
 
-# Throws the current run away and starts the next one at the hub: a fresh
+# Throws the current run away and starts a new one at the hub, shown on the
+# computer desktop so the player can shop before picking the next job: a fresh
 # contract and offers, no zone progress or stats, noise at 0, knowledge back to
-# its starting level and no contract upgrades. The deck is kept: the cards
-# gained and bought, and the upgrades made to them, carry on into the next
-# contract, which is what makes a save a campaign. Only a new save (New
-# contract on the main menu) goes back to the starter deck. Returns
+# its starting level, the starter deck and no contract upgrades. Returns
 # {ok: true}, or {ok: false, error} with nothing changed.
 #
 # Allowed from the hub, the caught screen and the victory screen, where a run
@@ -743,7 +781,7 @@ func run_snapshot() -> Dictionary:
 # balance, not the run's, so they carry over (a contract reward included);
 # upgrades are earned "for this contract", so they do not.
 func start_new_run() -> Dictionary:
-	var prepared := _prepare_screen(HUB_SCENE_PATH)
+	var prepared := _prepare_screen(DESKTOP_SCENE_PATH)
 	if not prepared.get("ok", false):
 		return prepared
 
@@ -754,9 +792,9 @@ func start_new_run() -> Dictionary:
 
 	# The reward screen sits at the hub phase, so a new run can start from it.
 	# Its payout belongs to the old run and must not reach the next one.
-	_reset_run_extras(true)
+	_reset_run_extras()
 	_replace_screen(prepared["screen"])
-	# The new run replaces the old one's save, with the deck it carries.
+	# The new run replaces the old one's save.
 	save_progress()
 	return transition
 
@@ -799,18 +837,14 @@ func _replace_screen(screen: Node) -> void:
 
 
 # Everything a run keeps outside RunStateNode, put back to how a new run
-# starts: the shared meters, the coordinator's screen results and the card
-# upgrades. The deck goes back to the starter cards unless `keep_deck` is set,
-# which is how the next contract after a win carries it on. Credits carry
-# over, as they always do.
-func _reset_run_extras(keep_deck := false) -> void:
-	if not keep_deck:
-		_run_deck.reset_to_starter()
+# starts: the deck, the shared meters, the coordinator's screen results and
+# the card upgrades. Credits carry over, as they always do.
+func _reset_run_extras() -> void:
+	_run_deck.reset_to_starter()
 	_reset_run_meters()
 	_pending_reward = {}
 	_run_points_earned = 0
 	_caught_penalty = {}
-	_run_cards_unlocked = []
 	var player_state: Node = get_node("/root/PlayerStateGlobal")
 	player_state.clear_upgrades()
 
@@ -850,6 +884,10 @@ func _destination_for_snapshot(snapshot: Dictionary, card_reward_waiting: bool) 
 			# before choosing one resumes on it.
 			if card_reward_waiting:
 				return {"ok": true, "path": CARD_REWARD_SCENE_PATH}
+			# No contract accepted yet: the run is between contracts, which
+			# is spent on the computer desktop (story #25).
+			if snapshot.get("needs_contract_choice", false):
+				return {"ok": true, "path": DESKTOP_SCENE_PATH}
 			return {"ok": true, "path": HUB_SCENE_PATH}
 		"encounter_active":
 			var active_encounter = snapshot.get("active_encounter")
@@ -876,10 +914,7 @@ func _failure(error: String) -> Dictionary:
 	}
 
 
-# Winning the contract finishes the run and earns permanent progression points,
-# worked out from the credits in hand once the contract payout has landed. It
-# runs only after the transition has succeeded, and that transition cannot
-# repeat, so a run pays out once.
+
 func _award_run_points(completion: Dictionary) -> void:
 	if not completion.get("wins_contract", false):
 		return
@@ -887,44 +922,21 @@ func _award_run_points(completion: Dictionary) -> void:
 	_run_points_earned = _progression.award_run_completion(player_state.money())
 
 
-# Winning the contract unlocks new cards for the reward pool and the shops.
-# Runs only after the transition has succeeded, and that transition cannot
-# repeat, so a win unlocks once.
-func _unlock_cards_for_win(completion: Dictionary) -> void:
-	if not completion.get("wins_contract", false):
-		return
-	_run_cards_unlocked = _progression.unlock_cards_for_win()
-
-
-# Cards the last won contract unlocked, for the end screen. Empty when nothing
-# was left to unlock, and after Continue reopens a saved victory screen.
-func run_cards_unlocked() -> Array:
-	return _run_cards_unlocked.duplicate()
-
-
-# Applies the relics that change the deck when a contract begins.
 func _apply_run_start_relics() -> void:
 	var count: int = _progression.cards_to_upgrade_at_run_start()
 	if count > 0:
 		_run_deck.upgrade_random_cards(count)
 
 
-# Points the last finished run earned. 0 until a run is won, and after
-# Continue reopens a saved victory screen.
 func run_points_earned() -> int:
 	return _run_points_earned
 
 
-# Points banked and not yet spent on relics.
 func progression_points() -> int:
 	return _progression.points()
 
-
-# Every relic with whether it is owned, available and affordable.
 func relic_listing() -> Array:
 	return _progression.relic_listing()
 
-
-# Buys a relic with a point. {ok: true, id, points} or {ok: false, error}.
 func buy_relic(relic_id: String) -> Dictionary:
 	return _progression.buy_relic(relic_id)

@@ -23,7 +23,7 @@ var _enter_armed := false
 func _ready() -> void:
 	back_button.pressed.connect(_on_back_pressed)
 	status_label.text = "Finish a contract to earn 1 point, plus 1 for every 500 credits you hold."
-	enter_shop_button.tooltip_text = "Spend all your points to browse the normal shop once. Leaving takes you back to the contracts."
+	enter_shop_button.tooltip_text = "Spend all your points to browse the normal shop once. Leaving takes you back to the desktop."
 	enter_shop_button.pressed.connect(_on_enter_shop_pressed)
 	_refresh()
 	_focus_first_control()
@@ -71,7 +71,7 @@ func _on_enter_shop_pressed() -> void:
 	if not _enter_armed:
 		_enter_armed = true
 		enter_shop_button.text = "> Confirm: spend all %d?" % FlowCoordinator.progression_points()
-		status_label.text = "Press again to spend all your points and enter the shop. You can enter once, and leaving returns you to the contracts."
+		status_label.text = "Press again to spend all your points and enter the shop. You can enter once, and leaving returns you to the desktop."
 		return
 
 	_leaving = true

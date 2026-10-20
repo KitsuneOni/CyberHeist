@@ -22,6 +22,7 @@ const FEED_SCROLL_SPEED := 22.0
 
 @onready var new_contract_button: Button = %NewContractButton
 @onready var continue_button: Button = %ContinueButton
+@onready var how_to_play_button: Button = %HowToPlayButton
 @onready var settings_button: Button = %SettingsButton
 @onready var quit_button: Button = %QuitButton
 @onready var status_label: Label = %StatusLabel
@@ -38,6 +39,7 @@ func _ready() -> void:
 	_labels = {
 		new_contract_button: "New contract",
 		continue_button: "Continue run",
+		how_to_play_button: "How to play",
 		settings_button: "Settings",
 		quit_button: "Quit",
 	}
@@ -64,6 +66,7 @@ func _ready() -> void:
 
 	new_contract_button.pressed.connect(_on_new_contract_pressed)
 	continue_button.pressed.connect(_on_continue_pressed)
+	how_to_play_button.pressed.connect(_on_how_to_play_pressed)
 	settings_button.pressed.connect(_on_settings_pressed)
 	quit_button.pressed.connect(_on_quit_pressed)
 
@@ -127,6 +130,12 @@ func _on_continue_pressed() -> void:
 	var result: Dictionary = FlowCoordinator.continue_run()
 	if not result.get("ok", false):
 		status_label.text = "Could not continue: %s" % result.get("error", "unknown error")
+
+
+func _on_how_to_play_pressed() -> void:
+	var result: Dictionary = FlowCoordinator.open_how_to_play()
+	if not result.get("ok", false):
+		status_label.text = "Could not open How to play: %s" % result.get("error", "unknown error")
 
 
 func _on_settings_pressed() -> void:

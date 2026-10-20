@@ -469,8 +469,9 @@ impl RunStateNode {
 }
 
 /// Where `state` stands, as `FlowCoordinator` reads it to choose a screen:
-/// `{phase, active_encounter}`, where `active_encounter` is `{id, type}` or
-/// null.
+/// `{phase, active_encounter, dark_web_visit, needs_contract_choice}`, where
+/// `active_encounter` is `{id, type}` or null. `needs_contract_choice` is what
+/// sends a run between contracts to the computer desktop rather than the map.
 pub(crate) fn snapshot_dictionary(state: &RunState) -> VarDictionary {
     let active_encounter = match state.active_encounter() {
         Some(encounter) => Variant::from(vdict! {
@@ -484,6 +485,7 @@ pub(crate) fn snapshot_dictionary(state: &RunState) -> VarDictionary {
         "phase" => state.phase().as_str(),
         "active_encounter" => &active_encounter,
         "dark_web_visit" => state.in_dark_web_visit(),
+        "needs_contract_choice" => state.needs_contract_choice(),
     }
 }
 

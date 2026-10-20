@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3 uid="uid://byjfp3s20ltpr"]
+[gd_scene load_steps=22 format=3 uid="uid://byjfp3s20ltpr"]
 
 [ext_resource type="Script" uid="uid://bpw8e5yf0ehlc" path="res://scenes/combat.gd" id="1_combat"]
 [ext_resource type="Theme" path="res://themes/terminal_theme.tres" id="2_theme"]
@@ -8,6 +8,8 @@
 [ext_resource type="Texture2D" path="res://assets/ui/icons/game-icons/hooded-figure.svg" id="6_player"]
 [ext_resource type="Texture2D" path="res://assets/ui/icons/game-icons/cctv-camera.svg" id="7_enemy"]
 [ext_resource type="Script" path="res://scenes/detection_meter.gd" id="8_detection"]
+[ext_resource type="Texture2D" path="res://assets/ui/icons/tabler/sword.svg" id="9_might"]
+[ext_resource type="Texture2D" path="res://assets/ui/icons/tabler/discount.svg" id="10_discount"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_crt"]
 shader = ExtResource("3_crt")
@@ -165,7 +167,6 @@ theme = ExtResource("2_theme")
 script = ExtResource("1_combat")
 
 [node name="DrawPhase" type="DrawPhase" parent="."]
-hand_size = 3
 
 [node name="Sentry" type="SentryNode" parent="."]
 
@@ -332,14 +333,60 @@ text = "knowledge 0 / 0"
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
-mouse_filter = 2
+tooltip_text = "Might: each stack adds 1 damage to every hit this combat."
+mouse_filter = 1
 theme_override_styles/panel = SubResource("StyleBoxFlat_chip")
 
-[node name="MightLabel" type="Label" parent="Content/Column/Arena/PlayerColumn/PlayerChips/MightChip"]
+[node name="MightRow" type="HBoxContainer" parent="Content/Column/Arena/PlayerColumn/PlayerChips/MightChip"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="MightIcon" type="TextureRect" parent="Content/Column/Arena/PlayerColumn/PlayerChips/MightChip/MightRow"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+modulate = Color(0.2, 1, 0.4, 1)
+texture = ExtResource("9_might")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="MightLabel" type="Label" parent="Content/Column/Arena/PlayerColumn/PlayerChips/MightChip/MightRow"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 14
-text = "might 0"
+text = "0"
+
+[node name="CorruptingDiscountChip" type="PanelContainer" parent="Content/Column/Arena/PlayerColumn/PlayerChips"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+tooltip_text = "Corrupting cards cost less energy this combat."
+mouse_filter = 1
+theme_override_styles/panel = SubResource("StyleBoxFlat_chip_red")
+
+[node name="CorruptingDiscountRow" type="HBoxContainer" parent="Content/Column/Arena/PlayerColumn/PlayerChips/CorruptingDiscountChip"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="CorruptingDiscountIcon" type="TextureRect" parent="Content/Column/Arena/PlayerColumn/PlayerChips/CorruptingDiscountChip/CorruptingDiscountRow"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+modulate = Color(1, 0.2, 0.333333, 1)
+texture = ExtResource("10_discount")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="CorruptingDiscountLabel" type="Label" parent="Content/Column/Arena/PlayerColumn/PlayerChips/CorruptingDiscountChip/CorruptingDiscountRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.2, 0.333333, 1)
+theme_override_font_sizes/font_size = 14
+text = "-0"
 
 [node name="EnemyColumn" type="VBoxContainer" parent="Content/Column/Arena"]
 layout_mode = 2

@@ -1,11 +1,18 @@
-# The settings screen, reached from the main menu or the pause menu. For now it holds the three
-# volume sliders story #111 needs; display options belong to the settings menu
-# story and can be added below them.
+# The settings screen, reached from the main menu or the pause menu. It holds
+# the three volume sliders from story #111 and, below them, the display options
+# from story #46: windowed or fullscreen, the window size, vsync and the CRT
+# scanline effect.
 #
 # A slider applies its volume the moment it moves, so the player hears the
 # change straight away. Saving rewrites the settings file, so it waits until
 # the sliders have been still for SAVE_DELAY_SECONDS rather than happening on
 # every step of a drag, and leaving the screen saves anything still waiting.
+# A display option is a row whose button cycles through its choices: pressing
+# it moves to the next, and left and right step either way while it is
+# selected. Each change applies and saves at once, since there is no drag to
+# wait out. The window size only matters in a window, so it is greyed out
+# while fullscreen.
+#
 # Navigation goes through FlowCoordinator like every other screen.
 extends Control
 
@@ -27,6 +34,11 @@ var embedded := false
 @onready var master_value: Label = %MasterValue
 @onready var music_value: Label = %MusicValue
 @onready var sfx_value: Label = %SfxValue
+@onready var window_mode_button: Button = %WindowModeButton
+@onready var window_size_button: Button = %WindowSizeButton
+@onready var vsync_button: Button = %VsyncButton
+@onready var crt_button: Button = %CrtButton
+@onready var window_size_note: Label = %WindowSizeNote
 @onready var back_button: Button = %BackButton
 @onready var status_label: Label = %StatusLabel
 
@@ -34,6 +46,8 @@ var embedded := false
 var _rows := {}
 # Restarted by every slider change; saves once it runs out.
 var _save_timer: Timer
+# Each display option's button and how to read, change and name its choices.
+var _display_rows := {}
 
 
 func _ready() -> void:
@@ -58,6 +72,36 @@ func _ready() -> void:
 	_save_timer.wait_time = SAVE_DELAY_SECONDS
 	_save_timer.timeout.connect(_save_settings)
 	add_child(_save_timer)
+
+	_display_rows = {
+		window_mode_button: {
+			"choices": ["Windowed", "Fullscreen"],
+			"current": func() -> int: return 1 if DisplaySettings.is_fullscreen() else 0,
+			"apply": func(choice: int) -> void: DisplaySettings.set_fullscreen(choice == 1),
+		},
+		window_size_button: {
+			"choices": DisplaySettings.WINDOW_SIZES.map(DisplaySettings.size_text),
+			"current": DisplaySettings.window_size_index,
+			"apply": DisplaySettings.set_window_size_index,
+		},
+		vsync_button: {
+			"choices": ["On", "Off"],
+			"current": func() -> int: return 0 if DisplaySettings.is_vsync_on() else 1,
+			"apply": func(choice: int) -> void: DisplaySettings.set_vsync(choice == 0),
+		},
+		crt_button: {
+			"choices": ["On", "Off"],
+			"current": func() -> int: return 0 if DisplaySettings.is_crt_effect_on() else 1,
+			"apply": func(choice: int) -> void: DisplaySettings.set_crt_effect(choice == 0),
+		},
+	}
+	for button: Button in _display_rows:
+		button.pressed.connect(step_display_option.bind(button, 1))
+		button.gui_input.connect(_on_display_option_input.bind(button))
+		button.focus_entered.connect(_render_display_options)
+		button.focus_exited.connect(_render_display_options)
+		button.mouse_entered.connect(_focus_if_enabled.bind(button))
+	_render_display_options()
 
 	back_button.focus_entered.connect(_render_back_label)
 	back_button.focus_exited.connect(_render_back_label)
@@ -104,6 +148,55 @@ func _show_value(slider: HSlider) -> void:
 	var percent := AudioDirector.volume(setting)
 	var label: Label = _rows[slider]["value_label"]
 	label.text = "muted" if percent == 0 else "%d%%" % percent
+
+
+# Moves a display option `step` choices along, wrapping at either end, then
+# applies and saves it.
+func step_display_option(button: Button, step: int) -> void:
+	if button.disabled:
+		return
+	var row: Dictionary = _display_rows[button]
+	var count: int = row["choices"].size()
+	var choice: int = posmod(int(row["current"].call()) + step, count)
+	row["apply"].call(choice)
+	_render_display_options()
+	if DisplaySettings.save_settings() == OK:
+		status_label.text = ""
+	else:
+		status_label.text = "Could not save settings. The change lasts until you quit."
+
+
+# The choice a display option's button shows, e.g. "Fullscreen".
+func display_choice(button: Button) -> String:
+	var row: Dictionary = _display_rows[button]
+	return str(row["choices"][int(row["current"].call())])
+
+
+func _on_display_option_input(event: InputEvent, button: Button) -> void:
+	if event.is_action_pressed("ui_left"):
+		button.accept_event()
+		step_display_option(button, -1)
+	elif event.is_action_pressed("ui_right"):
+		button.accept_event()
+		step_display_option(button, 1)
+
+
+func _render_display_options() -> void:
+	# A fullscreen window takes the screen's own size, so the window size
+	# would change nothing until fullscreen is turned off.
+	var fullscreen := DisplaySettings.is_fullscreen()
+	window_size_button.disabled = fullscreen
+	window_size_button.focus_mode = Control.FOCUS_NONE if fullscreen else Control.FOCUS_ALL
+	window_size_note.text = "fullscreen" if fullscreen else ""
+
+	for button: Button in _display_rows:
+		var prefix := SELECTED_PREFIX if button.has_focus() else IDLE_PREFIX
+		button.text = "%s<  %s  >" % [prefix, display_choice(button)]
+
+
+func _focus_if_enabled(button: Button) -> void:
+	if not button.disabled:
+		button.grab_focus()
 
 
 func _render_back_label() -> void:

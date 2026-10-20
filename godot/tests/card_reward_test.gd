@@ -159,17 +159,99 @@ func _run() -> void:
 			"the reward screen presents cards to choose from"
 		)
 		# Skipping is allowed and must still return to the hub.
-		after._on_skip_pressed()
+		after._on_continue_pressed()
 		await process_frame
 		await process_frame
 		var hub := _screen()
 		_check(
 			hub != null and hub.name == "ContractHub",
-			"skipping the reward returns to the contract hub"
+			"continuing without a card returns to the contract hub"
 		)
 		_check(
 			_flow.run_deck_size() == owned_before + 1,
-			"skipping a reward adds nothing to the deck"
+			"continuing without a card adds nothing to the deck"
 		)
 
+	await _check_victory_screen()
 	_finish()
+
+
+# Story #117: after a fight, one screen shows the credits earned, offers the
+# card reward, and has a Continue button back to the map.
+func _check_victory_screen() -> void:
+	print("Victory screen after a fight (#117)")
+	var player: Node = root.get_node("/root/PlayerStateGlobal")
+	# A fresh contract, so the fixture enters a real combat, whose completion
+	# routes to the reward screen, rather than an event or shop.
+	preload("res://tests/combat_fixture.gd").roll_new_contract(_flow)
+	var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	_check(entered.get("ok", false), "a second combat loads through the real flow")
+	if not entered.get("ok", false):
+		return
+	await process_frame
+	var balance_before: int = player.money()
+	_check(_flow.complete_active_encounter().get("ok", false), "the second combat is won")
+	await process_frame
+	await process_frame
+
+	var screen := _screen()
+	_check(screen != null and screen.name == "CardReward", "winning a fight opens the victory screen")
+	if screen == null or screen.name != "CardReward":
+		return
+
+	var earned: int = player.money() - balance_before
+	_check(earned > 0, "the fight paid credits (got %d)" % earned)
+	_check(
+		screen.credits_label.visible and screen.credits_label.text == "+%d credits" % earned,
+		"the screen shows the credits earned (got '%s')" % screen.credits_label.text
+	)
+	_check(
+		screen.balance_label.text == "Balance: %d credits" % player.money(),
+		"and the new balance (got '%s')" % screen.balance_label.text
+	)
+	_check(
+		screen.offer_buttons.size() == screen.offered.size() and screen.offered.size() > 0,
+		"the card reward is offered on the same screen"
+	)
+	_check(screen.continue_button.visible, "there is a Continue button")
+
+	var deck_before: int = _flow.run_deck_size()
+	screen._on_card_chosen(0)
+	_check(
+		screen.offer_buttons[0].button_pressed and screen.selected_index == 0,
+		"clicking a card selects it"
+	)
+	_check(_flow.run_deck_size() == deck_before, "selecting a card does not add it yet")
+	var chosen_name: String = screen.offered[0].get("name", "")
+	_check(
+		screen.continue_button.text.contains(chosen_name),
+		"Continue says which card it will take (got '%s')" % screen.continue_button.text
+	)
+	screen._on_card_chosen(0)
+	_check(
+		screen.selected_index == -1 and not screen.offer_buttons[0].button_pressed,
+		"clicking the selected card again clears the selection"
+	)
+	if screen.offered.size() > 1:
+		screen._on_card_chosen(0)
+		screen._on_card_chosen(1)
+		_check(
+			screen.selected_index == 1
+			and screen.offer_buttons[1].button_pressed
+			and not screen.offer_buttons[0].button_pressed,
+			"selecting another card moves the selection"
+		)
+		chosen_name = screen.offered[1].get("name", "")
+
+	screen._on_continue_pressed()
+	screen._on_continue_pressed()
+	await process_frame
+	await process_frame
+	_check(_flow.run_deck_size() == deck_before + 1, "Continue adds the selected card, once")
+	var listed := false
+	for entry: Dictionary in _flow.run_deck_listing():
+		if entry.get("name", "") == chosen_name:
+			listed = true
+	_check(listed, "the deck now holds '%s'" % chosen_name)
+	var map := _screen()
+	_check(map != null and map.name == "ContractHub", "Continue returns to the map")
