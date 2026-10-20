@@ -48,7 +48,10 @@ use crate::run_state::{ContractPhase, RunState};
 /// Version 4 adds safehouse nodes to generated contracts, so an offer's seed
 /// lays out a different map than it did before and an older save's map would
 /// no longer match the contract it claims to be on.
-pub const SAVE_VERSION: u32 = 4;
+///
+/// Version 5 gives each combat node a type of security (`security`), rolled
+/// after the encounter types, so a seed's map changes again.
+pub const SAVE_VERSION: u32 = 5;
 
 /// Everything written to the save file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

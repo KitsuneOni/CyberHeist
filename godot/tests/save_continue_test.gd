@@ -76,7 +76,7 @@ const MAX_SHOPS_IN_A_ROW := 4
 # Credits to walk into the shop with, enough for any card on sale.
 const SHOP_CREDITS := 200
 # The save layout this build writes (SAVE_VERSION in save_game.rs).
-const SAVE_VERSION := 4
+const SAVE_VERSION := 5
 # Where a save that will not load is copied before it can be replaced.
 const UNREADABLE_COPY_PATH := SAVE_PATH + ".unreadable"
 # How long the resumed victory screen may take to count its balance up.

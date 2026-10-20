@@ -19,6 +19,7 @@ use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_stats::RunStats;
 use crate::safehouse::{LayLow, SafehouseError, SafehouseUpgrade, SafehouseVisit};
+use crate::sentry::SecurityType;
 use crate::shop::{
     self, Purchase, RemovedCard, Reroll, ScrubbedLogs, ShopError, ShopVisit, Upgrade,
 };
@@ -50,6 +51,10 @@ pub struct ActiveEncounter {
     id: String,
     encounter_type: EncounterType,
     zone: usize,
+    /// The type of security a combat fields, `None` for anything else.
+    /// Defaults to `None` so an encounter saved before types existed loads.
+    #[serde(default)]
+    security: Option<SecurityType>,
 }
 
 impl ActiveEncounter {
@@ -76,6 +81,12 @@ impl ActiveEncounter {
     /// combat around it.
     pub fn is_elite(&self) -> bool {
         self.encounter_type == EncounterType::Elite
+    }
+
+    /// Which type of security this combat fields, `None` for anything that
+    /// is not an ordinary combat.
+    pub fn security_type(&self) -> Option<SecurityType> {
+        self.security
     }
 }
 
@@ -361,6 +372,7 @@ impl RunState {
             id: selection.node_id.to_string(),
             encounter_type: selection.encounter_type,
             zone: selection.zone,
+            security: selection.security,
         });
         Ok(selection)
     }
@@ -702,7 +714,7 @@ impl RunState {
     /// with the active encounter: one is under way while an encounter is
     /// active or the player has just been caught in it, and none otherwise.
     /// An active encounter must also be the node the map has under way, with
-    /// that node's type and zone.
+    /// that node's type, zone and type of security.
     ///
     /// A contract that has not started must still be at the hub with nothing
     /// played on its map, since Change contract is offered then and would
@@ -854,9 +866,12 @@ impl RunState {
                 .ok_or(RunStateError::ContractMap(ContractMapError::UnknownNode(
                     active_node,
                 )))?;
-        if node.encounter_type() != encounter.encounter_type || zone != encounter.zone {
+        if node.encounter_type() != encounter.encounter_type
+            || zone != encounter.zone
+            || node.security_type() != encounter.security
+        {
             return Err(RunStateError::InconsistentRun(
-                "the active encounter's type or zone does not match its node",
+                "the active encounter's type, zone or security does not match its node",
             ));
         }
         Ok(())
@@ -991,6 +1006,36 @@ mod tests {
             choices,
             vec![(2, EncounterType::Event), (3, EncounterType::Shop)]
         );
+    }
+
+    /// Security types card #40: the encounter under way knows which type of
+    /// security its node fields, so the combat screen builds that construct.
+    #[test]
+    fn an_active_combat_carries_its_nodes_security_type() {
+        let mut state = RunState::new();
+        state.contract_map = ContractMap::new(
+            [
+                EncounterNode::new(0, EncounterType::Entry, vec![1]),
+                EncounterNode::new(1, EncounterType::Combat, vec![])
+                    .with_security(SecurityType::Tracer),
+            ],
+            0,
+        )
+        .unwrap();
+
+        state.select_encounter(1).unwrap();
+
+        assert_eq!(
+            state.active_encounter().unwrap().security_type(),
+            Some(SecurityType::Tracer)
+        );
+        assert_eq!(state.validate_restored(), Ok(()));
+
+        state.active_encounter.as_mut().unwrap().security = Some(SecurityType::Firewall);
+        assert!(matches!(
+            state.validate_restored(),
+            Err(RunStateError::InconsistentRun(_))
+        ));
     }
 
     /// A run standing in a safehouse: entry, then the safehouse, then a
@@ -2163,6 +2208,7 @@ mod tests {
             id: "2".to_string(),
             encounter_type: EncounterType::Event,
             zone: 0,
+            security: None,
         });
 
         assert!(matches!(
@@ -2178,6 +2224,7 @@ mod tests {
             id: "1".to_string(),
             encounter_type: EncounterType::Shop,
             zone: 0,
+            security: None,
         });
 
         assert!(matches!(

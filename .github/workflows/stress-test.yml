@@ -182,6 +182,12 @@ jobs:
       - name: Run headless dark web shop test
         run: ~/godot-bin/godot --headless --path godot -s res://tests/shop_test.gd
 
+      # Every combat node on the map shows its type of security in a badge,
+      # its tooltip and the key, and two combats in one zone field different
+      # constructs running different action sequences.
+      - name: Run headless security types test
+        run: ~/godot-bin/godot --headless --path godot -s res://tests/security_types_test.gd
+
       # Enters a safehouse from the map: Lie Low takes 60 noise to 30 and
       # completes the node, and upgrading a card instead keeps it upgraded
       # for the run and rules out lying low at the same safehouse.

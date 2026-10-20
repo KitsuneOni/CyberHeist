@@ -14,6 +14,7 @@
 //! same spirit as `card_text.rs`.
 
 use crate::contract_map::{EncounterType, NodeStatus};
+use crate::sentry::SecurityType;
 
 /// How one encounter type is presented on the map and in the key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +80,46 @@ pub fn all_encounter_types() -> [EncounterType; 7] {
         EncounterType::Elite,
         EncounterType::Boss,
     ]
+}
+
+/// How one type of security is presented on the map (story #40): a badge on
+/// the node, and its name and how to beat it in the node's tooltip and the
+/// key. The badges are a separate set from the encounter markers, drawn under
+/// the node rather than in it, so a letter here never stands for an encounter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SecurityTypeText {
+    /// Short badge drawn under a combat node.
+    pub marker: &'static str,
+    /// Name of the type of security.
+    pub name: &'static str,
+    /// What it does, and so what beats it.
+    pub description: &'static str,
+}
+
+pub fn security_type_text(kind: SecurityType) -> SecurityTypeText {
+    match kind {
+        SecurityType::Warden => SecurityTypeText {
+            marker: "W",
+            name: "Warden",
+            description: "A balanced patrol: steady noise, a firewall and some malware.",
+        },
+        SecurityType::Firewall => SecurityTypeText {
+            marker: "F",
+            name: "Firewall",
+            description: "Shields itself every other turn and has more integrity, but stays quiet. \
+                Penetrating damage and corruption go straight through.",
+        },
+        SecurityType::Tracer => SecurityTypeText {
+            marker: "T",
+            name: "Tracer",
+            description: "Loud on every turn but fragile. Take it down fast or bring noise reduction.",
+        },
+        SecurityType::Antivirus => SecurityTypeText {
+            marker: "A",
+            name: "Antivirus",
+            description: "Plants Injected Malware every other turn. Draw through the junk or end it quickly.",
+        },
+    }
 }
 
 /// How one node status is presented on the map and in the key.
@@ -232,6 +273,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Security types card #40 scenario 2: each type has a marker, a name
+    /// and a description saying how to beat it, and no two look alike.
+    #[test]
+    fn every_security_type_has_a_distinct_marker_name_and_description() {
+        let texts: Vec<SecurityTypeText> = SecurityType::ALL
+            .into_iter()
+            .map(security_type_text)
+            .collect();
+        for text in &texts {
+            assert!(!text.marker.trim().is_empty());
+            assert!(!text.name.trim().is_empty());
+            assert!(text.description.len() > text.name.len());
+        }
+        let mut markers: Vec<&str> = texts.iter().map(|text| text.marker).collect();
+        markers.sort_unstable();
+        markers.dedup();
+        assert_eq!(markers.len(), texts.len(), "two types share a marker");
     }
 
     #[test]

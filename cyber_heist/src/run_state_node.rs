@@ -9,12 +9,14 @@ use crate::contract_offer::ContractOffer;
 use crate::encounter_reward;
 use crate::encounter_text::{
     all_encounter_types, all_node_statuses, encounter_type_text, node_status_text,
+    security_type_text,
 };
 use crate::events::EventDefinition;
 use crate::noise_meter::NoiseLevel;
 use crate::run_deck::RunDeck;
 use crate::run_state::{RunState, RunStateError};
 use crate::safehouse::{LayLow, SafehouseError, SafehouseUpgrade, SafehouseVisit};
+use crate::sentry::SecurityType;
 use crate::shop::{Purchase, RemovedCard, Reroll, ScrubbedLogs, ShopError, ShopVisit, Upgrade};
 
 /// Where `FlowCoordinator` keeps the run. Other nodes that need the run look
@@ -159,9 +161,16 @@ impl RunStateNode {
                 connections.push(i64::from(*next_node));
             }
 
+            // Empty strings on a node with no security, so the map reads
+            // every field the same way.
+            let security = entry.security.map(security_type_text);
             entries.push(&vdict! {
                 "id" => i64::from(entry.node_id),
                 "type" => entry.encounter_type.as_str(),
+                "security" => security_name(entry.security),
+                "security_name" => security.map_or("", |text| text.name),
+                "security_marker" => security.map_or("", |text| text.marker),
+                "security_description" => security.map_or("", |text| text.description),
                 "type_name" => type_text.name,
                 "type_marker" => type_text.marker,
                 "description" => type_text.description,
@@ -220,9 +229,21 @@ impl RunStateNode {
             });
         }
 
+        let mut security_types: Array<VarDictionary> = Array::new();
+        for kind in SecurityType::ALL {
+            let text = security_type_text(kind);
+            security_types.push(&vdict! {
+                "type" => kind.as_str(),
+                "marker" => text.marker,
+                "name" => text.name,
+                "description" => text.description,
+            });
+        }
+
         vdict! {
             "encounter_types" => &types,
             "statuses" => &statuses,
+            "security_types" => &security_types,
         }
     }
 
@@ -249,7 +270,9 @@ impl RunStateNode {
     }
 
     /// The construct profile for the encounter being played: which zone it is
-    /// in and whether it is that zone's boss. `{ok: false}` between encounters.
+    /// in, whether it is an elite or that zone's boss, and on an ordinary
+    /// combat which type of security it fields (`security`, `""` otherwise).
+    /// `{ok: false}` between encounters.
     ///
     /// Read by `SentryNode` when a combat screen opens, so the security the
     /// player faces is decided by where they are on the contract rather than
@@ -262,12 +285,14 @@ impl RunStateNode {
                 "zone" => encounter.zone() as i64,
                 "is_boss" => encounter.is_boss(),
                 "is_elite" => encounter.is_elite(),
+                "security" => security_name(encounter.security_type()),
             },
             None => vdict! {
                 "ok" => false,
                 "zone" => 0_i64,
                 "is_boss" => false,
                 "is_elite" => false,
+                "security" => "",
             },
         }
     }
@@ -525,7 +550,13 @@ fn encounter_dictionary(node: &EncounterNode) -> VarDictionary {
     vdict! {
         "id" => i64::from(node.id()),
         "type" => node.encounter_type().as_str(),
+        "security" => security_name(node.security_type()),
     }
+}
+
+/// A type of security as GDScript reads it, or `""` where there is none.
+fn security_name(security: Option<SecurityType>) -> &'static str {
+    security.map_or("", SecurityType::as_str)
 }
 
 /// One contract offer, as the selection and details screens read it.
@@ -547,6 +578,7 @@ fn selection_dictionary(selection: EncounterSelection) -> VarDictionary {
         "type" => selection.encounter_type.as_str(),
         "zone" => selection.zone as i64,
         "is_boss" => selection.encounter_type.is_boss(),
+        "security" => security_name(selection.security),
     }
 }
 

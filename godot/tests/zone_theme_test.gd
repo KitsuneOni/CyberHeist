@@ -184,7 +184,7 @@ func _run() -> void:
 		)
 		seen[_backdrop_path(hub)] = true
 
-		var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+		var entered: Dictionary = _enter_a_fight()
 		_check(entered.get("ok", false), "%s: a fight loads" % label)
 		if not entered.get("ok", false):
 			break
@@ -201,3 +201,16 @@ func _run() -> void:
 
 	_check(seen.size() == ZoneTheme.ZONES.size(), "each zone looks different")
 	_finish()
+
+
+# Any fight will do here, since only the backdrop is checked: the fixture's
+# Warden if it can find one, otherwise the first combat of any security type
+# (story #40) or elite on offer.
+func _enter_a_fight() -> Dictionary:
+	var entered: Dictionary = preload("res://tests/combat_fixture.gd").enter(_flow)
+	if entered.get("ok", false):
+		return entered
+	for candidate: Dictionary in _flow.selectable_encounters():
+		if str(candidate.get("type", "")) in ["combat", "elite"]:
+			return _flow.select_encounter(int(candidate.id))
+	return entered

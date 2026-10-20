@@ -206,7 +206,7 @@ func _focus_current_node() -> void:
 func _build_key() -> void:
 	var key: Dictionary = FlowCoordinator.map_key()
 
-	# Kept to two wrapped lines rather than one per marker, so the key does
+	# Kept to a few wrapped lines rather than one per marker, so the key does
 	# not push the rest of the map off screen.
 	var types: Array[String] = []
 	for entry: Dictionary in key.get("encounter_types", []):
@@ -219,9 +219,15 @@ func _build_key() -> void:
 			str(entry.get("description", "")).trim_suffix("."),
 		])
 
-	key_label.text = "Encounters:  %s\nStatus:  %s" % [
+	# The badges under combat nodes, naming the type of security (story #40).
+	var security: Array[String] = []
+	for entry: Dictionary in key.get("security_types", []):
+		security.append("%s %s" % [str(entry.get("marker", "")), str(entry.get("name", ""))])
+
+	key_label.text = "Encounters:  %s\nStatus:  %s\nSecurity:  %s" % [
 		"   ".join(types),
 		"   ".join(statuses),
+		"   ".join(security),
 	]
 
 

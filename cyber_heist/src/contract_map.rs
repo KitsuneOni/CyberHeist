@@ -12,6 +12,8 @@ use rand::Rng;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
+use crate::sentry::SecurityType;
+
 pub type NodeId = u32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +61,12 @@ pub struct EncounterNode {
     id: NodeId,
     encounter_type: EncounterType,
     next_nodes: Vec<NodeId>,
+    /// Which type of security a combat node fields, chosen when the contract
+    /// is generated. `None` on every other node, and on an authored combat,
+    /// which fields a Warden (see `security_type`). Left out of the save when
+    /// `None`, so a map saved before types existed reads back unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    security: Option<SecurityType>,
 }
 
 impl EncounterNode {
@@ -71,7 +79,24 @@ impl EncounterNode {
             id,
             encounter_type,
             next_nodes: next_nodes.into(),
+            security: None,
         }
+    }
+
+    /// The same node fielding `kind` of security, for authoring test maps.
+    /// Only meaningful on a combat node; a map with it anywhere else is
+    /// refused by `validate_restored`.
+    #[cfg(test)]
+    pub fn with_security(mut self, kind: SecurityType) -> Self {
+        self.security = Some(kind);
+        self
+    }
+
+    /// The type of security guarding this node: its own type on a combat
+    /// node, a Warden on a combat that was never given one, and `None` on
+    /// anything that is not an ordinary combat.
+    pub fn security_type(&self) -> Option<SecurityType> {
+        (self.encounter_type == EncounterType::Combat).then(|| self.security.unwrap_or_default())
     }
 
     pub fn id(&self) -> NodeId {
@@ -90,6 +115,8 @@ pub struct EncounterSelection {
     /// Which zone the chosen encounter is in, so the construct guarding it
     /// can be scaled to the depth the player has reached.
     pub zone: usize,
+    /// Which type of security a combat fields, `None` for anything else.
+    pub security: Option<SecurityType>,
 }
 
 /// Where a node stands from the player's point of view, for drawing the map.
@@ -149,6 +176,9 @@ pub struct NodeProgress {
     pub is_boss: bool,
     /// Which zone this node belongs to, counting from 0.
     pub zone: usize,
+    /// Which type of security a combat node fields, so the map can show it
+    /// before the player commits. `None` for anything else.
+    pub security: Option<SecurityType>,
     /// Nodes this one leads to, for drawing the lines between them.
     pub connections: Vec<NodeId>,
 }
@@ -228,6 +258,7 @@ pub enum ContractMapError {
     MismatchedNodeId { key: NodeId, id: NodeId },
     UnknownNode(NodeId),
     TooManyUnlockedZones { unlocked: usize, total: usize },
+    SecurityOnNonCombat(NodeId),
 }
 
 impl fmt::Display for ContractMapError {
@@ -276,6 +307,10 @@ impl fmt::Display for ContractMapError {
             Self::TooManyUnlockedZones { unlocked, total } => write!(
                 formatter,
                 "{unlocked} zones are unlocked but the contract only has {total}"
+            ),
+            Self::SecurityOnNonCombat(node_id) => write!(
+                formatter,
+                "encounter {node_id} has a security type but is not a combat"
             ),
         }
     }
@@ -417,6 +452,7 @@ impl ContractMap {
         let mut contract = Self::new(nodes, 0)
             .expect("a generated contract is acyclic and fully connected by construction");
         contract.assign_encounter_types(rng);
+        contract.assign_security_types(rng);
         contract
     }
 
@@ -460,6 +496,60 @@ impl ContractMap {
 
             if let Some(node) = self.nodes.get_mut(&node_id) {
                 node.encounter_type = encounter_type;
+            }
+        }
+    }
+
+    /// Gives every combat node its type of security.
+    ///
+    /// Done after the encounter types, and with the rng only drawn on from
+    /// here on, so a seed still lays out the same nodes and encounter types it
+    /// did before security types existed. Nodes are visited in id order, which
+    /// is column order, so the combats leading into a node are always typed
+    /// before it. A combat avoids the types of the combats leading straight
+    /// into it, so a route never fields the same type twice running, and the
+    /// types already used in its column, so branches side by side differ.
+    fn assign_security_types(&mut self, rng: &mut impl Rng) {
+        let depths = self.node_depths();
+        let node_ids: Vec<NodeId> = self.nodes.keys().copied().collect();
+
+        for node_id in node_ids {
+            if self.nodes[&node_id].encounter_type != EncounterType::Combat {
+                continue;
+            }
+
+            let led_from: BTreeSet<SecurityType> = self
+                .nodes
+                .values()
+                .filter(|other| other.next_nodes.contains(&node_id))
+                .filter_map(|other| other.security)
+                .collect();
+            let column: BTreeSet<SecurityType> = self
+                .nodes
+                .values()
+                .filter(|other| {
+                    other.id != node_id && depths.get(&other.id) == depths.get(&node_id)
+                })
+                .filter_map(|other| other.security)
+                .collect();
+
+            // A column holds at most three nodes and a node at most three
+            // predecessors in practice, but fall back to just avoiding the
+            // route if both together ever rule out every type.
+            let mut choices: Vec<SecurityType> = SecurityType::ALL
+                .into_iter()
+                .filter(|kind| !led_from.contains(kind) && !column.contains(kind))
+                .collect();
+            if choices.is_empty() {
+                choices = SecurityType::ALL
+                    .into_iter()
+                    .filter(|kind| !led_from.contains(kind))
+                    .collect();
+            }
+
+            let kind = choices[rng.random_range(0..choices.len())];
+            if let Some(node) = self.nodes.get_mut(&node_id) {
+                node.security = Some(kind);
             }
         }
     }
@@ -564,6 +654,7 @@ impl ContractMap {
             node_id: encounter.id,
             encounter_type: encounter.encounter_type,
             zone,
+            security: encounter.security_type(),
         })
     }
 
@@ -782,6 +873,7 @@ impl ContractMap {
                     is_target: node.next_nodes.is_empty(),
                     is_boss: node.encounter_type.is_boss(),
                     zone,
+                    security: node.security_type(),
                     connections: node.next_nodes.clone(),
                 }
             })
@@ -875,6 +967,9 @@ impl ContractMap {
                     key: *key,
                     id: node.id,
                 });
+            }
+            if node.security.is_some() && node.encounter_type != EncounterType::Combat {
+                return Err(ContractMapError::SecurityOnNonCombat(node.id));
             }
         }
 
@@ -1971,6 +2066,113 @@ mod tests {
     #[test]
     fn the_same_seed_generates_the_same_contract() {
         assert_eq!(generated(7), generated(7));
+    }
+
+    #[test]
+    fn only_a_combat_node_has_a_security_type_and_warden_is_the_default() {
+        let combat = EncounterNode::new(1, EncounterType::Combat, vec![]);
+        assert_eq!(combat.security_type(), Some(SecurityType::Warden));
+        assert_eq!(
+            combat.with_security(SecurityType::Tracer).security_type(),
+            Some(SecurityType::Tracer)
+        );
+        for other in [
+            EncounterType::Entry,
+            EncounterType::Event,
+            EncounterType::Shop,
+            EncounterType::Safehouse,
+            EncounterType::Elite,
+            EncounterType::Boss,
+        ] {
+            assert_eq!(EncounterNode::new(1, other, vec![]).security_type(), None);
+        }
+    }
+
+    /// Security types card #40: generated contracts field every type.
+    #[test]
+    fn generated_contracts_field_every_security_type() {
+        let mut seen = BTreeSet::new();
+        for seed in 0..25 {
+            for node in generated(seed).nodes.values() {
+                if let Some(kind) = node.security {
+                    assert_eq!(node.encounter_type, EncounterType::Combat, "seed {seed}");
+                    seen.insert(kind.as_str());
+                }
+            }
+        }
+        assert_eq!(seen.len(), SecurityType::ALL.len(), "only saw {seen:?}");
+    }
+
+    /// Security types card #40 scenario 1: two combats in a row on a route
+    /// never field the same type, and combats side by side in a column are
+    /// told apart too, so the player cannot keep using one strategy.
+    #[test]
+    fn neighbouring_combats_never_share_a_security_type() {
+        for seed in 0..50 {
+            let contract = generated(seed);
+            let depths = contract.node_depths();
+            for node in contract.nodes.values() {
+                let Some(kind) = node.security_type() else {
+                    continue;
+                };
+                for next in &node.next_nodes {
+                    let next_kind = contract.nodes[next].security_type();
+                    assert_ne!(
+                        next_kind,
+                        Some(kind),
+                        "seed {seed}: {} leads to {next} with the same type",
+                        node.id
+                    );
+                }
+                for other in contract.nodes.values() {
+                    if other.id != node.id && depths[&other.id] == depths[&node.id] {
+                        assert_ne!(
+                            other.security_type(),
+                            Some(kind),
+                            "seed {seed}: {} and {} share a column and a type",
+                            node.id,
+                            other.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selecting_a_combat_reports_its_security_type() {
+        let contract = ContractMap::new(
+            [
+                EncounterNode::new(0, EncounterType::Entry, vec![1, 2]),
+                EncounterNode::new(1, EncounterType::Combat, vec![])
+                    .with_security(SecurityType::Antivirus),
+                EncounterNode::new(2, EncounterType::Event, vec![]),
+            ],
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.encounter_option(1).unwrap().security,
+            Some(SecurityType::Antivirus)
+        );
+        assert_eq!(contract.encounter_option(2).unwrap().security, None);
+
+        let progress = contract.node_progress();
+        assert_eq!(progress[1].security, Some(SecurityType::Antivirus));
+        assert_eq!(progress[2].security, None);
+    }
+
+    /// A save cannot put a security type on a node that has no security.
+    #[test]
+    fn a_restored_map_with_a_security_type_off_a_combat_is_refused() {
+        let mut contract = ContractMap::demo();
+        contract.nodes.get_mut(&2).unwrap().security = Some(SecurityType::Tracer);
+
+        assert_eq!(
+            contract.validate_restored(),
+            Err(ContractMapError::SecurityOnNonCombat(2))
+        );
     }
 
     /// Safehouse card #112: a safehouse is a node type of its own on the
