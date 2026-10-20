@@ -14,8 +14,10 @@ use godot::prelude::*;
 
 use crate::card_data::Rarity;
 use crate::card_database::CardDatabase;
+use crate::card_reward;
 use crate::knowledge::KnowledgeMeter;
 use crate::noise_meter::NoiseMeter;
+use crate::progression_node::{PROGRESSION_PATH, ProgressionNode};
 use crate::run_deck::RunDeck;
 use crate::run_deck_node::RunDeckNode;
 use crate::run_state_node::{RUN_STATE_PATH, RunStateNode, snapshot_dictionary};
@@ -265,12 +267,28 @@ impl SaveGameNode {
         if let Some(reward) = &run.screen.pending_card_reward
             && reward.guaranteed_rare
             && !reward.offered_card_ids.is_empty()
-            && !reward
-                .offered_card_ids
-                .iter()
-                .any(|id| rarity_of(id).is_some_and(|rarity| rarity >= Rarity::Rare))
         {
-            return Err("a card reward guaranteeing a Rare offers none".to_string());
+            // The guarantee is the best card that was open when the offer was
+            // rolled, not always a Rare (see `attainable_guarantee`).
+            let all: Vec<(String, Rarity)> = database
+                .all()
+                .map(|card| (card.id.clone(), card.rarity))
+                .collect();
+            let open = match self
+                .base()
+                .try_get_node_as::<ProgressionNode>(PROGRESSION_PATH)
+            {
+                Some(node) => node.bind().progression().open_pool(all),
+                None => all,
+            };
+            if let Some(minimum) = card_reward::attainable_guarantee(&open, Rarity::Rare)
+                && !reward
+                    .offered_card_ids
+                    .iter()
+                    .any(|id| rarity_of(id).is_some_and(|rarity| rarity >= minimum))
+            {
+                return Err("a card reward's guaranteed card is missing from its offer".to_string());
+            }
         }
 
         let shop_cards = run
